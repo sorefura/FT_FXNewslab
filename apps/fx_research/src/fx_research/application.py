@@ -8,6 +8,7 @@ from fx_core.time import require_utc
 from fx_signal_store import SQLiteSignalStore
 
 from .collection import NewsSource
+from .errors import FeatureProductionError
 from .feature_production import VersionedLlmFeatureExtractor
 from .normalization import NewsNormalizer
 from .persistence import SQLiteIngestionStateStore
@@ -110,8 +111,8 @@ class ProduceSignalsOnceService:
         completed = 0
         failed = 0
         for item in pending:
-            now = self._clock()
             observation = self._signal_store.get_observation(item.observation_id)
+            latest_timestamp = observation.first_seen_at
             feature_id = FeatureId(
                 "feature-"
                 + self._digest(
@@ -135,36 +136,59 @@ class ProduceSignalsOnceService:
                         feature = extracted
                     else:
                         feature = self._signal_store.get_feature(feature_id)
+                if feature.created_at < observation.first_seen_at:
+                    raise FeatureProductionError(
+                        "Feature cannot be created before its source Observation was first seen"
+                    )
+                latest_timestamp = feature.created_at
+                signal_created_at = self._clock_at_or_after(feature.created_at)
                 signal = self._scorer.score(
                     feature,
                     signal_id=signal_id,
                     observed_at=observation.first_seen_at,
-                    created_at=now,
+                    created_at=signal_created_at,
                 )
-                self._signal_store.append_signal_if_absent(signal)
+                if self._signal_store.append_signal_if_absent(signal):
+                    persisted_signal = signal
+                else:
+                    persisted_signal = self._signal_store.get_signal(signal_id)
+                if persisted_signal.created_at < feature.created_at:
+                    raise FeatureProductionError(
+                        "Signal cannot predate its source Feature"
+                    )
+                latest_timestamp = persisted_signal.created_at
+                production_updated_at = self._clock_at_or_after(
+                    persisted_signal.created_at
+                )
                 self._state_store.record_production(
                     observation_id=item.observation_id,
                     producer_version=producer_version,
                     model_version=model_version,
                     prompt_version=prompt_version,
                     status="COMPLETED",
-                    updated_at=now,
+                    updated_at=production_updated_at,
                     feature_id=feature_id.value,
                     signal_id=signal_id.value,
                 )
                 completed += 1
             except Exception as error:
+                failed_at = self._clock_at_or_after(latest_timestamp)
                 self._state_store.record_production(
                     observation_id=item.observation_id,
                     producer_version=producer_version,
                     model_version=model_version,
                     prompt_version=prompt_version,
                     status="FAILED",
-                    updated_at=now,
+                    updated_at=failed_at,
                     error=error,
                 )
                 failed += 1
         return ProduceSignalsOnceResult(len(pending), completed, failed)
+
+    def _clock_at_or_after(self, timestamp: datetime) -> datetime:
+        current = self._clock()
+        require_utc(current, "production clock")
+        return max(current, timestamp)
 
     @staticmethod
     def _digest(*parts: str) -> str:

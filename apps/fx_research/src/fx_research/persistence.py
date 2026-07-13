@@ -25,6 +25,18 @@ class IngestionEvidence:
     first_seen_at: datetime
 
 
+@dataclass(frozen=True, slots=True)
+class FeatureProductionRecord:
+    observation_id: ObservationId
+    producer_version: str
+    model_version: str
+    prompt_version: str
+    status: str
+    feature_id: str | None
+    signal_id: str | None
+    updated_at: datetime
+
+
 class SQLiteIngestionStateStore:
     def __init__(self, path: str | Path) -> None:
         self.path = Path(path)
@@ -193,3 +205,38 @@ class SQLiteIngestionStateStore:
                     updated_at.isoformat(),
                 ),
             )
+
+    def get_production_record(
+        self,
+        *,
+        observation_id: ObservationId,
+        producer_version: str,
+        model_version: str,
+        prompt_version: str,
+    ) -> FeatureProductionRecord:
+        with closing(self._connect()) as connection:
+            row = connection.execute(
+                """
+                SELECT * FROM research_feature_jobs
+                WHERE observation_id = ? AND producer_version = ?
+                  AND model_version = ? AND prompt_version = ?
+                """,
+                (
+                    observation_id.value,
+                    producer_version,
+                    model_version,
+                    prompt_version,
+                ),
+            ).fetchone()
+        if row is None:
+            raise KeyError(observation_id.value)
+        return FeatureProductionRecord(
+            observation_id=observation_id,
+            producer_version=row["producer_version"],
+            model_version=row["model_version"],
+            prompt_version=row["prompt_version"],
+            status=row["status"],
+            feature_id=row["feature_id"],
+            signal_id=row["signal_id"],
+            updated_at=datetime.fromisoformat(row["updated_at"]),
+        )

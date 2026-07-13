@@ -1,0 +1,71 @@
+{
+  "now": "2026-07-13T00:05:00+00:00",
+  "observation": {
+    "id": "obs-shadow-1",
+    "source": "recorded-fixture",
+    "title": "Central-bank policy divergence remains in focus",
+    "body": "Policy guidance supports USD while JPY policy remains accommodative.",
+    "published_at": "2026-07-13T00:00:00+00:00",
+    "first_seen_at": "2026-07-13T00:01:00+00:00",
+    "payload_reference": "fixture://shadow-cycle/news-1",
+    "normalizer_version": "fixture-normalizer-v1"
+  },
+  "features": [
+    {
+      "currency": "USD",
+      "feature_id": "feature-usd-1",
+      "signal_id": "signal-usd-1",
+      "producer_version": "llm-feature-v1",
+      "model_version": "recorded-model-v1",
+      "prompt_version": "currency-feature-prompt-v1",
+      "provider_response": {
+        "event_type": "monetary_policy",
+        "factor_scores": {"monetary_policy": 0.7, "inflation": 0.3},
+        "impact_strength": 0.7,
+        "confidence": 0.8
+      }
+    },
+    {
+      "currency": "JPY",
+      "feature_id": "feature-jpy-1",
+      "signal_id": "signal-jpy-1",
+      "producer_version": "llm-feature-v1",
+      "model_version": "recorded-model-v1",
+      "prompt_version": "currency-feature-prompt-v1",
+      "provider_response": {
+        "event_type": "monetary_policy",
+        "factor_scores": {"monetary_policy": -0.3},
+        "impact_strength": 0.5,
+        "confidence": 0.75
+      }
+    }
+  ],
+  "pair_signal_id": "signal-usdjpy-1",
+  "candidate": {
+    "id": "candidate-shadow-1",
+    "pair": "USD_JPY",
+    "side": "BUY",
+    "score": 0.8,
+    "strategy_version": "shadow-fixture-v1",
+    "quantity": "1000",
+    "reference_price": "150"
+  },
+  "positions": [],
+  "portfolio": {
+    "decision_id": "portfolio-shadow-1",
+    "currency_limits": {"USD": "10000", "JPY": "2000000"}
+  },
+  "risk": {
+    "decision_id": "risk-shadow-1",
+    "policy_version": "risk-shadow-v1",
+    "minimum_margin_ratio": "1.0",
+    "maximum_positions_per_pair": 1,
+    "maximum_account_age_seconds": 60,
+    "account_margin_ratio": "2.0"
+  },
+  "execution": {
+    "intent_id": "intent-shadow-1",
+    "idempotency_key": "shadow-cycle-1"
+  }
+}
+

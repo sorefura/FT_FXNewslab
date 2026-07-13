@@ -1,0 +1,7 @@
+-e packages/fx_core
+-e packages/fx_signal_store
+-e apps/swap_bot
+pytest>=8.0
+ruff>=0.5
+mypy>=1.10
+

@@ -1,0 +1,30 @@
+[project]
+name = "ft-fxnewslab-workspace"
+version = "0.1.0"
+requires-python = ">=3.11"
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+pythonpath = [
+    "packages/fx_core/src",
+    "packages/fx_signal_store/src",
+    "apps/swap_bot/src",
+]
+addopts = "--strict-markers"
+
+[tool.ruff]
+target-version = "py311"
+line-length = 100
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "UP", "B"]
+
+[tool.mypy]
+python_version = "3.11"
+strict = true
+mypy_path = [
+    "packages/fx_core/src",
+    "packages/fx_signal_store/src",
+    "apps/swap_bot/src",
+]
+

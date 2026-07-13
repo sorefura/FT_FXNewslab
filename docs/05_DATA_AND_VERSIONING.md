@@ -102,6 +102,20 @@ Observation IDはsource identity、canonical payload URL、normalized content ha
 決定的に生成する。同じURLの同じcontentは再保存せず、同じURLでもcontentが変化した
 場合は別のimmutable Observationとする。
 
+Feature/Signal productionでは次の順序を保証する。
+
+```text
+observation.first_seen_at
+  <= feature.created_at
+  <= signal.created_at
+  <= production.updated_at
+```
+
+Signal時刻はFeature取得後、production時刻はSignal保存後に取得する。既存Featureを再利用
+する場合は注入Clockと既存record時刻の大きい方を使い、架空の時間加算は行わない。
+Featureがsource Observationより過去、または既存Signalがsource Featureより過去の場合は
+recordを書き換えずproduction failureとする。
+
 ## Freshness
 
 外部データはvalueだけでなくobserved timestampを持つ。

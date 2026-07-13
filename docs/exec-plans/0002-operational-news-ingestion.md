@@ -27,13 +27,15 @@ invoke Live Strategy, Portfolio, Risk, or Execution.
 
 ExecPlan 0001 is complete. `fx_core` defines immutable `NewsObservation`,
 `CurrencyFundamentalFeature`, `LlmFeatureExtractor`, and `Signal` contracts.
-`fx_signal_store` provides append-only SQLite Observation/Feature/Signal lineage. Its current
-append methods reject duplicate IDs and expose no operational polling state.
+`fx_signal_store` provides append-only SQLite Observation/Feature/Signal lineage. At the original
+planning baseline, its strict append methods rejected duplicate IDs and exposed no operational
+polling state.
 
-`apps/fx_research` contains only local repository instructions. The recorded feature provider in
-`swap_bot` cannot be imported because Research and Live are sibling applications. No operational
-News source, normalization boundary, retrying HTTP GET adapter, ingestion evidence store, or
-Research CLI exists.
+At the original planning baseline, `apps/fx_research` contained only local repository
+instructions. Commit `ffe6784a77f138d110926e6b737e33d96f2649df` added the first operational
+path. Review of that baseline found four remaining gaps: production timestamps could be ordered
+before their Feature, the CLI was recorded-fixture-only, collection failures after retrieval were
+not audited by stage, and Feature failures did not affect the process exit code.
 
 Official sources confirmed on 2026-07-13:
 
@@ -55,6 +57,7 @@ apps/fx_research
   infrastructure/federal_reserve  -- RSS and detail adapters
   infrastructure/bank_of_japan    -- HTML listing and detail adapters
   infrastructure/http             -- bounded GET retry and timeout
+  infrastructure/openai           -- OpenAI Responses API and structured response normalization
   infrastructure/persistence      -- fetch evidence and production state
   collection                      -- NewsSource and collected-item contracts
   normalization                   -- canonical text/URL and deterministic identity
@@ -77,6 +80,7 @@ and BOJ is JPY. The LLM never selects a currency or produces action/order semant
 - `NewsNormalizer.normalize(item, first_seen_at) -> NewsObservation`
 - `LlmFeatureExtractor.extract(observation, feature_id, currency) -> CurrencyFundamentalFeature`
 - `FundamentalSignalScorer.score(...) -> Signal`
+- `OpenAIStructuredFeatureProvider.extract(payload) -> provider-neutral structured payload`
 - `IngestionStateRepository` records fetch evidence and production state without entering
   `fx_core`.
 
@@ -102,6 +106,9 @@ raw source date text, and immutable payload evidence. It contains no score or tr
   `fundamental-scorer-v1` without semantic changes.
 - `fx_research` and `swap_bot` never import each other.
 - No production or smoke path calls Strategy, Portfolio, Risk, Execution, or Broker code.
+- Production timestamps satisfy Observation <= Feature <= Signal <= production record.
+- Collection failures remain failures and identify retrieval, normalization, or persistence.
+- Feature production returns non-zero by default when one or more items fail.
 
 ## Milestones
 
@@ -175,6 +182,8 @@ Deliverables:
 - complete Observation -> Feature -> Signal lineage
 - explicit feature-production failure state and retry eligibility
 - forbidden action/order field contract tests
+- OpenAI structured Feature provider behind a provider-neutral adapter
+- post-Feature Signal timestamp and post-Signal production timestamp
 
 Observable behavior:
 
@@ -182,6 +191,7 @@ Observable behavior:
 - repeated production does not duplicate Feature or Signal records.
 - malformed or forbidden provider output creates no neutral Signal.
 - lineage and all version dimensions can be read from `fx_signal_store`.
+- existing Feature recovery cannot create an earlier Signal or production record.
 
 Verification:
 
@@ -200,15 +210,20 @@ Deliverables:
 - `python -m fx_research collect-once --source ... --database ...`
 - `python -m fx_research produce-signals-once --database ...` with an explicitly configured
   extractor adapter
+- explicit `recorded` or `openai` provider selection and environment-based OpenAI credentials
 - timeout and bounded configurable retry for retryable HTTP GET failures
 - source-aware errors and structured command results
 - recorded end-to-end smoke tests and opt-in `source_smoke` tests for official endpoints
+- stage-aware collection failure records and scheduler-visible Feature production exit codes
 
 Observable behavior:
 
 - one-shot commands are safe to rerun.
 - network failure produces a failed fetch record and no Observation/Feature/Signal.
+- post-retrieval failure records its stage and processed-item count without rollback of prior
+  immutable Observations.
 - a recorded full cycle persists immutable, versioned lineage.
+- any Feature failure returns exit code 1 unless partial success is explicitly allowed.
 - smoke tests are excluded from normal CI unless explicitly selected.
 
 Verification:
@@ -228,6 +243,8 @@ python -m mypy packages apps
   a new numbered migration.
 - Research operational state is owned by `fx_research`, even when it shares a physical SQLite file
   with `fx_signal_store` for one-shot operation.
+- Existing Research migration `0001_ingestion_state.sql` remains unchanged. Fetch stage audit is
+  added by `0002_fetch_run_stage.sql`.
 - Existing Observation/Feature/Signal rows are not backfilled or updated.
 - Legacy Tavily, prompts, and `AiAction` are not imported or migrated.
 - Source URL or HTML selector changes are configuration/adapter-version changes and must not reuse
@@ -244,6 +261,11 @@ ExecPlan 0002 is complete when:
 - exact/missing/date-only publication time semantics are tested;
 - malformed feed, changed HTML, missing body, and provider errors create no neutral Signal;
 - producer/model/prompt/scorer versions and complete lineage are persisted;
+- Feature, Signal, and production timestamps preserve ex-ante order, including Feature reuse;
+- OpenAI can be selected without a fixture and provider-specific response types remain in
+  Research infrastructure;
+- retrieval, normalization, and persistence failures are separately auditable;
+- Feature production failures are visible through a non-zero CLI exit code;
 - source smoke paths can reach official Fed and BOJ endpoints under an explicit marker;
 - no Research/Live cross-import or Live invocation exists;
 - Python 3.11 tests, Ruff, and mypy pass.
@@ -268,6 +290,35 @@ ExecPlan 0002 is complete when:
   ingestion and remains behind the existing `LlmFeatureExtractor` seam.
 - 2026-07-13: Deterministic existing Feature IDs recover from a crash by reading the stored
   immutable Feature before scoring; the provider is not allowed to replace it.
+- 2026-07-14: Signal time is obtained after Feature recovery or extraction, and production time
+  after Signal persistence. Injected Clock time is compared with the preceding immutable record;
+  no artificial duration is added.
+- 2026-07-14: The recorded-fixture-only decision is superseded. OpenAI Responses API is the first
+  operational provider, with `OPENAI_API_KEY` from the environment, explicit model selection, and
+  provider request/response handling confined to Research infrastructure.
+- 2026-07-14: Collection remains fail-fast. Retrieval, normalization, and persistence failures are
+  stored with stage and processed count through numbered migration 0002; prior Observations remain
+  append-only and are recovered by idempotent rerun.
+- 2026-07-14: Feature production selects ingestion evidence only when the corresponding immutable
+  Observation exists, so a persistence interruption cannot expose partial ingestion state.
+- 2026-07-14: Feature production exits non-zero for any failed item by default. Partial success is
+  accepted only through explicit `--allow-partial-success`.
+
+## Surprises & Discoveries
+
+- 2026-07-14: The original service captured one Clock value before provider execution. A slow
+  provider could therefore create a Feature after both its Signal and production job timestamp.
+- 2026-07-14: Deterministic Feature recovery also needs chronology protection because an injected
+  Clock may be behind a previously persisted Feature.
+- 2026-07-14: The original fetch-run schema constrained status to `SUCCESS` or `FAILED`. Stage is
+  therefore stored as a separate dimension in numbered migration 0002, preserving existing rows
+  and the original migration.
+- 2026-07-14: `first_seen_at` evidence can commit before Observation persistence fails. Pending
+  Feature selection must therefore join the shared Observation table rather than treating evidence
+  alone as a completed ingestion item.
+- 2026-07-14: An OpenAI adapter does not require SDK objects at the application boundary. The
+  infrastructure adapter can call the Responses endpoint, normalize its structured output, and
+  expose only the existing `StructuredFeatureProvider` contract.
 
 ## Progress
 
@@ -278,11 +329,18 @@ ExecPlan 0002 is complete when:
 - [x] Milestone 2 — Deterministic normalization and operational idempotency.
 - [x] Milestone 3 — Versioned Feature and Signal production.
 - [x] Milestone 4 — One-shot orchestration, HTTP reliability, and smoke path.
+- [x] Review correction — chronological Feature/Signal/production records.
+- [x] Review correction — OpenAI operational Feature provider and explicit CLI selection.
+- [x] Review correction — stage-aware collection failure audit and fail-fast recovery.
+- [x] Review correction — scheduler-visible Feature production exit codes.
 
-Verification completed on 2026-07-13 with Python 3.11.9:
+Review validation completed on 2026-07-14 with Python 3.11.9:
 
-- normal suite: `74 passed, 2 skipped` (`source_smoke` skipped by default);
-- opt-in official source smoke: `2 passed` for Fed monetary RSS and BOJ monetary HTML/PDF;
+- normal suite: `93 passed, 3 skipped` (two `source_smoke` and one `openai_smoke` skipped);
+- opt-in Fed source smoke: passed;
+- opt-in BOJ source smoke: passed;
+- OpenAI smoke: `NOT_RUN` because `OPENAI_API_KEY`, `OPENAI_SMOKE_MODEL`, and explicit
+  `RUN_OPENAI_SMOKE=1` were not present;
 - Ruff: all checks passed;
-- mypy: no issues in 43 source files;
-- actual `collect-once` Fed run: first run `inserted=1`, second run `duplicates=1`.
+- mypy: no issues in 44 source files for `fx_core`, `fx_signal_store`, `fx_research`, and
+  `swap_bot`.

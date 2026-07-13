@@ -51,6 +51,11 @@ BOJ HTML/PDFを`CollectedNewsItem`へ閉じ込め、normalization後の`NewsObse
 共有contractへ渡す。Source configurationがcandidate currencyを決定し、LLMへcurrency
 selectionを委譲しない。
 
+Operational Feature productionもResearch applicationが所有する。OpenAI等の外部provider
+固有request/responseはInfrastructure adapter内でprovider-neutralなstructured payloadへ
+変換し、`ProviderLlmFeatureExtractor`だけがdomain value検証とVersionMetadata付与を行う。
+外部provider障害やmalformed responseをneutral Featureへ変換しない。
+
 ## Research path
 
 ```text

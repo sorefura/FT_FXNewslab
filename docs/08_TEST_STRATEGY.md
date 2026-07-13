@@ -43,6 +43,14 @@ LLM exact wordingやraw textをgolden assertionしない。
 
 LLM integrationはrecorded fixtureまたはprovider stubを基本にする。
 
+Operational provider adapterのunit testはfake transportを使用し、外部networkへ接続しない。
+provider選択、認証情報不足、malformed response、禁止action field、timeout伝播を検証する。
+実OpenAI接続は`openai_smoke` markerと明示opt-in、認証情報が揃う場合だけ実行する。
+
+Feature production CLIはitem failureをJSONの`attempted`、`completed`、`failed`で返し、
+defaultでは1件以上のfailureをnon-zero exit codeにする。部分成功を成功扱いする場合は
+明示optionを要求する。
+
 ## Operational News ingestion tests
 
 通常CIではrecorded RSS、HTML、detail page、provider responseを使用する。
@@ -55,6 +63,8 @@ What:
 - date-only metadataが架空のpublication timestampにならない。
 - malformed feed、changed HTML、本文抽出失敗がneutral Signalにならない。
 - bounded HTTP GET retryを超えた失敗が明示される。
+- retrieval、normalization、persistenceの途中失敗を別stageとして監査できる。
+- fail-fast後の再実行が、途中まで保存済みのObservationを重複させない。
 
 公式endpointを呼ぶtestには`source_smoke` markerを付け、通常CIから分離する。
 
@@ -67,6 +77,8 @@ What:
 - scorer versionが保存される。
 - Currency-to-Pair変換の符号規約が一定。
 - Signal作成後に結果評価で書き換えられない。
+- Observation、Feature、Signal、production recordの時刻がavailability順になる。
+- crash後に既存Featureを再利用してもSignalがFeatureより過去にならない。
 
 ## Research tests
 

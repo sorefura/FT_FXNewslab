@@ -14,6 +14,7 @@ pythonpath = [
 addopts = "--strict-markers"
 markers = [
     "source_smoke: opt-in checks against official external News sources",
+    "openai_smoke: opt-in Feature extraction check requiring OpenAI credentials",
 ]
 
 [tool.ruff]

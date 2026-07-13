@@ -193,6 +193,8 @@ class SQLiteIngestionStateStore:
                 """
                 SELECT item.observation_id, item.candidate_currency
                 FROM research_ingestion_items AS item
+                JOIN observations AS observation
+                  ON observation.id = item.observation_id
                 LEFT JOIN research_feature_jobs AS job
                   ON job.observation_id = item.observation_id
                  AND job.producer_version = ?

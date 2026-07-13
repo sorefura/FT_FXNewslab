@@ -118,6 +118,12 @@ def test_persistence_failure_is_fail_fast_and_retry_remains_idempotent(
     assert SQLiteSignalStore(database).get_observation(first_id).observation_id == first_id
     with pytest.raises(KeyError):
         SQLiteSignalStore(database).get_observation(second_id)
+    pending_after_failure = state_store.pending_items(
+        producer_version="producer-v1",
+        model_version="model-v1",
+        prompt_version="prompt-v1",
+    )
+    assert [item.observation_id for item in pending_after_failure] == [first_id]
 
     recovered = CollectOnceService(
         SQLiteSignalStore(database), state_store

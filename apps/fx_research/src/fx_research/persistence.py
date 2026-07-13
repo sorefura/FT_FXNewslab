@@ -1,11 +1,43 @@
+import re
 import sqlite3
 from contextlib import closing
 from dataclasses import dataclass
 from datetime import UTC, datetime
+from enum import StrEnum
 from importlib.resources import files
 from pathlib import Path
 
 from fx_core import Currency, ObservationId
+
+_ERROR_MESSAGE_LIMIT = 240
+_SECRET_PATTERN = re.compile(
+    r"(?i)(?:sk-[a-z0-9_-]+|(?:api[_ -]?key|authorization|bearer)\s*[:=]?\s*\S+)"
+)
+
+
+class CollectionStage(StrEnum):
+    RETRIEVAL = "RETRIEVAL"
+    NORMALIZATION = "NORMALIZATION"
+    PERSISTENCE = "PERSISTENCE"
+    COMPLETED = "COMPLETED"
+
+
+@dataclass(frozen=True, slots=True)
+class FetchRunRecord:
+    source_id: str
+    fetched_at: datetime
+    status: str
+    stage: CollectionStage
+    item_count: int
+    processed_item_count: int
+    error_code: str | None
+    error_message: str | None
+
+    @property
+    def outcome(self) -> str:
+        if self.status == "SUCCESS":
+            return "SUCCESS"
+        return f"{self.stage.value}_FAILED"
 
 
 @dataclass(frozen=True, slots=True)
@@ -109,22 +141,49 @@ class SQLiteIngestionStateStore:
         source_id: str,
         fetched_at: datetime,
         status: str,
+        stage: CollectionStage,
         item_count: int,
+        processed_item_count: int,
         error: Exception | None = None,
     ) -> None:
+        error_message = self._safe_error_message(error) if error else None
         with closing(self._connect()) as connection, connection:
             connection.execute(
                 "INSERT INTO research_fetch_runs(source_id, fetched_at, status, item_count, "
-                "error_code, error_message) VALUES (?, ?, ?, ?, ?, ?)",
+                "error_code, error_message, stage, processed_item_count) "
+                "VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
                 (
                     source_id,
                     fetched_at.isoformat(),
                     status,
                     item_count,
                     type(error).__name__ if error else None,
-                    str(error) if error else None,
+                    error_message,
+                    stage.value,
+                    processed_item_count,
                 ),
             )
+
+    def list_fetch_runs(self, *, source_id: str | None = None) -> tuple[FetchRunRecord, ...]:
+        where = " WHERE source_id = ?" if source_id else ""
+        parameters = (source_id,) if source_id else ()
+        with closing(self._connect()) as connection:
+            rows = connection.execute(
+                f"SELECT * FROM research_fetch_runs{where} ORDER BY id", parameters
+            ).fetchall()
+        return tuple(
+            FetchRunRecord(
+                source_id=row["source_id"],
+                fetched_at=datetime.fromisoformat(row["fetched_at"]),
+                status=row["status"],
+                stage=CollectionStage(row["stage"]),
+                item_count=int(row["item_count"]),
+                processed_item_count=int(row["processed_item_count"]),
+                error_code=row["error_code"],
+                error_message=row["error_message"],
+            )
+            for row in rows
+        )
 
     def pending_items(
         self, *, producer_version: str, model_version: str, prompt_version: str
@@ -183,6 +242,7 @@ class SQLiteIngestionStateStore:
         signal_id: str | None = None,
         error: Exception | None = None,
     ) -> None:
+        error_message = self._safe_error_message(error) if error else None
         with closing(self._connect()) as connection, connection:
             connection.execute(
                 """
@@ -201,10 +261,16 @@ class SQLiteIngestionStateStore:
                     feature_id,
                     signal_id,
                     type(error).__name__ if error else None,
-                    str(error) if error else None,
+                    error_message,
                     updated_at.isoformat(),
                 ),
             )
+
+    @staticmethod
+    def _safe_error_message(error: Exception) -> str:
+        compact = " ".join(str(error).split())
+        redacted = _SECRET_PATTERN.sub("[REDACTED]", compact)
+        return redacted[:_ERROR_MESSAGE_LIMIT]
 
     def get_production_record(
         self,

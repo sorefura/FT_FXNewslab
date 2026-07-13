@@ -1,6 +1,6 @@
 import hashlib
 from collections.abc import Callable
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from datetime import datetime
 
 from fx_core import FeatureId, FundamentalSignalScorer, SignalId
@@ -11,7 +11,7 @@ from .collection import NewsSource
 from .errors import FeatureProductionError
 from .feature_production import VersionedLlmFeatureExtractor
 from .normalization import NewsNormalizer
-from .persistence import SQLiteIngestionStateStore
+from .persistence import CollectionStage, SQLiteIngestionStateStore
 
 
 @dataclass(frozen=True, slots=True)
@@ -49,39 +49,88 @@ class CollectOnceService:
                 source_id=source.source_id,
                 fetched_at=fetched_at,
                 status="FAILED",
+                stage=CollectionStage.RETRIEVAL,
                 item_count=0,
+                processed_item_count=0,
                 error=error,
             )
             raise
         inserted = 0
+        processed = 0
         for item in items:
-            observation_id = self._normalizer.observation_id(item)
-            title = self._normalizer.normalize_text(item.title)
-            body = self._normalizer.normalize_text(item.body)
-            content_hash = self._normalizer.content_hash(title, body)
-            canonical_url = self._normalizer.canonical_url(item.canonical_url)
-            first_seen_at = self._state_store.first_seen_at(
-                observation_id=observation_id,
-                source_id=item.source_id,
-                currency=item.candidate_currency,
-                canonical_url=canonical_url,
-                content_hash=content_hash,
-                source_date_text=item.source_date_text,
-                recognized_at=fetched_at,
-            )
-            observation = self._normalizer.normalize(item, first_seen_at=first_seen_at)
-            inserted += int(self._signal_store.append_observation_if_absent(observation))
+            try:
+                observation = self._normalizer.normalize(
+                    item, first_seen_at=fetched_at
+                )
+            except Exception as error:
+                self._record_collection_failure(
+                    source_id=source.source_id,
+                    fetched_at=fetched_at,
+                    stage=CollectionStage.NORMALIZATION,
+                    item_count=len(items),
+                    processed_item_count=processed,
+                    error=error,
+                )
+                raise
+            try:
+                first_seen_at = self._state_store.first_seen_at(
+                    observation_id=observation.observation_id,
+                    source_id=item.source_id,
+                    currency=item.candidate_currency,
+                    canonical_url=observation.payload_reference,
+                    content_hash=observation.content_hash,
+                    source_date_text=item.source_date_text,
+                    recognized_at=fetched_at,
+                )
+                if first_seen_at != observation.first_seen_at:
+                    observation = replace(observation, first_seen_at=first_seen_at)
+                inserted += int(
+                    self._signal_store.append_observation_if_absent(observation)
+                )
+            except Exception as error:
+                self._record_collection_failure(
+                    source_id=source.source_id,
+                    fetched_at=fetched_at,
+                    stage=CollectionStage.PERSISTENCE,
+                    item_count=len(items),
+                    processed_item_count=processed,
+                    error=error,
+                )
+                raise
+            processed += 1
         self._state_store.record_fetch(
             source_id=source.source_id,
             fetched_at=fetched_at,
             status="SUCCESS",
+            stage=CollectionStage.COMPLETED,
             item_count=len(items),
+            processed_item_count=processed,
         )
         return CollectOnceResult(
             source_id=source.source_id,
             fetched=len(items),
             inserted=inserted,
             duplicates=len(items) - inserted,
+        )
+
+    def _record_collection_failure(
+        self,
+        *,
+        source_id: str,
+        fetched_at: datetime,
+        stage: CollectionStage,
+        item_count: int,
+        processed_item_count: int,
+        error: Exception,
+    ) -> None:
+        self._state_store.record_fetch(
+            source_id=source_id,
+            fetched_at=fetched_at,
+            status="FAILED",
+            stage=stage,
+            item_count=item_count,
+            processed_item_count=processed_item_count,
+            error=error,
         )
 
 

@@ -11,12 +11,18 @@ from swap_bot.models import (
     ApprovedExecutionIntent,
     CandidateId,
     ExecutionIntentId,
+    OrderResult,
     OrderStatus,
     RiskDecisionId,
     Side,
 )
 
 NOW = datetime(2026, 7, 13, tzinfo=UTC)
+
+
+class RejectingBrokerGateway:
+    def submit(self, intent: ApprovedExecutionIntent) -> OrderResult:
+        raise AssertionError("dry-run execution reached BrokerGateway.submit")
 
 
 def _intent(key: str = "key-1") -> ApprovedExecutionIntent:
@@ -35,20 +41,24 @@ def _intent(key: str = "key-1") -> ApprovedExecutionIntent:
 def test_execution_accepts_approved_intent_and_never_submits_in_execplan_0001(
     tmp_path: Path,
 ) -> None:
-    service = ExecutionService(SQLiteIdempotencyStore(tmp_path / "execution.sqlite3"))
+    service = ExecutionService(
+        SQLiteIdempotencyStore(tmp_path / "execution.sqlite3"), RejectingBrokerGateway()
+    )
     result = service.submit(_intent())
     assert result.status is OrderStatus.NOT_SUBMITTED
 
 
 def test_execution_rejects_non_approved_input(tmp_path: Path) -> None:
-    service = ExecutionService(SQLiteIdempotencyStore(tmp_path / "execution.sqlite3"))
+    service = ExecutionService(
+        SQLiteIdempotencyStore(tmp_path / "execution.sqlite3"), RejectingBrokerGateway()
+    )
     with pytest.raises(TypeError, match="ApprovedExecutionIntent"):
         service.submit(cast(ApprovedExecutionIntent, object()))
 
 
 def test_execution_persistently_rejects_duplicate_idempotency_key(tmp_path: Path) -> None:
     database = tmp_path / "execution.sqlite3"
-    first_service = ExecutionService(SQLiteIdempotencyStore(database))
-    second_service = ExecutionService(SQLiteIdempotencyStore(database))
+    first_service = ExecutionService(SQLiteIdempotencyStore(database), RejectingBrokerGateway())
+    second_service = ExecutionService(SQLiteIdempotencyStore(database), RejectingBrokerGateway())
     assert first_service.submit(_intent()).status is OrderStatus.NOT_SUBMITTED
     assert second_service.submit(_intent()).status is OrderStatus.DUPLICATE

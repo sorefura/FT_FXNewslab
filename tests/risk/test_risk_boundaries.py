@@ -1,3 +1,4 @@
+from dataclasses import replace
 from datetime import UTC, datetime, timedelta
 from decimal import Decimal
 
@@ -105,6 +106,73 @@ def test_rejected_risk_decision_cannot_create_execution_intent() -> None:
         )
 
 
+def test_risk_rejects_portfolio_decision_for_a_different_candidate() -> None:
+    portfolio = _portfolio()
+    different_candidate = replace(
+        _candidate(), candidate_id=CandidateId("candidate-2")
+    )
+
+    with pytest.raises(ValueError, match="does not belong to TradeCandidate"):
+        _risk().evaluate(
+            portfolio,
+            different_candidate,
+            account=AccountSnapshot(Decimal("2.0"), NOW),
+            positions=(),
+            decision_id=RiskDecisionId("risk-1"),
+            created_at=NOW,
+        )
+
+
+def test_execution_intent_rejects_risk_for_a_different_portfolio_decision() -> None:
+    portfolio = _portfolio()
+    risk = _risk().evaluate(
+        portfolio,
+        _candidate(),
+        account=AccountSnapshot(Decimal("2.0"), NOW),
+        positions=(),
+        decision_id=RiskDecisionId("risk-1"),
+        created_at=NOW,
+    )
+    different_portfolio = replace(
+        portfolio, decision_id=PortfolioDecisionId("portfolio-2")
+    )
+
+    with pytest.raises(ValueError, match="does not belong to PortfolioDecision"):
+        _risk().create_execution_intent(
+            risk,
+            different_portfolio,
+            _candidate(),
+            intent_id=ExecutionIntentId("intent-1"),
+            idempotency_key="key-1",
+            created_at=NOW,
+        )
+
+
+def test_execution_intent_rejects_portfolio_for_a_different_candidate() -> None:
+    portfolio = _portfolio()
+    risk = _risk().evaluate(
+        portfolio,
+        _candidate(),
+        account=AccountSnapshot(Decimal("2.0"), NOW),
+        positions=(),
+        decision_id=RiskDecisionId("risk-1"),
+        created_at=NOW,
+    )
+    different_candidate = replace(
+        _candidate(), candidate_id=CandidateId("candidate-2")
+    )
+
+    with pytest.raises(ValueError, match="does not belong to TradeCandidate"):
+        _risk().create_execution_intent(
+            risk,
+            portfolio,
+            different_candidate,
+            intent_id=ExecutionIntentId("intent-1"),
+            idempotency_key="key-1",
+            created_at=NOW,
+        )
+
+
 def test_margin_kill_switch_creates_liquidation_intent_without_broker_dependency() -> None:
     position = PositionSnapshot(
         PositionId("position-1"),
@@ -127,4 +195,3 @@ def test_margin_kill_switch_creates_liquidation_intent_without_broker_dependency
     )
     assert intents[0].position_id == position.position_id
     assert _portfolio().disposition is PortfolioDisposition.ACCEPT
-

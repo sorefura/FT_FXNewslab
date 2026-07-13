@@ -92,6 +92,7 @@ What:
 - accepted candidate can be resized
 - rejected candidate has structured reason
 - pending intents are included where policy requires
+- portfolio decision identifies the candidate it evaluated
 
 ## Risk tests
 
@@ -104,6 +105,9 @@ rejects execution when account data is stale
 rejects execution when margin health is below limit
 rejects duplicate idempotency key
 ```
+
+RiskからPortfolio、PortfolioからCandidateへのID参照が一致しない入力は、各decisionが
+単独で正当でも拒否する。
 
 複数Risk ruleを1テストへ詰め込まない。
 
@@ -118,6 +122,10 @@ What:
 - broker error is normalized
 - partial fill is preserved
 - retry occurs only for explicitly retryable failures
+- shadow orchestration records zero calls on an injected BrokerGateway probe
+
+Broker非呼出しをresult用の固定値で表現しない。呼出し時にcountが増えるfakeまたはmockを
+Execution境界へ注入し、その観測値で検証する。
 
 実Broker sandbox/test APIが利用できる場合、unit testとは別suiteにする。
 

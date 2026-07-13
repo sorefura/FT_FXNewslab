@@ -4,7 +4,7 @@ import tempfile
 from datetime import datetime, timedelta
 from decimal import Decimal
 from pathlib import Path
-from typing import Any
+from typing import Any, cast
 
 from fx_core import (
     Currency,
@@ -25,8 +25,10 @@ from .idempotency import SQLiteIdempotencyStore
 from .llm_feature import ProviderLlmFeatureExtractor, RecordedFeatureProvider
 from .models import (
     AccountSnapshot,
+    ApprovedExecutionIntent,
     CandidateId,
     ExecutionIntentId,
+    OrderResult,
     PortfolioDecisionId,
     PositionId,
     PositionSnapshot,
@@ -35,7 +37,13 @@ from .models import (
     TradeCandidate,
 )
 from .portfolio import PortfolioService
+from .ports import BrokerGateway
 from .risk import RiskPolicy, RiskService
+
+
+class RejectingShadowBrokerGateway:
+    def submit(self, intent: ApprovedExecutionIntent) -> OrderResult:
+        raise RuntimeError("Shadow orchestration must not submit to a BrokerGateway")
 
 
 def _utc(value: str) -> datetime:
@@ -43,7 +51,11 @@ def _utc(value: str) -> datetime:
     return parsed
 
 
-def run_shadow_cycle(fixture: dict[str, Any], database: str | Path) -> dict[str, object]:
+def run_shadow_cycle(
+    fixture: dict[str, Any],
+    database: str | Path,
+    broker_gateway: BrokerGateway | None = None,
+) -> dict[str, object]:
     database_path = Path(database)
     now = _utc(fixture["now"])
     observation_data = fixture["observation"]
@@ -160,7 +172,8 @@ def run_shadow_cycle(fixture: dict[str, Any], database: str | Path) -> dict[str,
         idempotency_key=fixture["execution"]["idempotency_key"],
         created_at=now,
     )
-    result = ExecutionService(SQLiteIdempotencyStore(database_path)).submit(intent)
+    gateway = broker_gateway or RejectingShadowBrokerGateway()
+    result = ExecutionService(SQLiteIdempotencyStore(database_path), gateway).submit(intent)
 
     decisions = SQLiteLiveDecisionStore(database_path)
     decisions.append_candidate(candidate)
@@ -170,6 +183,12 @@ def run_shadow_cycle(fixture: dict[str, Any], database: str | Path) -> dict[str,
     decisions.append_order_result(result)
     chain = decisions.decision_chain(candidate.candidate_id)
     lineage = signal_store.get_lineage(pair_signal.signal_id)
+    chain_complete = all(
+        chain[key] is not None for key in ("portfolio", "risk", "intent", "order_result")
+    )
+    portfolio_record = cast(dict[str, object], chain["portfolio"])
+    risk_record = cast(dict[str, object], chain["risk"])
+    intent_record = cast(dict[str, object], chain["intent"])
     return {
         "signal_id": pair_signal.signal_id.value,
         "feature_ids": [item.value for item in lineage.feature_ids],
@@ -178,18 +197,24 @@ def run_shadow_cycle(fixture: dict[str, Any], database: str | Path) -> dict[str,
         "portfolio_disposition": portfolio.disposition.value,
         "risk_disposition": risk.disposition.value,
         "order_status": result.status.value,
-        "broker_submit_calls": 0,
-        "decision_chain_complete": all(
-            chain[key] is not None for key in ("portfolio", "risk", "intent", "order_result")
+        "decision_chain_complete": chain_complete,
+        "decision_chain_consistent": (
+            chain_complete
+            and portfolio_record["candidate_id"] == chain["candidate_id"]
+            and risk_record["portfolio_decision_id"] == portfolio_record["id"]
+            and intent_record["candidate_id"] == chain["candidate_id"]
+            and intent_record["risk_decision_id"] == risk_record["id"]
         ),
     }
 
 
 def run_fixture_file(
-    fixture_path: str | Path, database: str | Path | None = None
+    fixture_path: str | Path,
+    database: str | Path | None = None,
+    broker_gateway: BrokerGateway | None = None,
 ) -> dict[str, object]:
     fixture = json.loads(Path(fixture_path).read_text(encoding="utf-8"))
     if database is not None:
-        return run_shadow_cycle(fixture, database)
+        return run_shadow_cycle(fixture, database, broker_gateway)
     with tempfile.TemporaryDirectory() as directory:
-        return run_shadow_cycle(fixture, Path(directory) / "shadow.sqlite3")
+        return run_shadow_cycle(fixture, Path(directory) / "shadow.sqlite3", broker_gateway)

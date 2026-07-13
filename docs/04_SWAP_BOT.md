@@ -214,3 +214,7 @@ Broker order/result
 ```
 
 PnLだけを見てdecision chainを推測しない。
+
+Risk評価とExecution Intent生成では、`RiskDecision.portfolio_decision_id`、
+`PortfolioDecision.candidate_id`、`TradeCandidate.candidate_id`が同じchainを指すことを
+検証する。別cycleの正当なdecisionを組み合わせても承認済みchainとして扱わない。

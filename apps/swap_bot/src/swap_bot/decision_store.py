@@ -89,6 +89,17 @@ BEGIN SELECT RAISE(ABORT, 'execution intent is immutable'); END;
 CREATE TRIGGER IF NOT EXISTS live_intents_no_delete
 BEFORE DELETE ON live_execution_intents
 BEGIN SELECT RAISE(ABORT, 'execution intent is immutable'); END;
+CREATE TRIGGER IF NOT EXISTS live_intents_require_consistent_chain
+BEFORE INSERT ON live_execution_intents
+WHEN NOT EXISTS (
+    SELECT 1
+    FROM live_risk_decisions AS risk
+    JOIN live_portfolio_decisions AS portfolio
+      ON portfolio.id = risk.portfolio_decision_id
+    WHERE risk.id = NEW.risk_decision_id
+      AND portfolio.candidate_id = NEW.candidate_id
+)
+BEGIN SELECT RAISE(ABORT, 'execution intent decision chain is inconsistent'); END;
 CREATE TRIGGER IF NOT EXISTS live_results_no_update
 BEFORE UPDATE ON live_order_results BEGIN SELECT RAISE(ABORT, 'order result is immutable'); END;
 CREATE TRIGGER IF NOT EXISTS live_results_no_delete

@@ -10,12 +10,15 @@ from .models import (
     OrderResultId,
     OrderStatus,
 )
-from .ports import IdempotencyStore
+from .ports import BrokerGateway, IdempotencyStore
 
 
 class ExecutionService:
-    def __init__(self, idempotency_store: IdempotencyStore) -> None:
+    def __init__(
+        self, idempotency_store: IdempotencyStore, broker_gateway: BrokerGateway
+    ) -> None:
         self._idempotency_store = idempotency_store
+        self._broker_gateway = broker_gateway
 
     def submit(self, intent: ApprovedExecutionIntent) -> OrderResult:
         if not isinstance(intent, ApprovedExecutionIntent):

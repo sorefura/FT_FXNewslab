@@ -48,6 +48,7 @@ class RiskService:
         decision_id: RiskDecisionId,
         created_at: datetime,
     ) -> RiskDecision:
+        self._require_candidate_chain(portfolio_decision, candidate)
         reason = "approved"
         disposition = RiskDisposition.APPROVE
         if portfolio_decision.disposition is PortfolioDisposition.REJECT:
@@ -84,6 +85,7 @@ class RiskService:
         idempotency_key: str,
         created_at: datetime,
     ) -> ApprovedExecutionIntent:
+        self._require_decision_chain(risk_decision, portfolio_decision, candidate)
         if risk_decision.disposition is not RiskDisposition.APPROVE:
             raise ValueError("Rejected RiskDecision cannot create an ExecutionIntent")
         if portfolio_decision.proposed_quantity is None:
@@ -122,3 +124,20 @@ class RiskService:
             for index, position in enumerate(positions)
         )
 
+    @staticmethod
+    def _require_candidate_chain(
+        portfolio_decision: PortfolioDecision, candidate: TradeCandidate
+    ) -> None:
+        if portfolio_decision.candidate_id != candidate.candidate_id:
+            raise ValueError("PortfolioDecision does not belong to TradeCandidate")
+
+    @classmethod
+    def _require_decision_chain(
+        cls,
+        risk_decision: RiskDecision,
+        portfolio_decision: PortfolioDecision,
+        candidate: TradeCandidate,
+    ) -> None:
+        if risk_decision.portfolio_decision_id != portfolio_decision.decision_id:
+            raise ValueError("RiskDecision does not belong to PortfolioDecision")
+        cls._require_candidate_chain(portfolio_decision, candidate)

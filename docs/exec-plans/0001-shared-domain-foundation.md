@@ -39,8 +39,10 @@ decision types and persistence remain in `swap_bot`. Research and Live never imp
 - Currency Signals are primary; Pair score is base minus quote.
 - UTC-aware timestamps distinguish publication from first availability.
 - Execution accepts only approved intents.
+- Risk, Portfolio, and Candidate IDs must describe one consistent decision chain.
 - Unknown, unavailable, and stale swap are not zero.
-- New orchestration never calls Broker submit.
+- New orchestration never calls Broker submit; tests observe the injected gateway rather than a
+  result field populated with a constant.
 
 ## Milestones
 
@@ -68,7 +70,8 @@ structured Portfolio decisions, independent Risk decisions, and liquidation inte
 ### Milestone 5 — Shadow Decision Chain Validation
 
 Run one recorded offline cycle from Observation through approved intent and persist `NOT_SUBMITTED`.
-Assert that Broker submit count is zero.
+Assert that an injected counting BrokerGateway observes zero submit calls. Persisted Risk,
+Portfolio, and Candidate IDs must form one consistent chain.
 
 ## Migration and compatibility
 
@@ -93,6 +96,10 @@ CI runs the same checks on Python 3.11 and the latest supported version.
 - 2026-07-13: Legacy snapshot and cleanup are excluded.
 - 2026-07-13: Research compatibility is proven by contract tests, not an application implementation.
 - 2026-07-13: SQLite is a separate shared infrastructure package; see ADR-0005.
+- 2026-07-13: Risk, Portfolio, and Candidate ID consistency is checked before intent creation and
+  again at the SQLite intent boundary.
+- 2026-07-13: Shadow Broker non-submission is verified through an injected counting gateway;
+  `broker_submit_calls` is not emitted as a hardcoded result.
 
 ## Progress
 
@@ -104,12 +111,13 @@ CI runs the same checks on Python 3.11 and the latest supported version.
 - [x] Milestone 4 — Swap, Exposure, and Risk Shadow Evaluation.
 - [x] Milestone 5 — Shadow Decision Chain Validation.
 
-Verification completed on 2026-07-13 with Python 3.13.14:
+Verification completed on 2026-07-13 with Python 3.11.9:
 
-- `51 passed`
+- `55 passed`
 - Ruff: all checks passed
 - mypy: no issues in 25 source files
-- Shadow result: complete decision chain, `NOT_SUBMITTED`, Broker submit count `0`
+- Shadow result: complete and ID-consistent decision chain, `NOT_SUBMITTED`
+- An injected counting BrokerGateway observed zero submit calls in the shadow test.
 
-Python 3.11 compatibility is enforced by package metadata, Ruff target, mypy target, and the CI
-matrix; the local machine did not provide a Python 3.11 runtime.
+Python 3.11 compatibility is verified by the package metadata, Ruff and mypy targets, CI matrix,
+and an actual local Python 3.11 CI-equivalent run.

@@ -94,6 +94,14 @@ naive datetimeをdomainへ持ち込まない。
 
 市場営業日処理、日足cutoff、swap付与日等は明示的なcalendar/time policyへ寄せる。
 
+News ingestionでは、collectorが同じnormalized contentを最初に認識した時刻を
+`first_seen_at`として固定する。Sourceが日付だけを示す場合、00:00 UTC等を補わず
+`published_at=None`とし、日付文字列はResearch-owned ingestion evidenceへ保存する。
+
+Observation IDはsource identity、canonical payload URL、normalized content hashから
+決定的に生成する。同じURLの同じcontentは再保存せず、同じURLでもcontentが変化した
+場合は別のimmutable Observationとする。
+
 ## Freshness
 
 外部データはvalueだけでなくobserved timestampを持つ。

@@ -88,6 +88,29 @@ class SQLiteSignalStore:
                 ),
             )
 
+    def append_observation_if_absent(self, observation: NewsObservation) -> bool:
+        with closing(self._connect()) as connection, connection:
+            cursor = connection.execute(
+                """
+                INSERT OR IGNORE INTO observations(
+                    id, source, title, body, published_at, first_seen_at, content_hash,
+                    payload_reference, normalizer_version
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    observation.observation_id.value,
+                    observation.source,
+                    observation.title,
+                    observation.body,
+                    observation.published_at.isoformat() if observation.published_at else None,
+                    observation.first_seen_at.isoformat(),
+                    observation.content_hash,
+                    observation.payload_reference,
+                    observation.normalizer_version,
+                ),
+            )
+        return cursor.rowcount == 1
+
     def append_feature(self, feature: CurrencyFundamentalFeature) -> None:
         factors = [
             {"factor": item.factor.value, "direction": item.direction.value}
@@ -118,6 +141,39 @@ class SQLiteSignalStore:
                 "INSERT INTO feature_sources(feature_id, observation_id) VALUES (?, ?)",
                 ((feature.feature_id.value, item.value) for item in feature.observation_ids),
             )
+
+    def append_feature_if_absent(self, feature: CurrencyFundamentalFeature) -> bool:
+        factors = [
+            {"factor": item.factor.value, "direction": item.direction.value}
+            for item in feature.factor_scores
+        ]
+        with closing(self._connect()) as connection, connection:
+            cursor = connection.execute(
+                """
+                INSERT OR IGNORE INTO features(
+                    id, currency, event_type, factor_scores_json, impact_strength, confidence,
+                    producer_version, model_version, prompt_version, created_at
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    feature.feature_id.value,
+                    feature.currency.code,
+                    feature.event_type.value,
+                    json.dumps(factors, separators=(",", ":"), sort_keys=True),
+                    feature.impact_strength.value,
+                    feature.confidence.value,
+                    feature.versions.producer_version,
+                    feature.versions.model_version,
+                    feature.versions.prompt_version,
+                    feature.created_at.isoformat(),
+                ),
+            )
+            if cursor.rowcount == 1:
+                connection.executemany(
+                    "INSERT INTO feature_sources(feature_id, observation_id) VALUES (?, ?)",
+                    ((feature.feature_id.value, item.value) for item in feature.observation_ids),
+                )
+        return cursor.rowcount == 1
 
     def append_signal(self, signal: Signal) -> None:
         if isinstance(signal.target, CurrencyTarget):
@@ -157,6 +213,47 @@ class SQLiteSignalStore:
                 "INSERT INTO signal_sources(signal_id, feature_id) VALUES (?, ?)",
                 ((signal.signal_id.value, item.value) for item in signal.source_feature_ids),
             )
+
+    def append_signal_if_absent(self, signal: Signal) -> bool:
+        if isinstance(signal.target, CurrencyTarget):
+            target_type = "currency"
+            target_value = signal.target.currency.code
+        else:
+            target_type = "pair"
+            target_value = signal.target.pair.symbol
+        with closing(self._connect()) as connection, connection:
+            cursor = connection.execute(
+                """
+                INSERT OR IGNORE INTO signals(
+                    id, target_type, target_value, signal_type, direction, strength, confidence,
+                    horizon, observed_at, created_at, producer_version, model_version,
+                    prompt_version, scorer_version, transformation_version
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    signal.signal_id.value,
+                    target_type,
+                    target_value,
+                    signal.signal_type,
+                    signal.direction.value,
+                    signal.strength.value,
+                    signal.confidence.value,
+                    signal.horizon.value,
+                    signal.observed_at.isoformat(),
+                    signal.created_at.isoformat(),
+                    signal.versions.producer_version,
+                    signal.versions.model_version,
+                    signal.versions.prompt_version,
+                    signal.versions.scorer_version,
+                    signal.versions.transformation_version,
+                ),
+            )
+            if cursor.rowcount == 1:
+                connection.executemany(
+                    "INSERT INTO signal_sources(signal_id, feature_id) VALUES (?, ?)",
+                    ((signal.signal_id.value, item.value) for item in signal.source_feature_ids),
+                )
+        return cursor.rowcount == 1
 
     def get_observation(self, observation_id: ObservationId) -> NewsObservation:
         with closing(self._connect()) as connection, connection:

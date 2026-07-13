@@ -1,0 +1,13 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<rss version="2.0">
+  <channel>
+    <title>Federal Reserve Speeches</title>
+    <item>
+      <title>Economic outlook and monetary policy</title>
+      <link>https://www.federalreserve.gov/newsevents/speech/example.htm</link>
+      <description><![CDATA[Remarks on inflation, employment, and the policy outlook.]]></description>
+      <pubDate>Sun, 12 Jul 2026 14:30:00 GMT</pubDate>
+      <guid>speech-example</guid>
+    </item>
+  </channel>
+</rss>

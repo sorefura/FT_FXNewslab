@@ -8,9 +8,13 @@ testpaths = ["tests"]
 pythonpath = [
     "packages/fx_core/src",
     "packages/fx_signal_store/src",
+    "apps/fx_research/src",
     "apps/swap_bot/src",
 ]
 addopts = "--strict-markers"
+markers = [
+    "source_smoke: opt-in checks against official external News sources",
+]
 
 [tool.ruff]
 target-version = "py311"
@@ -25,6 +29,10 @@ strict = true
 mypy_path = [
     "packages/fx_core/src",
     "packages/fx_signal_store/src",
+    "apps/fx_research/src",
     "apps/swap_bot/src",
 ]
 
+[[tool.mypy.overrides]]
+module = ["feedparser"]
+ignore_missing_imports = true

@@ -43,6 +43,21 @@ LLM exact wordingやraw textをgolden assertionしない。
 
 LLM integrationはrecorded fixtureまたはprovider stubを基本にする。
 
+## Operational News ingestion tests
+
+通常CIではrecorded RSS、HTML、detail page、provider responseを使用する。
+
+What:
+
+- source configurationがFedをUSD、BOJをJPYへ割り当てる。
+- repeated pollが`first_seen_at`を動かさずduplicateを作らない。
+- same URLのchanged contentが新Observationになる。
+- date-only metadataが架空のpublication timestampにならない。
+- malformed feed、changed HTML、本文抽出失敗がneutral Signalにならない。
+- bounded HTTP GET retryを超えた失敗が明示される。
+
+公式endpointを呼ぶtestには`source_smoke` markerを付け、通常CIから分離する。
+
 ## Signal tests
 
 What:

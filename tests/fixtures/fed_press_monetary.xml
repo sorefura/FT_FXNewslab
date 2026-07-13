@@ -1,0 +1,13 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<rss version="2.0">
+  <channel>
+    <title>Federal Reserve Monetary Policy</title>
+    <item>
+      <title>Federal Reserve issues FOMC statement</title>
+      <link>https://www.federalreserve.gov/newsevents/pressreleases/monetary20260713a.htm</link>
+      <description><![CDATA[The Committee decided to maintain the target range.]]></description>
+      <pubDate>Mon, 13 Jul 2026 18:00:00 GMT</pubDate>
+      <guid>monetary20260713a</guid>
+    </item>
+  </channel>
+</rss>

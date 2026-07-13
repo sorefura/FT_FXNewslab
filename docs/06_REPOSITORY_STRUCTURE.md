@@ -49,6 +49,10 @@ fx-system/
 
 最初から全file moveを要求しない。
 
+Operational ingestionの初期実装では`apps/fx_research`がcollection、normalization、
+feature production、application orchestrationを所有する。Federal ReserveとBank of Japanの
+parser、HTTP、PDF、SQLite polling stateはinfrastructureとして隔離し、`fx_core`へ持ち込まない。
+
 ## fx_core admission rule
 
 型やロジックを`fx_core`へ置く条件:

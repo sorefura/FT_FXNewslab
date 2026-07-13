@@ -46,6 +46,11 @@ Signal
 
 同一のdomain contract、versioning rule、semantic definitionを共有する。
 
+Operational News collectionはResearch applicationが所有する。Source adapterがFed RSSや
+BOJ HTML/PDFを`CollectedNewsItem`へ閉じ込め、normalization後の`NewsObservation`だけを
+共有contractへ渡す。Source configurationがcandidate currencyを決定し、LLMへcurrency
+selectionを委譲しない。
+
 ## Research path
 
 ```text

@@ -17,7 +17,7 @@ class FailingNewsSource:
     source_id = "fed.press_monetary.rss"
 
     def fetch(self) -> tuple[CollectedNewsItem, ...]:
-        raise SourceRetrievalError("recorded source outage api_key=sk-recorded-secret")
+        raise SourceRetrievalError("recorded source outage api_key=recorded-secret")
 
 
 class RecordedNewsSource:

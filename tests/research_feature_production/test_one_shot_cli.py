@@ -223,7 +223,7 @@ def test_openai_provider_requires_environment_credential(
 
 
 def test_openai_provider_does_not_require_fixture(tmp_path: Path, monkeypatch, capsys) -> None:
-    monkeypatch.setenv("OPENAI_API_KEY", "sk-recorded-not-sent")
+    monkeypatch.setenv("OPENAI_API_KEY", "recorded-not-sent")
     monkeypatch.setattr(
         sys,
         "argv",

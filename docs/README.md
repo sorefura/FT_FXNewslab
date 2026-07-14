@@ -42,6 +42,8 @@
 - `adr/0002-currency-first-signal-model.md`
 - `adr/0003-ai-is-a-feature-producer.md`
 - `adr/0004-signals-are-immutable.md`
+- `adr/0005-shared-sqlite-signal-store.md`
+- `adr/0006-gmo-fx-is-primary-forward-market-source.md`
 
 ## Reading route by task
 
@@ -66,7 +68,8 @@
 - `packages/fx_core`: Research/Live共有のimmutable domain contract。
 - `packages/fx_signal_store`: append-only SQLite Signal/lineage reference store。
 - `apps/fx_research`: Fed/BOJ operational News collection、Feature/Signal production、
-  OANDA M1 evidenceを用いたForward Result one-shot経路。
+  Primary GMO FX Public M1 BID evidenceを用いたForward Result one-shot経路。OANDAは
+  optional experimental adapterとして維持する。
 - `apps/swap_bot`: Live固有のPortfolio/Risk/approved Execution境界とshadow runner。
 - `docs/exec-plans/0001-shared-domain-foundation.md`: 完了済みの共有domain基盤計画。
 - `docs/exec-plans/0002-operational-news-ingestion.md`: operational News ingestion計画。

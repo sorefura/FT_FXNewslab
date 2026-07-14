@@ -79,6 +79,9 @@ Signal targetを観測instrumentへ写像する規約。初期値は
 
 provider responseからimmutable MarketCandleへ変換するadapter/market contract。
 
+Primary GMO FX semanticsは`gmo-fx-kline-bid-v1`、optional OANDA semanticsは
+`oanda-v20-candles-v1`とする。別basisのrecordを同一versionへ入れない。
+
 ### formula_version
 
 alignment、return、MFE/MAE、realized volatilityを含むForwardResult計算規約。
@@ -162,6 +165,9 @@ Forward observationではprovider/transport/contract failureを`FAILED`、alignm
 complete candleがない状態を`UNAVAILABLE`として分ける。後者は
 `T0_CANDLE_NOT_AVAILABLE`または`TARGET_CANDLE_NOT_AVAILABLE`を保持し、どちらもzero returnを
 生成しない。
+
+M1 alignmentのoperational readinessは`target_at + alignment delay + 1 minute`とする。
+alignment終端candleがclose可能になる前はproviderを呼ばず`PENDING`を維持する。
 
 ## Suggested logical tables
 
@@ -275,6 +281,19 @@ market_snapshot_candle
 complete candle revisionを順序付きで参照する。Forward jobの
 `PENDING/COMPLETED/FAILED/UNAVAILABLE`はretryのためのmutable operational stateであり、
 immutable evidence/result tableとは分離する。
+
+Forward evaluation sampleの比較・集約では最低限、次のsemantic dimensionsを保持する。
+
+```text
+market_source
+market_data_version
+price_basis
+granularity
+projection_version
+formula_version
+```
+
+ExecPlan 0004は異なるdimensionを無条件に一つのheadline metricへ集約しない。
 
 ### trade_candidate
 

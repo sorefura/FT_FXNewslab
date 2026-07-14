@@ -26,9 +26,10 @@ Signal is useful; aggregate evaluation and validation remain later Program work.
 ## Goal
 
 Given an immutable persisted Signal, deterministically schedule five forward horizons,
-project supported targets onto `USD_JPY`, acquire complete OANDA v20 M1 midpoint
-candles, calculate a versioned ForwardResult, and persist both the result and its exact
-immutable market evidence append-only.
+project supported targets onto `USD_JPY`, acquire complete versioned M1 market candles,
+calculate a versioned ForwardResult, and persist both the result and its exact immutable
+market evidence append-only. GMO FX Public M1 BID is the Primary operational source;
+OANDA v20 midpoint remains optional and experimental.
 
 The completed path is:
 
@@ -113,9 +114,9 @@ Every supported Signal schedules exactly these horizons, irrespective of
 `Signal.horizon`: `15m`, `1h`, `4h`, `1d`, and `3d`. The target time is
 `signal.created_at + horizon`.
 
-OANDA M1 timestamps are candle-open times. The entry price is the midpoint open of the
+M1 timestamps are candle-open times. The entry price is the selected basis open of the
 first complete candle whose open time is at or after the anchor. The exit price is the
-midpoint open of the first complete candle whose open time is at or after the target.
+selected basis open of the first complete candle whose open time is at or after the target.
 Each alignment permits at most five minutes of delay, inclusive. A containing candle's
 close is never substituted and missing candles are never forward-filled.
 
@@ -159,7 +160,7 @@ Forward jobs are operational, mutable state separate from immutable results. Sta
 are `PENDING`, `COMPLETED`, `FAILED`, and `UNAVAILABLE`; only `COMPLETED` references a
 ForwardResult.
 
-- Before `target_at + five minutes`, a job remains `PENDING`.
+- Before `target_at + five minutes + granularity duration`, a job remains `PENDING`.
 - Provider/transport/contract failure becomes `FAILED` with bounded sanitized error.
 - A due job without a t0 candle becomes `UNAVAILABLE / T0_CANDLE_NOT_AVAILABLE`.
 - A due job without a target candle becomes
@@ -244,26 +245,28 @@ Verification:
 python -m pytest -q tests/forward_calculation
 ```
 
-### Milestone 4 - OANDA adapter and one-shot observation
+### Milestone 4 - Market adapter and one-shot observation
 
 Contribution: proves the boundary against the initial operational data source without
 introducing a scheduler or evaluation metrics.
 
 Deliverables:
 
-- OANDA v20 `USD_JPY` M1 midpoint, unsmoothed candle adapter.
-- Environment-configured token, base URL, and timeout.
-- Fake-transport and recorded-response contract tests.
-- Explicit opt-in `oanda_smoke` test.
-- `observe-forward-once --database ... --provider oanda --pair USD_JPY` CLI.
+- Primary GMO FX Public `USD_JPY` M1 BID adapter with bounded provider-date splitting.
+- Optional OANDA v20 `USD_JPY` M1 midpoint, unsmoothed candle adapter.
+- Environment-configured base URL and timeout; OANDA token only when OANDA is selected.
+- Fake-transport and recorded-response contract tests for both adapters.
+- Explicit opt-in `gmo_fx_smoke` and `oanda_smoke` tests.
+- `observe-forward-once --database ... --provider gmo-fx --pair USD_JPY` CLI, with
+  `gmo-fx` as the default provider.
 - Scheduling of five jobs per supported Signal and due-job-only observation.
 - Idempotent rerun and failure/unavailability behavior.
 
 Verification:
 
 ```powershell
-python -m pytest -q tests/oanda_contract tests/forward_application
-python -m fx_research observe-forward-once --database <path> --provider oanda --pair USD_JPY
+python -m pytest -q tests/gmo_fx_contract tests/oanda_contract tests/forward_application
+python -m fx_research observe-forward-once --database <path> --provider gmo-fx --pair USD_JPY
 ```
 
 ## Migration and compatibility
@@ -272,8 +275,9 @@ python -m fx_research observe-forward-once --database <path> --provider oanda --
 - Do not alter shared Signal Store schema or existing Research migrations.
 - Persist exact candle revisions instead of overwriting a timestamp row.
 - Keep mutable job attempts separate from append-only evidence and results.
-- OANDA credentials come only from environment variables and never enter fixtures,
-  database records, logs, or errors.
+- GMO FX Public retrieval receives no private credential. Optional OANDA credentials
+  come only from environment variables and never enter fixtures, database records,
+  logs, or errors.
 - This plan creates no dependencies on `apps/swap_bot`.
 
 ## Validation and acceptance
@@ -289,7 +293,7 @@ Acceptance requires all of the following:
 - Duplicate rerun creates neither duplicate evidence links nor duplicate results.
 - Signal records remain unchanged.
 - Provider failure and candle unavailability are distinguishable and sanitized.
-- OANDA incomplete candles are never used.
+- GMO FX in-progress candles and OANDA incomplete candles are never used.
 - Full tests, Ruff, and strict mypy pass on the Python 3.11 baseline.
 
 Final commands:
@@ -301,7 +305,8 @@ python -m mypy packages/fx_core/src packages/fx_signal_store/src apps/fx_researc
 ```
 
 Validation evidence recorded at completion will include Python version, test counts,
-lint result, mypy result, OANDA smoke result or explicit credential reason, five-job
+lint result, mypy result, GMO FX Public smoke result, OANDA smoke result or explicit
+credential reason, five-job
 count, completed result count, duplicate rerun behavior, Signal immutability check, and
 offline evidence replay.
 
@@ -326,9 +331,9 @@ offline evidence replay.
   configuration, one-shot CLI, due-job orchestration, fake transport tests, and opt-in
   smoke test.
 - [x] (2026-07-14) Full Python 3.11 tests, Ruff, and strict mypy validation passed.
-- [ ] (2026-07-14) Review correction reopened: fix alignment readiness and persisted
-  semantic-chain validation, evaluate GMO FX capability, and record a Primary Market
-  Data Source decision before ExecPlan 0004.
+- [x] (2026-07-14) Review correction: fixed alignment readiness and persisted
+  semantic-chain validation, evaluated GMO FX capability, selected and verified the
+  Primary Market Data Source, and recorded the decision before ExecPlan 0004.
 
 ## Surprises & Discoveries
 
@@ -343,6 +348,15 @@ offline evidence replay.
 - No OANDA token/base URL or explicit smoke opt-in was available in the validation
   environment. The network smoke remained skipped, while its adapter contract ran with
   a recorded official-schema response and fake transport.
+- GMO FX Public KLines have no explicit `complete` field and include the current open
+  M1 candle. The official response time makes a conservative completion rule possible:
+  `responsetime >= openTime + 1 minute`.
+- GMO KLine history is provider-date based rather than arbitrary-range based. A
+  three-day UTC window required five bounded adjacent date requests in the probe and
+  returned at most 1,440 candles per response.
+- The official documentation states fixed Private REST and Public WebSocket limits but
+  does not state a fixed Public REST rate. The adapter therefore uses a small bounded
+  sequential request set; general load limiting and `ERR-5003` remain external failures.
 
 ## Decision log
 
@@ -363,6 +377,17 @@ offline evidence replay.
 - 2026-07-14: Treat `UNAVAILABLE` as a terminal observation outcome and `FAILED` as
   retryable operational state. Later data cannot silently replace a completed or
   explicitly unavailable horizon.
+- 2026-07-14: Operational review found that OANDA API availability could not be
+  guaranteed in the user's environment. Forward semantics remain provider-independent,
+  and OANDA remains an optional experimental adapter instead of the Primary acceptance
+  dependency.
+- 2026-07-14: GMO FX was evaluated first because the user has operational experience
+  with its FX API, but familiarity was not used as acceptance evidence. Official Public
+  contract review and a real three-day probe confirmed USD_JPY M1 BID/ASK OHLC,
+  timestamps, historical retrieval, bounded splitting, and completion derivation.
+- 2026-07-14: Select GMO FX Public M1 BID as Primary with
+  `gmo-fx-kline-bid-v1`. Do not average BID/ASK extrema into synthetic midpoint candles.
+  ExecPlan 0004 must segment differing market semantics.
 
 ## Validation
 
@@ -395,3 +420,22 @@ Final validation on 2026-07-14:
   provider call.
 - Provider failure persisted five `FAILED` jobs and zero results; missing target candles
   persisted five `UNAVAILABLE` jobs and zero results.
+
+Market-source review validation on 2026-07-14:
+
+- Runtime: Python 3.11.9.
+- Full default suite: 145 passed, 5 opt-in external smoke tests skipped, 0 failed.
+- Explicit GMO FX Public network smoke: 1 passed with no credential.
+- GMO capability probe: 5 deterministic date requests, 1,380 complete BID M1 candles
+  in the requested three-day UTC window, first `2026-07-10T20:50:00Z`, last
+  `2026-07-13T20:49:00Z`, and 1 in-progress adjacent candle excluded.
+- Provider-independent chronology/persistence focus: 29 passed.
+- GMO/OANDA/application adapter focus: 20 passed.
+- Ruff: all checks passed.
+- Strict mypy: 51 source files checked, no issues.
+- OANDA network smoke remains unavailable because token/base URL were not configured;
+  OANDA is no longer a Primary acceptance dependency.
+- One delayed Signal schedules five horizons but performs one maximum-range source call;
+  all five results retain horizon-specific immutable snapshots.
+- Completion before the aligned tx M1 close, cross-horizon result attachment, and
+  snapshot semantic mismatch are rejected without a ForwardResult or COMPLETED job.

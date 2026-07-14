@@ -103,6 +103,12 @@ OANDA adapter unit testはfake transportとrecorded responseを用い、M1 midpo
 `smooth=false`、complete candle、Decimal OHLC、token headerを確認する。実OANDA接続は
 `oanda_smoke` marker、`RUN_OANDA_SMOKE=1`、credential/base URLが揃う場合だけ実行する。
 
+Primary GMO FX adapter unit testはfake transportとrecorded Public responseを用い、
+`USD_JPY` normalization、M1 BID、UTC timestamp、Decimal OHLC、bounded provider-date split、
+response-time completion、same-content deduplication、changed revision preservationを確認する。
+private credentialが不要であることを境界から保証する。実Public接続は`gmo_fx_smoke`
+markerと`RUN_GMO_FX_SMOKE=1`で通常CIから分離する。
+
 統計関数は小さなhand-calculated datasetで検証する。
 
 ## Strategy tests

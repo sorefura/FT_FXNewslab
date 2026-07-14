@@ -94,6 +94,14 @@ class ForwardResult:
 `USD_JPY -> USD_JPY (+1)`とし、versionは`currency-usdjpy-projection-v1`とする。
 別々のUSD SignalとJPY Signalを合成してPair Signalを作らない。
 
+Forward Result semanticsはprovider非依存とする。Market adapterは同じ`MarketCandle`へ
+normalizeするが、`market_source`、`market_data_version`、`price_basis`、`granularity`を
+結果とevidenceへ残す。GMO FX BIDとOANDA midpointは同一sampleとして暗黙に混ぜない。
+
+Primary operational evidenceはGMO FX Publicの直接BID M1 OHLCとする。BID/ASK high/lowを
+component単位で平均したsynthetic midpoint extremaは、同時刻に存在した保証がないため
+使用しない。
+
 ### Forward return
 
 market target returnは`projection_sign * ((price_tx / price_t0) - 1) * 10000`

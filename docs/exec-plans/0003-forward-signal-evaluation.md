@@ -319,7 +319,9 @@ offline evidence replay.
 - [x] (2026-07-14) Milestone 2 - Added migration 0003, immutable candle revisions,
   ordered snapshots, append-only results, idempotent jobs, and sanitized operational
   failure state.
-- [ ] Milestone 3 - Versioned calculation and future-leakage checks.
+- [x] (2026-07-14) Milestone 3 - Added versioned alignment, Decimal return and
+  directional extrema, realized volatility, explicit unavailability, and future-data
+  exclusion.
 - [ ] Milestone 4 - OANDA adapter and one-shot observation.
 - [ ] Full validation and handoff.
 
@@ -356,3 +358,7 @@ test execution itself succeeded.
 Milestone 2 focused validation: 42 persistence and existing Research operational tests
 passed with a unique external pytest basetemp; Ruff and strict mypy passed. Evidence and
 results reject SQL update/delete, while job status remains operationally mutable.
+
+Milestone 3 focused validation: 28 forward domain, persistence, and calculation tests
+passed; Ruff and strict mypy passed. A candle after the selected tx is excluded before
+semantic validation, so even unrelated future content cannot alter the result.

@@ -4,6 +4,7 @@ from pathlib import Path
 
 from fx_core import CurrencyPair
 from fx_research.forward import (
+    FORWARD_HORIZONS,
     ForwardJobStatus,
     MarketCandle,
     UnavailableReason,
@@ -21,6 +22,8 @@ NOW = datetime(2026, 7, 20, tzinfo=UTC)
 class RecordedMarketSource:
     source = "oanda-v20"
     market_data_version = "oanda-v20-candles-v1"
+    granularity = "M1"
+    price_basis = "midpoint"
 
     def __init__(self, *, fail: bool = False, omit_target: bool = False) -> None:
         self.fail = fail
@@ -39,17 +42,18 @@ class RecordedMarketSource:
         self.calls += 1
         if self.fail:
             raise TimeoutError("Authorization: Bearer synthetic-secret")
-        target_at = end_at - timedelta(minutes=6)
         candles = [self._candle(start_at, instrument, granularity, price_basis)]
         if not self.omit_target:
-            candles.append(
+            candles.extend(
                 self._candle(
-                    target_at,
+                    start_at + horizon.duration,
                     instrument,
                     granularity,
                     price_basis,
                     open_price="101",
                 )
+                for horizon in FORWARD_HORIZONS
+                if start_at + horizon.duration < end_at
             )
         return tuple(candles)
 
@@ -104,7 +108,7 @@ def test_one_signal_completes_five_jobs_and_idempotent_rerun_makes_no_calls(
     assert first.due_jobs == 5
     assert first.completed == 5
     assert len(forward_store.list_results(signal_id=signal().signal_id)) == 5
-    assert calls_after_first == 5
+    assert calls_after_first == 1
     assert source.calls == calls_after_first
     assert second.jobs_scheduled == 0
     assert second.due_jobs == 0

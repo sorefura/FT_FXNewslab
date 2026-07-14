@@ -16,6 +16,7 @@ markers = [
     "source_smoke: opt-in checks against official external News sources",
     "openai_smoke: opt-in Feature extraction check requiring OpenAI credentials",
     "oanda_smoke: opt-in market candle check requiring OANDA credentials",
+    "gmo_fx_smoke: opt-in Public GMO FX historical candle check",
 ]
 
 [tool.ruff]

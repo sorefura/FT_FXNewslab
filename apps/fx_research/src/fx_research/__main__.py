@@ -14,8 +14,10 @@ from .feature_production import (
     RecordedFeatureProvider,
     StructuredFeatureProvider,
 )
+from .forward import MarketDataSource
 from .forward_application import ObserveForwardOnceService
 from .forward_persistence import SQLiteForwardEvaluationStore
+from .infrastructure.gmo_fx import GmoFxMarketDataSource, UrllibGmoFxTransport
 from .infrastructure.http_client import HttpGetPolicy, UrllibHttpClient
 from .infrastructure.oanda import OandaV20CandleSource, UrllibOandaTransport
 from .infrastructure.openai import (
@@ -51,7 +53,7 @@ def main() -> int:
 
     observe = subparsers.add_parser("observe-forward-once")
     observe.add_argument("--database", required=True)
-    observe.add_argument("--provider", choices=("oanda",), required=True)
+    observe.add_argument("--provider", choices=("gmo-fx", "oanda"), default="gmo-fx")
     observe.add_argument("--pair", required=True)
 
     args = parser.parse_args()
@@ -86,7 +88,7 @@ def main() -> int:
         )
     else:
         database = Path(args.database)
-        source = _build_oanda_source(parser)
+        source = _build_market_source(args, parser)
         forward_result = ObserveForwardOnceService(
             SQLiteSignalStore(database),
             SQLiteForwardEvaluationStore(database),
@@ -138,22 +140,41 @@ def _build_extractor(
     )
 
 
-def _build_oanda_source(parser: argparse.ArgumentParser) -> OandaV20CandleSource:
+def _build_market_source(
+    args: argparse.Namespace, parser: argparse.ArgumentParser
+) -> MarketDataSource:
+    if args.provider == "gmo-fx":
+        timeout_seconds = _environment_timeout(
+            "GMO_FX_API_TIMEOUT_SECONDS", parser
+        )
+        return GmoFxMarketDataSource(
+            UrllibGmoFxTransport(),
+            base_url=os.getenv(
+                "GMO_FX_PUBLIC_API_BASE_URL",
+                "https://forex-api.coin.z.com/public",
+            ),
+            timeout_seconds=timeout_seconds,
+        )
     api_token = os.getenv("OANDA_API_TOKEN")
     if not api_token:
         parser.error("OANDA_API_TOKEN is required for --provider oanda")
     base_url = os.getenv("OANDA_API_BASE_URL", "https://api-fxpractice.oanda.com")
-    timeout_text = os.getenv("OANDA_API_TIMEOUT_SECONDS", "10")
-    try:
-        timeout_seconds = float(timeout_text)
-    except ValueError:
-        parser.error("OANDA_API_TIMEOUT_SECONDS must be numeric")
+    timeout_seconds = _environment_timeout("OANDA_API_TIMEOUT_SECONDS", parser)
     return OandaV20CandleSource(
         UrllibOandaTransport(),
         api_token=api_token,
         base_url=base_url,
         timeout_seconds=timeout_seconds,
     )
+
+
+def _environment_timeout(name: str, parser: argparse.ArgumentParser) -> float:
+    timeout_text = os.getenv(name, "10")
+    try:
+        timeout_seconds = float(timeout_text)
+    except ValueError:
+        parser.error(f"{name} must be numeric")
+    return timeout_seconds
 
 
 def _parse_pair(value: str, parser: argparse.ArgumentParser) -> CurrencyPair:

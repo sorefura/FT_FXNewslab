@@ -54,6 +54,8 @@ class UrllibOandaTransport:
 class OandaV20CandleSource:
     source = OANDA_SOURCE
     market_data_version = OANDA_MARKET_DATA_VERSION
+    granularity = "M1"
+    price_basis = "midpoint"
 
     def __init__(
         self,

@@ -251,6 +251,8 @@ class ForwardResult:
 class MarketDataSource(Protocol):
     source: str
     market_data_version: str
+    granularity: str
+    price_basis: str
 
     def fetch_candles(
         self,

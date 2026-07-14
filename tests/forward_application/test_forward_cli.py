@@ -6,7 +6,7 @@ from fx_research import __main__ as research_cli
 from fx_research.forward_application import ObserveForwardOnceResult
 
 
-def test_observe_forward_once_cli_exposes_oanda_pair_boundary(
+def test_observe_forward_once_cli_defaults_to_gmo_fx_primary_provider(
     tmp_path: Path, monkeypatch, capsys
 ) -> None:
     expected = ObserveForwardOnceResult(
@@ -19,7 +19,12 @@ def test_observe_forward_once_cli_exposes_oanda_pair_boundary(
         failed=0,
         unavailable=0,
     )
-    monkeypatch.setattr(research_cli, "_build_oanda_source", lambda parser: object())
+    selected: list[str] = []
+    monkeypatch.setattr(
+        research_cli,
+        "_build_market_source",
+        lambda args, parser: selected.append(args.provider) or object(),
+    )
     monkeypatch.setattr(
         research_cli.ObserveForwardOnceService,
         "run",
@@ -33,14 +38,13 @@ def test_observe_forward_once_cli_exposes_oanda_pair_boundary(
             "observe-forward-once",
             "--database",
             str(tmp_path / "forward.sqlite3"),
-            "--provider",
-            "oanda",
             "--pair",
             "USD_JPY",
         ],
     )
 
     assert research_cli.main() == 0
+    assert selected == ["gmo-fx"]
     assert json.loads(capsys.readouterr().out) == {
         "completed": 5,
         "due_jobs": 5,

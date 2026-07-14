@@ -8,6 +8,7 @@ from fx_signal_store import SQLiteSignalStore
 
 from .forward import (
     ALIGNMENT_DELAY_MINUTES,
+    ForwardJobRecord,
     ForwardJobStatus,
     MarketDataSource,
     UnsupportedProjectionError,
@@ -57,6 +58,8 @@ class ObserveForwardOnceService:
                     market_source=source.source,
                     market_data_version=source.market_data_version,
                     instrument=instrument,
+                    granularity=source.granularity,
+                    price_basis=source.price_basis,
                 )
             except UnsupportedProjectionError:
                 unsupported += 1
@@ -71,12 +74,15 @@ class ObserveForwardOnceService:
         retryable = self._forward_store.list_jobs(
             statuses=(ForwardJobStatus.PENDING, ForwardJobStatus.FAILED)
         )
+        due_records: dict[str, list[ForwardJobRecord]] = {}
         for record in retryable:
             job = record.job
             if (
                 job.market_source != source.source
                 or job.market_data_version != source.market_data_version
                 or job.projection.instrument != instrument
+                or job.granularity != source.granularity
+                or job.price_basis != source.price_basis
             ):
                 continue
             due_at = (
@@ -88,36 +94,56 @@ class ObserveForwardOnceService:
                 pending += 1
                 continue
             due += 1
+            due_records.setdefault(job.signal_id.value, []).append(record)
+
+        for records in due_records.values():
+            first_job = records[0].job
+            end_at = max(
+                record.job.target_at
+                + timedelta(minutes=ALIGNMENT_DELAY_MINUTES)
+                + market_granularity_duration(record.job.granularity)
+                for record in records
+            )
             try:
                 candles = tuple(
                     source.fetch_candles(
-                        instrument=job.projection.instrument,
-                        granularity=job.granularity,
-                        price_basis=job.price_basis,
-                        start_at=job.anchor_at,
-                        end_at=due_at,
+                        instrument=first_job.projection.instrument,
+                        granularity=first_job.granularity,
+                        price_basis=first_job.price_basis,
+                        start_at=first_job.anchor_at,
+                        end_at=end_at,
                     )
                 )
-                calculation = calculate_forward_result(
-                    self._signal_store.get_signal(job.signal_id),
-                    job,
-                    candles,
-                    completed_at=now,
-                )
-                self._forward_store.complete(
-                    job.job_id,
-                    snapshot=calculation.snapshot,
-                    result=calculation.result,
-                )
-                completed += 1
-            except CandleAlignmentUnavailable as error:
-                self._forward_store.mark_unavailable(
-                    job.job_id, reason=error.reason, updated_at=now
-                )
-                unavailable += 1
             except Exception as error:
-                self._forward_store.mark_failed(job.job_id, error=error, updated_at=now)
-                failed += 1
+                for record in records:
+                    self._forward_store.mark_failed(
+                        record.job.job_id, error=error, updated_at=now
+                    )
+                    failed += 1
+                continue
+            for record in records:
+                job = record.job
+                try:
+                    calculation = calculate_forward_result(
+                        self._signal_store.get_signal(job.signal_id),
+                        job,
+                        candles,
+                        completed_at=now,
+                    )
+                    self._forward_store.complete(
+                        job.job_id,
+                        snapshot=calculation.snapshot,
+                        result=calculation.result,
+                    )
+                    completed += 1
+                except CandleAlignmentUnavailable as error:
+                    self._forward_store.mark_unavailable(
+                        job.job_id, reason=error.reason, updated_at=now
+                    )
+                    unavailable += 1
+                except Exception as error:
+                    self._forward_store.mark_failed(job.job_id, error=error, updated_at=now)
+                    failed += 1
         return ObserveForwardOnceResult(
             signals_scanned=len(signals),
             unsupported_signals=unsupported,

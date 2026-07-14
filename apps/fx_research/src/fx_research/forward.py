@@ -166,6 +166,34 @@ class ForwardObservationJob:
 
 
 @dataclass(frozen=True, slots=True)
+class ForwardJobRecord:
+    job: ForwardObservationJob
+    status: ForwardJobStatus
+    updated_at: datetime
+    unavailable_reason: UnavailableReason | None = None
+    error_code: str | None = None
+    error_message: str | None = None
+    result_id: str | None = None
+
+    def __post_init__(self) -> None:
+        require_utc(self.updated_at, "forward job updated_at")
+        if self.status is ForwardJobStatus.COMPLETED and self.result_id is None:
+            raise ValueError("completed forward job requires result_id")
+        if self.status is not ForwardJobStatus.COMPLETED and self.result_id is not None:
+            raise ValueError("only completed forward job can reference a result")
+        if (
+            self.status is ForwardJobStatus.UNAVAILABLE
+            and self.unavailable_reason is None
+        ):
+            raise ValueError("unavailable forward job requires a reason")
+        if (
+            self.status is not ForwardJobStatus.UNAVAILABLE
+            and self.unavailable_reason is not None
+        ):
+            raise ValueError("only unavailable forward job can have an unavailable reason")
+
+
+@dataclass(frozen=True, slots=True)
 class ForwardResult:
     result_id: str
     signal_id: SignalId

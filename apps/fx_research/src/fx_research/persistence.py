@@ -11,8 +11,15 @@ from fx_core import Currency, ObservationId
 
 _ERROR_MESSAGE_LIMIT = 240
 _SECRET_PATTERN = re.compile(
-    r"(?i)(?:sk-[a-z0-9_-]+|(?:api[_ -]?key|authorization|bearer)\s*[:=]?\s*\S+)"
+    r"(?i)(?:sk-[a-z0-9_-]+|authorization\s*[:=]?\s*(?:bearer\s+)?\S+|"
+    r"(?:api[_ -]?key|bearer)\s*[:=]?\s*\S+)"
 )
+
+
+def safe_error_message(error: Exception) -> str:
+    compact = " ".join(str(error).split())
+    redacted = _SECRET_PATTERN.sub("[REDACTED]", compact)
+    return redacted[:_ERROR_MESSAGE_LIMIT]
 
 
 class CollectionStage(StrEnum):
@@ -146,7 +153,7 @@ class SQLiteIngestionStateStore:
         processed_item_count: int,
         error: Exception | None = None,
     ) -> None:
-        error_message = self._safe_error_message(error) if error else None
+        error_message = safe_error_message(error) if error else None
         with closing(self._connect()) as connection, connection:
             connection.execute(
                 "INSERT INTO research_fetch_runs(source_id, fetched_at, status, item_count, "
@@ -244,7 +251,7 @@ class SQLiteIngestionStateStore:
         signal_id: str | None = None,
         error: Exception | None = None,
     ) -> None:
-        error_message = self._safe_error_message(error) if error else None
+        error_message = safe_error_message(error) if error else None
         with closing(self._connect()) as connection, connection:
             connection.execute(
                 """
@@ -267,12 +274,6 @@ class SQLiteIngestionStateStore:
                     updated_at.isoformat(),
                 ),
             )
-
-    @staticmethod
-    def _safe_error_message(error: Exception) -> str:
-        compact = " ".join(str(error).split())
-        redacted = _SECRET_PATTERN.sub("[REDACTED]", compact)
-        return redacted[:_ERROR_MESSAGE_LIMIT]
 
     def get_production_record(
         self,

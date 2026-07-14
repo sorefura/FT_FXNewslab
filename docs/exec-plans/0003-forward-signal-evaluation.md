@@ -316,7 +316,9 @@ offline evidence replay.
 - [x] (2026-07-14) Created this living ExecPlan before implementation.
 - [x] (2026-07-14) Milestone 1 - Added immutable Research contracts, explicit
   USD/JPY/USD_JPY projection, five-horizon scheduling, and architecture guards.
-- [ ] Milestone 2 - Append-only evidence and result persistence.
+- [x] (2026-07-14) Milestone 2 - Added migration 0003, immutable candle revisions,
+  ordered snapshots, append-only results, idempotent jobs, and sanitized operational
+  failure state.
 - [ ] Milestone 3 - Versioned calculation and future-leakage checks.
 - [ ] Milestone 4 - OANDA adapter and one-shot observation.
 - [ ] Full validation and handoff.
@@ -350,3 +352,7 @@ Implementation validation is pending.
 Milestone 1 focused validation: 16 tests passed; Ruff and strict mypy passed for the
 new contract module. Pytest could not write its cache under the managed workspace, but
 test execution itself succeeded.
+
+Milestone 2 focused validation: 42 persistence and existing Research operational tests
+passed with a unique external pytest basetemp; Ruff and strict mypy passed. Evidence and
+results reject SQL update/delete, while job status remains operationally mutable.

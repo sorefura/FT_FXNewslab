@@ -57,6 +57,16 @@ def test_forward_evaluation_contracts_do_not_leak_into_shared_or_live_packages()
             }, f"Research contract import in {path}"
 
 
+def test_signal_evaluation_does_not_import_live_strategy_or_broker_modules() -> None:
+    evaluation_modules = tuple(
+        (ROOT / "apps/fx_research/src/fx_research").glob("evaluation*.py")
+    )
+    forbidden = {"swap_bot", "strategy", "portfolio", "risk", "execution", "ports"}
+    for path in evaluation_modules:
+        imported = {name.split(".")[-1] for name in _imports(path)}
+        assert forbidden.isdisjoint(imported), f"Live dependency in {path}"
+
+
 def test_portfolio_and_risk_do_not_import_broker_or_execution() -> None:
     for module in ("portfolio.py", "risk.py"):
         imports = _imports(ROOT / "apps/swap_bot/src/swap_bot" / module)

@@ -9,6 +9,12 @@ from fx_core import CurrencyPair
 from fx_signal_store import SQLiteSignalStore
 
 from .application import CollectOnceService, ProduceSignalsOnceService
+from .evaluation import ValidationPolicy
+from .evaluation_application import (
+    EvaluateSignalsOnceService,
+    validation_policy_from_mapping,
+)
+from .evaluation_persistence import SQLiteEvaluationStore
 from .feature_production import (
     ProviderLlmFeatureExtractor,
     RecordedFeatureProvider,
@@ -56,6 +62,10 @@ def main() -> int:
     observe.add_argument("--provider", choices=("gmo-fx", "oanda"), default="gmo-fx")
     observe.add_argument("--pair", required=True)
 
+    evaluate = subparsers.add_parser("evaluate-signals-once")
+    evaluate.add_argument("--database", required=True)
+    evaluate.add_argument("--validation-policy")
+
     args = parser.parse_args()
     if args.command == "collect-once":
         database = Path(args.database)
@@ -86,7 +96,7 @@ def main() -> int:
                 args.allow_partial_success and production_result.completed > 0
             )
         )
-    else:
+    elif args.command == "observe-forward-once":
         database = Path(args.database)
         source = _build_market_source(args, parser)
         forward_result = ObserveForwardOnceService(
@@ -96,6 +106,15 @@ def main() -> int:
         ).run(source, instrument=_parse_pair(args.pair, parser))
         payload = asdict(forward_result)
         exit_code = int(forward_result.failed > 0)
+    else:
+        database = Path(args.database)
+        policy = _load_validation_policy(args.validation_policy, parser)
+        evaluation_result = EvaluateSignalsOnceService(
+            SQLiteEvaluationStore(database),
+            clock=lambda: datetime.now(UTC),
+        ).run(policy)
+        payload = asdict(evaluation_result)
+        exit_code = int(evaluation_result.failed > 0)
     print(json.dumps(payload, ensure_ascii=False, sort_keys=True))
     return exit_code
 
@@ -182,6 +201,23 @@ def _parse_pair(value: str, parser: argparse.ArgumentParser) -> CurrencyPair:
         return CurrencyPair.parse(value)
     except ValueError:
         parser.error("--pair must use BASE_QUOTE or BASE/QUOTE")
+
+
+def _load_validation_policy(
+    path: str | None, parser: argparse.ArgumentParser
+) -> ValidationPolicy | None:
+    if path is None:
+        return None
+    try:
+        payload = json.loads(Path(path).read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError) as error:
+        parser.error(f"validation policy is unavailable: {type(error).__name__}")
+    if not isinstance(payload, dict):
+        parser.error("validation policy must contain a JSON object")
+    try:
+        return validation_policy_from_mapping(payload)
+    except ValueError as error:
+        parser.error(str(error))
 
 
 if __name__ == "__main__":

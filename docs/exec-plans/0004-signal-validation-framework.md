@@ -411,7 +411,9 @@ Acceptance requires all of the following:
 - [x] (2026-07-14) Milestone 3 - Added migration 0004, single-transaction input
   capture, deterministic run/report identities, ordered input replay, immutable policy
   snapshots, append-only storage, and update/delete rejection.
-- [ ] Milestone 4 - Optional policy assessment and one-shot CLI.
+- [x] (2026-07-14) Milestone 4 - Added report-only one-shot evaluation, explicit JSON
+  policy parsing, policy-driven assessments limited to Research statuses, idempotent
+  assessment persistence, JSON summary, failure exit behavior, and Live import guards.
 - [ ] Milestone 5 - Program validation and reproducibility audit.
 
 ## Surprises & Discoveries
@@ -442,6 +444,10 @@ Acceptance requires all of the following:
   read transaction, then calculate from that immutable in-memory snapshot. Holding a
   write transaction across bootstrap calculation would add unnecessary contention;
   exact ordered IDs provide the stable persistence boundary instead.
+- 2026-07-14: Map policy outcomes to `EXPERIMENTAL`, `PROMISING`, and
+  `VALIDATED_FOR_RESEARCH` only. Point estimates may identify PROMISING evidence, while
+  every configured point, confidence, bucket, monotonicity, and stability condition
+  must pass for VALIDATED_FOR_RESEARCH; neither status grants Strategy authority.
 - 2026-07-14: Do not create a new ADR at plan creation. The design follows accepted
   Research/Live sibling, immutable Signal, shared SQLite boundary, and market semantic
   separation decisions rather than changing them.
@@ -490,3 +496,17 @@ Milestone 3 focused validation on 2026-07-14:
 - Canonical cohort/metric payloads replayed with separate Signal and Forward horizons.
 - Evaluation run/report update and delete attempts failed through immutable triggers.
 - Reusing one policy version with different content was rejected.
+
+Milestone 4 focused validation on 2026-07-14:
+
+- Evaluation application, CLI, and architecture boundary: 15 passed.
+- Ruff: all checks passed for application, CLI, integration support, and tests.
+- Strict mypy: application and CLI modules checked, no issues.
+- Report-only execution created no assessment. Explicit policy execution created one
+  policy-referenced assessment, and identical rerun reused the report and assessment.
+- Persisting an assessment before its policy failed its foreign-key contract.
+- Validation status values exclude `APPROVED_FOR_STRATEGY`.
+- Synthetic metric processing failure produced `failed=1`, no partial Evaluation Run,
+  and CLI non-zero behavior.
+- Architecture checks found no evaluation import of Strategy, Portfolio, Risk,
+  Execution, Broker, or Swap Bot modules.

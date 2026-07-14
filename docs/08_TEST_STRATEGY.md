@@ -98,6 +98,17 @@ What:
 - exact MarketSnapshotからnetworkなしで同じForwardResultを再計算できる。
 - provider failureとalignment unavailableとzero returnを区別する。
 - version別metricsが混ざらない。
+- strict cohortがSignal/Forward horizon、Signal version群、market basis、projection/formula
+  versionを分離する。
+- perfect/inverse/tied Spearmanをhand-calculated fixtureで検証する。
+- insufficient/constant ICを0ではなくundefined reasonとして検証する。
+- deterministic bootstrapが同じinput/configurationで同じintervalになる。
+- Hit Rateがneutral/zero returnを除外して個別件数とWilson intervalを返す。
+- fixed bucket境界、empty state、unbucketed Pair score、monotonic/non-monotonic stateを検証する。
+- null MFE/MAEとquarterly insufficient sliceを明示的に数える。
+- exact ordered input IDs、duplicate run reuse、新ForwardResultによる新runを検証する。
+- Evaluation run/report/policy/assessmentのUPDATE/DELETEが拒否される。
+- policyなしではAssessmentを作らず、AssessmentがStrategy approvalを生成しない。
 
 OANDA adapter unit testはfake transportとrecorded responseを用い、M1 midpoint、
 `smooth=false`、complete candle、Decimal OHLC、token headerを確認する。実OANDA接続は
@@ -109,7 +120,9 @@ response-time completion、same-content deduplication、changed revision preserv
 private credentialが不要であることを境界から保証する。実Public接続は`gmo_fx_smoke`
 markerと`RUN_GMO_FX_SMOKE=1`で通常CIから分離する。
 
-統計関数は小さなhand-calculated datasetで検証する。
+統計関数は小さなhand-calculated datasetで検証する。Application/CLI testはResearch-owned
+SQLite fixtureだけを使い、Strategy、Portfolio、Risk、Execution、Brokerをimportまたはinvoke
+しない。
 
 ## Strategy tests
 

@@ -295,6 +295,35 @@ formula_version
 
 ExecPlan 0004は異なるdimensionを無条件に一つのheadline metricへ集約しない。
 
+### evaluation_run
+
+```text
+run_id
+evaluator_version
+score_definition_version
+cohort_definition_version
+ordered_input_identity_hash
+metric_configuration_json
+bootstrap_configuration_json
+created_at
+```
+
+`evaluation_run_input`はordinal付きでexact Signal IDとForwardResult IDを参照する。一回の
+SQLite read transactionでinput setを固定し、計算中に追加されたForwardResultは既存runへ
+含めない。同じordered inputと全configurationは同じrunを再利用する。
+
+`evaluation_report`はrun内のstrict cohortごとにcohort identityとversion付きmetric payloadを
+保存する。cohort identityにはSignal/Forward horizon、Signal version群、market semantics、
+projection/formula/score definition versionを含める。
+
+`validation_policy`と`validation_assessment`はReportから分離する。policy versionは同じ名前で
+contentを変更できず、AssessmentはEvaluation Run、Report、policy version/content hashを参照する。
+run/input/report/policy/assessmentはすべてappend-onlyとし、UPDATE/DELETEを拒否する。
+
+Evaluation metricのbootstrap version、seed、iteration count、bucket boundaries、quantilesは
+configuration snapshotへ保存する。統計上のundefined、insufficient、neutral、zero return、
+null MFE/MAEを同じ値へ集約しない。
+
 ### trade_candidate
 
 ```text

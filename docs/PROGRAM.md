@@ -26,4 +26,6 @@ Signal contract.
 
 ExecPlan 0002 operationalizes News collection and Feature production. ExecPlan 0003 observes
 each immutable Signal at five fixed forward horizons and stores exact market evidence plus a
-replayable result. Aggregate metrics and validation remain ExecPlan 0004 responsibilities.
+replayable result. ExecPlan 0004 groups completed outcomes by strict semantic cohorts, stores
+versioned aggregate metrics, and permits Research validation only through an explicit immutable
+policy. Strategy adoption and Live authority remain ExecPlan 0005 responsibilities.

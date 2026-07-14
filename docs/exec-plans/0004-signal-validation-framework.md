@@ -414,7 +414,8 @@ Acceptance requires all of the following:
 - [x] (2026-07-14) Milestone 4 - Added report-only one-shot evaluation, explicit JSON
   policy parsing, policy-driven assessments limited to Research statuses, idempotent
   assessment persistence, JSON summary, failure exit behavior, and Live import guards.
-- [ ] Milestone 5 - Program validation and reproducibility audit.
+- [x] (2026-07-14) Milestone 5 - Updated permanent Research/data/test contracts and
+  passed the full pytest, Ruff, and strict mypy suite on Python 3.11.9 and 3.14.6.
 
 ## Surprises & Discoveries
 
@@ -424,6 +425,9 @@ Acceptance requires all of the following:
 - Shared Signal and Research Forward records already coexist in one SQLite file. A
   Research-owned single read transaction can therefore freeze exact evaluation inputs
   without moving Evaluation types into `fx_core` or adding a distributed snapshot.
+- Python 3.14 was not initially present in the local environment. The official
+  `Python.Python.3.14` user-scoped package supplied Python 3.14.6, allowing the same
+  CI commands to run locally rather than inferring compatibility from Python 3.13.
 
 ## Decision log
 
@@ -510,3 +514,27 @@ Milestone 4 focused validation on 2026-07-14:
   and CLI non-zero behavior.
 - Architecture checks found no evaluation import of Strategy, Portfolio, Risk,
   Execution, Broker, or Swap Bot modules.
+
+Final validation on 2026-07-14:
+
+- Python 3.11.9: 192 passed, 5 opt-in external smoke tests skipped, 0 failed; Ruff all
+  checks passed; strict mypy checked 54 source files with no issues.
+- Python 3.14.6: 192 passed, 5 opt-in external smoke tests skipped, 0 failed; Ruff all
+  checks passed; strict mypy checked 54 source files with no issues.
+- Hand-calculated Spearman results were positive `1.0`, inverse `-1.0`, and tied
+  `0.9486832980505138`. Constant score/return and fewer than three samples persisted
+  explicit undefined reasons.
+- Hit Rate fixture retained 5 total, 3 eligible, 2 hits, 1 neutral, and 1 zero-return
+  observation with the expected Wilson 95% interval.
+- Fixed bucket boundaries, explicit empty state, full/non-full monotonicity, and
+  unbucketed out-of-range Pair scores passed. Null MFE/MAE remained null and counted.
+- Deterministic bootstrap replay returned identical intervals from identical input,
+  seed, iteration count, and version.
+- Different scorer/model/prompt/transformation, projection/formula, Signal/Forward
+  horizon, and GMO BID/OANDA midpoint semantics produced different cohort identities.
+- Identical ordered inputs/configuration reused one Evaluation Run. A new completed
+  ForwardResult produced a new run while the earlier exact input IDs remained replayable.
+- UPDATE/DELETE attempts against immutable Evaluation records failed. A policy version
+  could not be reused with changed content, and Assessment required its persisted policy.
+- Signal and ForwardResult before/after equality passed. Evaluation modules import and
+  invoke no Strategy, Portfolio, Risk, Execution, Broker, or Swap Bot path.

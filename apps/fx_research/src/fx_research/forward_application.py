@@ -46,8 +46,8 @@ class ObserveForwardOnceService:
     def run(
         self, source: MarketDataSource, *, instrument: CurrencyPair
     ) -> ObserveForwardOnceResult:
-        now = self._clock()
-        require_utc(now, "forward observation clock")
+        observation_as_of = self._clock()
+        require_utc(observation_as_of, "forward observation clock")
         signals = self._signal_store.list_signals()
         unsupported = 0
         scheduled = 0
@@ -64,7 +64,9 @@ class ObserveForwardOnceService:
             except UnsupportedProjectionError:
                 unsupported += 1
                 continue
-            scheduled += self._forward_store.append_jobs(jobs, scheduled_at=now)
+            scheduled += self._forward_store.append_jobs(
+                jobs, scheduled_at=observation_as_of
+            )
 
         due = 0
         pending = 0
@@ -90,7 +92,7 @@ class ObserveForwardOnceService:
                 + timedelta(minutes=ALIGNMENT_DELAY_MINUTES)
                 + market_granularity_duration(job.granularity)
             )
-            if now < due_at:
+            if observation_as_of < due_at:
                 pending += 1
                 continue
             due += 1
@@ -117,7 +119,9 @@ class ObserveForwardOnceService:
             except Exception as error:
                 for record in records:
                     self._forward_store.mark_failed(
-                        record.job.job_id, error=error, updated_at=now
+                        record.job.job_id,
+                        error=error,
+                        updated_at=self._current_time("failed job updated_at"),
                     )
                     failed += 1
                 continue
@@ -128,7 +132,9 @@ class ObserveForwardOnceService:
                         self._signal_store.get_signal(job.signal_id),
                         job,
                         candles,
-                        completed_at=now,
+                        completed_at=lambda: self._current_time(
+                            "forward result completed_at"
+                        ),
                     )
                     self._forward_store.complete(
                         job.job_id,
@@ -138,11 +144,17 @@ class ObserveForwardOnceService:
                     completed += 1
                 except CandleAlignmentUnavailable as error:
                     self._forward_store.mark_unavailable(
-                        job.job_id, reason=error.reason, updated_at=now
+                        job.job_id,
+                        reason=error.reason,
+                        updated_at=self._current_time("unavailable job updated_at"),
                     )
                     unavailable += 1
                 except Exception as error:
-                    self._forward_store.mark_failed(job.job_id, error=error, updated_at=now)
+                    self._forward_store.mark_failed(
+                        job.job_id,
+                        error=error,
+                        updated_at=self._current_time("failed job updated_at"),
+                    )
                     failed += 1
         return ObserveForwardOnceResult(
             signals_scanned=len(signals),
@@ -154,3 +166,8 @@ class ObserveForwardOnceService:
             failed=failed,
             unavailable=unavailable,
         )
+
+    def _current_time(self, field: str) -> datetime:
+        value = self._clock()
+        require_utc(value, field)
+        return value

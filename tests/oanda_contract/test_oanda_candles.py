@@ -89,6 +89,24 @@ def test_oanda_incomplete_candles_are_never_returned() -> None:
     assert tuple(item.open_time.minute for item in candles) == (0,)
 
 
+@pytest.mark.parametrize("response_instrument", ["USD_JPY", "USD/JPY"])
+def test_oanda_accepts_equivalent_currency_pair_representations(
+    response_instrument: str,
+) -> None:
+    payload = json.loads(FIXTURE.read_text(encoding="utf-8"))
+    payload["instrument"] = response_instrument
+
+    candles = _source(RecordedTransport(payload)).fetch_candles(
+        instrument=CurrencyPair.parse("USD_JPY"),
+        granularity="M1",
+        price_basis="midpoint",
+        start_at=datetime(2026, 7, 14, 0, 0, tzinfo=UTC),
+        end_at=datetime(2026, 7, 14, 0, 2, tzinfo=UTC),
+    )
+
+    assert candles[0].instrument == CurrencyPair.parse("USD_JPY")
+
+
 @pytest.mark.parametrize(
     "payload",
     [
@@ -105,6 +123,30 @@ def test_oanda_incomplete_candles_are_never_returned() -> None:
 def test_oanda_contract_mismatch_is_provider_failure_not_empty_market(
     payload: Mapping[str, Any],
 ) -> None:
+    with pytest.raises(MarketDataError):
+        _source(RecordedTransport(payload)).fetch_candles(
+            instrument=CurrencyPair.parse("USD_JPY"),
+            granularity="M1",
+            price_basis="midpoint",
+            start_at=datetime(2026, 7, 14, 0, 0, tzinfo=UTC),
+            end_at=datetime(2026, 7, 14, 0, 2, tzinfo=UTC),
+        )
+
+
+@pytest.mark.parametrize(
+    "response_instrument",
+    [None, 42, "USDJPY", "USD__JPY", ""],
+)
+def test_oanda_rejects_missing_non_string_and_malformed_instrument(
+    response_instrument: object,
+) -> None:
+    payload: dict[str, Any] = {
+        "granularity": "M1",
+        "candles": [],
+    }
+    if response_instrument is not None:
+        payload["instrument"] = response_instrument
+
     with pytest.raises(MarketDataError):
         _source(RecordedTransport(payload)).fetch_candles(
             instrument=CurrencyPair.parse("USD_JPY"),

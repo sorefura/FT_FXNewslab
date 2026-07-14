@@ -99,7 +99,15 @@ def test_gmo_fx_three_day_range_splitting_is_bounded_and_deterministic() -> None
     empty = {"status": 0, "data": [], "responsetime": "2026-07-14T00:00:00Z"}
     transport = RecordedTransport([empty])
 
-    _source(transport).fetch_candles(
+    source = _source(transport)
+    source.fetch_candles(
+        instrument=CurrencyPair.parse("USD_JPY"),
+        granularity="M1",
+        price_basis="bid",
+        start_at=datetime(2026, 7, 10, 20, 50, tzinfo=UTC),
+        end_at=datetime(2026, 7, 13, 20, 50, tzinfo=UTC),
+    )
+    source.fetch_candles(
         instrument=CurrencyPair.parse("USD_JPY"),
         granularity="M1",
         price_basis="bid",
@@ -114,6 +122,54 @@ def test_gmo_fx_three_day_range_splitting_is_bounded_and_deterministic() -> None
         "20260713",
         "20260714",
     ]
+
+
+def test_gmo_fx_fetches_each_provider_date_once_for_repeated_signal_ranges() -> None:
+    transport = RecordedTransport([_payload()])
+    source = _source(transport)
+    request = {
+        "instrument": CurrencyPair.parse("USD_JPY"),
+        "granularity": "M1",
+        "price_basis": "bid",
+        "start_at": datetime(2026, 7, 14, 0, 0, tzinfo=UTC),
+        "end_at": datetime(2026, 7, 14, 0, 3, tzinfo=UTC),
+    }
+
+    first = source.fetch_candles(**request)
+    second = source.fetch_candles(**request)
+
+    assert first == second
+    assert len(transport.calls) == 2
+    assert [parse_qs(urlparse(call[0]).query)["date"][0] for call in transport.calls] == [
+        "20260713",
+        "20260714",
+    ]
+
+
+def test_gmo_fx_failed_provider_response_is_not_cached() -> None:
+    failed = {
+        "status": 1,
+        "data": [],
+        "responsetime": "2026-07-14T00:03:00Z",
+    }
+    transport = RecordedTransport([failed, _payload(), _payload()])
+    source = _source(transport)
+    request = {
+        "instrument": CurrencyPair.parse("USD_JPY"),
+        "granularity": "M1",
+        "price_basis": "bid",
+        "start_at": datetime(2026, 7, 14, 0, 0, tzinfo=UTC),
+        "end_at": datetime(2026, 7, 14, 0, 3, tzinfo=UTC),
+    }
+
+    with pytest.raises(MarketDataError):
+        source.fetch_candles(**request)
+    source.fetch_candles(**request)
+
+    provider_dates = [
+        parse_qs(urlparse(call[0]).query)["date"][0] for call in transport.calls
+    ]
+    assert provider_dates == ["20260713", "20260713", "20260714"]
 
 
 def test_gmo_fx_deduplicates_same_content_but_preserves_changed_revision() -> None:

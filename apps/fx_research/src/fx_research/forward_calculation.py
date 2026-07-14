@@ -1,5 +1,6 @@
 import hashlib
 import math
+from collections.abc import Callable
 from dataclasses import dataclass
 from datetime import datetime, timedelta
 from decimal import Decimal
@@ -36,7 +37,7 @@ def calculate_forward_result(
     job: ForwardObservationJob,
     candles: tuple[MarketCandle, ...],
     *,
-    completed_at: datetime,
+    completed_at: datetime | Callable[[], datetime],
 ) -> ForwardCalculation:
     if job.signal_id != signal.signal_id:
         raise ValueError("forward job does not belong to the supplied Signal")
@@ -57,8 +58,6 @@ def calculate_forward_result(
         candle for candle in relevant if t0.open_time <= candle.open_time <= tx.open_time
     )
     _validate_evidence_semantics(job, evidence)
-    if completed_at < tx.open_time + market_granularity_duration(job.granularity):
-        raise ValueError("ForwardResult cannot complete before its target candle closes")
     snapshot = MarketSnapshot(evidence)
     path = tuple(candle for candle in evidence if candle.open_time < tx.open_time)
     target_return_bps = (
@@ -70,6 +69,12 @@ def calculate_forward_result(
         price_t0=t0.open,
         path=path,
     )
+    realized_volatility = _realized_volatility(t0.open, path)
+    result_completed_at = completed_at() if callable(completed_at) else completed_at
+    if result_completed_at < tx.open_time + market_granularity_duration(
+        job.granularity
+    ):
+        raise ValueError("ForwardResult cannot complete before its target candle closes")
     result = ForwardResult(
         result_id="forward-result-" + hashlib.sha256(job.job_id.encode()).hexdigest(),
         signal_id=signal.signal_id,
@@ -86,8 +91,8 @@ def calculate_forward_result(
         target_return_bps=target_return_bps,
         mfe_bps=mfe_bps,
         mae_bps=mae_bps,
-        realized_volatility=_realized_volatility(t0.open, path),
-        completed_at=completed_at,
+        realized_volatility=realized_volatility,
+        completed_at=result_completed_at,
         market_source=job.market_source,
         market_data_version=job.market_data_version,
         price_basis=job.price_basis,

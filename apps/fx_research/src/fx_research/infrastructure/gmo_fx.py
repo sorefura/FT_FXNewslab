@@ -67,6 +67,9 @@ class GmoFxMarketDataSource:
         self._transport = transport
         self._base_url = base_url.rstrip("/")
         self._timeout_seconds = timeout_seconds
+        self._response_cache: dict[
+            tuple[CurrencyPair, str, str, str], tuple[MarketCandle, ...]
+        ] = {}
 
     def fetch_candles(
         self,
@@ -88,11 +91,12 @@ class GmoFxMarketDataSource:
 
         revisions: dict[str, MarketCandle] = {}
         for provider_date in _provider_dates(start_at, end_at):
-            payload = self._transport.get(
-                self._url(instrument, provider_date),
-                timeout_seconds=self._timeout_seconds,
-            )
-            for candle in self._candles(payload, instrument):
+            cache_key = (instrument, price_basis, granularity, provider_date)
+            for candle in self._provider_date_candles(
+                cache_key=cache_key,
+                instrument=instrument,
+                provider_date=provider_date,
+            ):
                 if start_at <= candle.open_time < end_at:
                     revisions[candle.revision_id] = candle
         return tuple(
@@ -101,6 +105,24 @@ class GmoFxMarketDataSource:
                 key=lambda item: (item.open_time, item.revision_id),
             )
         )
+
+    def _provider_date_candles(
+        self,
+        *,
+        cache_key: tuple[CurrencyPair, str, str, str],
+        instrument: CurrencyPair,
+        provider_date: str,
+    ) -> tuple[MarketCandle, ...]:
+        cached = self._response_cache.get(cache_key)
+        if cached is not None:
+            return cached
+        payload = self._transport.get(
+            self._url(instrument, provider_date),
+            timeout_seconds=self._timeout_seconds,
+        )
+        candles = self._candles(payload, instrument)
+        self._response_cache[cache_key] = candles
+        return candles
 
     def _url(self, instrument: CurrencyPair, provider_date: str) -> str:
         query = urlencode(

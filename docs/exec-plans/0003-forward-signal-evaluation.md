@@ -334,6 +334,9 @@ offline evidence replay.
 - [x] (2026-07-14) Review correction: fixed alignment readiness and persisted
   semantic-chain validation, evaluated GMO FX capability, selected and verified the
   Primary Market Data Source, and recorded the decision before ExecPlan 0004.
+- [x] (2026-07-14) Final review correction: separated observation and completion
+  clocks, normalized OANDA instrument comparison through `CurrencyPair`, and bounded
+  duplicate GMO provider-date requests to one Source instance.
 
 ## Surprises & Discoveries
 
@@ -388,6 +391,18 @@ offline evidence replay.
 - 2026-07-14: Select GMO FX Public M1 BID as Primary with
   `gmo-fx-kline-bid-v1`. Do not average BID/ASK extrema into synthetic midpoint candles.
   ExecPlan 0004 must segment differing market semantics.
+- 2026-07-14: Use `observation_as_of` only for scheduling readiness. Result completion
+  and failure/unavailability transitions read the injected Clock after their respective
+  work because a run-start timestamp would falsely claim that evidence or an outcome
+  existed before the provider or calculation completed.
+- 2026-07-14: Compare OANDA response instruments as `CurrencyPair` values, not provider
+  spelling. Underscore and slash are equivalent domain representations, while missing,
+  malformed, or different pairs remain provider failures.
+- 2026-07-14: Cache validated GMO provider-date candles only inside one
+  `GmoFxMarketDataSource` instance and include instrument, price basis, granularity, and
+  provider date in the key. A persistent or long-lived cache could hide revised provider
+  evidence; failed responses are therefore never cached and no TTL or database cache is
+  introduced.
 
 ## Validation
 
@@ -433,6 +448,24 @@ Market-source review validation on 2026-07-14:
 - GMO/OANDA/application adapter focus: 20 passed.
 - Ruff: all checks passed.
 - Strict mypy: 51 source files checked, no issues.
+
+Final review validation on 2026-07-14:
+
+- Runtime: Python 3.11.9 in a clean dedicated validation environment.
+- Full default suite: 155 passed, 5 opt-in external smoke tests skipped, 0 failed.
+- Explicit GMO FX Public network smoke: 1 passed with no credential.
+- Forward/OANDA/GMO focused suite: 28 passed.
+- Advancing-clock contracts confirmed result and snapshot completion after the due
+  observation, and `FAILED`/`UNAVAILABLE` updates after their attempted work. Offline
+  replay retained identical result and snapshot identities.
+- OANDA accepted both `USD_JPY` and `USD/JPY`, and rejected another pair, missing,
+  non-string, and malformed instruments without request-value fallback.
+- Repeated GMO ranges fetched each provider date once per Source instance; five distinct
+  provider dates produced five GETs, and a failed response was fetched again on retry.
+- Ruff: all checks passed.
+- Strict mypy: 50 source files checked, no issues.
+- Forward formulas, GMO Primary/OANDA optional source selection, immutable Signal,
+  ForwardResult, and MarketSnapshot contracts were unchanged.
 - OANDA network smoke remains unavailable because token/base URL were not configured;
   OANDA is no longer a Primary acceptance dependency.
 - One delayed Signal schedules five horizons but performs one maximum-range source call;

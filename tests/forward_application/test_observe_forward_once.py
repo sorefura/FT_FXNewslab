@@ -1,3 +1,4 @@
+import sqlite3
 from datetime import UTC, datetime, timedelta
 from decimal import Decimal
 from pathlib import Path
@@ -17,6 +18,17 @@ from fx_signal_store import SQLiteSignalStore
 from tests.factories import feature, observation, signal
 
 NOW = datetime(2026, 7, 20, tzinfo=UTC)
+
+
+class AdvancingClock:
+    def __init__(self, start: datetime) -> None:
+        self.start = start
+        self.calls = 0
+
+    def __call__(self) -> datetime:
+        value = self.start + timedelta(seconds=self.calls)
+        self.calls += 1
+        return value
 
 
 class RecordedMarketSource:
@@ -115,6 +127,32 @@ def test_one_signal_completes_five_jobs_and_idempotent_rerun_makes_no_calls(
     assert signal_store.get_signal(signal().signal_id) == persisted_signal_before
 
 
+def test_forward_completion_and_snapshot_capture_follow_due_provider_fetch(
+    tmp_path: Path,
+) -> None:
+    database = tmp_path / "research.db"
+    signal_store, forward_store = _stores(database)
+    clock = AdvancingClock(NOW)
+    source = RecordedMarketSource()
+
+    result = ObserveForwardOnceService(
+        signal_store, forward_store, clock=clock
+    ).run(source, instrument=CurrencyPair.parse("USD_JPY"))
+
+    persisted_results = forward_store.list_results(signal_id=signal().signal_id)
+    with sqlite3.connect(database) as connection:
+        captured_at = {
+            datetime.fromisoformat(row[0])
+            for row in connection.execute(
+                "SELECT captured_at FROM research_market_snapshots"
+            ).fetchall()
+        }
+    assert result.completed == 5
+    assert source.calls == 1
+    assert all(item.completed_at > NOW for item in persisted_results)
+    assert captured_at == {item.completed_at for item in persisted_results}
+
+
 def test_pending_jobs_do_not_call_market_provider_before_target_delay(tmp_path: Path) -> None:
     signal_store, forward_store = _stores(tmp_path / "research.db")
     source = RecordedMarketSource()
@@ -149,23 +187,26 @@ def test_alignment_window_end_remains_pending_until_m1_candle_can_close(
 
 def test_provider_failure_is_failed_and_does_not_create_result(tmp_path: Path) -> None:
     signal_store, forward_store = _stores(tmp_path / "research.db")
+    clock = AdvancingClock(NOW)
 
     result = ObserveForwardOnceService(
-        signal_store, forward_store, clock=lambda: NOW
+        signal_store, forward_store, clock=clock
     ).run(RecordedMarketSource(fail=True), instrument=CurrencyPair.parse("USD_JPY"))
 
     assert result.failed == 5
     assert not forward_store.list_results()
     records = forward_store.list_jobs(statuses=(ForwardJobStatus.FAILED,))
     assert len(records) == 5
+    assert all(item.updated_at > NOW for item in records)
     assert all("synthetic-secret" not in (item.error_message or "") for item in records)
 
 
 def test_due_missing_target_is_unavailable_not_zero_result(tmp_path: Path) -> None:
     signal_store, forward_store = _stores(tmp_path / "research.db")
+    clock = AdvancingClock(NOW)
 
     result = ObserveForwardOnceService(
-        signal_store, forward_store, clock=lambda: NOW
+        signal_store, forward_store, clock=clock
     ).run(
         RecordedMarketSource(omit_target=True),
         instrument=CurrencyPair.parse("USD_JPY"),
@@ -174,6 +215,7 @@ def test_due_missing_target_is_unavailable_not_zero_result(tmp_path: Path) -> No
     assert result.unavailable == 5
     assert not forward_store.list_results()
     records = forward_store.list_jobs(statuses=(ForwardJobStatus.UNAVAILABLE,))
+    assert all(item.updated_at > NOW for item in records)
     assert {
         item.unavailable_reason for item in records
     } == {UnavailableReason.TARGET_CANDLE_NOT_AVAILABLE}
@@ -181,7 +223,9 @@ def test_due_missing_target_is_unavailable_not_zero_result(tmp_path: Path) -> No
 
 def test_persisted_snapshot_recalculates_identical_result_offline(tmp_path: Path) -> None:
     signal_store, forward_store = _stores(tmp_path / "research.db")
-    ObserveForwardOnceService(signal_store, forward_store, clock=lambda: NOW).run(
+    ObserveForwardOnceService(
+        signal_store, forward_store, clock=AdvancingClock(NOW)
+    ).run(
         RecordedMarketSource(), instrument=CurrencyPair.parse("USD_JPY")
     )
     record = forward_store.list_jobs(statuses=(ForwardJobStatus.COMPLETED,))[0]
@@ -197,4 +241,5 @@ def test_persisted_snapshot_recalculates_identical_result_offline(tmp_path: Path
     )
 
     assert replay.result == persisted
+    assert replay.result.result_id == persisted.result_id
     assert replay.snapshot == evidence

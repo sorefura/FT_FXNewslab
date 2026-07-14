@@ -130,8 +130,16 @@ class OandaV20CandleSource:
     ) -> None:
         response_instrument = payload.get("instrument")
         response_granularity = payload.get("granularity")
-        if response_instrument != instrument.symbol or response_granularity != granularity:
-            raise MarketDataError("OANDA response market semantics do not match request")
+        if not isinstance(response_instrument, str):
+            raise MarketDataError("OANDA response instrument must be a string")
+        try:
+            parsed_instrument = CurrencyPair.parse(response_instrument)
+        except ValueError as error:
+            raise MarketDataError("OANDA response instrument is malformed") from error
+        if parsed_instrument != instrument:
+            raise MarketDataError("OANDA response instrument does not match request")
+        if response_granularity != granularity:
+            raise MarketDataError("OANDA response granularity does not match request")
 
     @classmethod
     def _parse_candle(

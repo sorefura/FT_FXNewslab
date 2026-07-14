@@ -33,9 +33,14 @@ Signalは事前情報として保存する。
 - `signal_created_at`
 - `price_observed_at`
 
-Backtest/Forward evaluationでは、未来情報混入を避けるため`first_seen_at`を重要視する。
+Observation/Featureを構築するBacktestでは、未来情報混入を避けるため`first_seen_at`を
+重要視する。
 
 source公開時刻だけで「当時利用可能だった」と判断しない。
+
+persisted SignalのForward evaluation anchorは`signal.created_at`とする。`first_seen_at`は
+sourceが利用可能になった時刻だが、Feature生成とscoringより前であり、その時点にはSignalが
+まだ存在しない。target timeは`signal.created_at + forward horizon`で求める。
 
 ## Forward horizons
 
@@ -47,7 +52,10 @@ MVP:
 - 1d
 - 3d
 
-Signal targetとSignal typeごとに有効Horizonは異なる。
+ExecPlan 0003では各Signal自身の`Signal.horizon`に関係なく、比較可能な観測scheduleとして
+上記5 horizonをすべて作成する。
+
+Signal targetとSignal typeごとに有効Horizonは異なるため、後続評価でその差を扱う。
 
 すべてのSignalを同じ時間軸で優劣比較しない。
 
@@ -60,25 +68,46 @@ Signal targetとSignal typeごとに有効Horizonは異なる。
 class ForwardResult:
     signal_id: SignalId
     horizon: Horizon
+    instrument: CurrencyPair
+    projection_sign: int
+    projection_version: str
+    anchor_at: datetime
+    target_at: datetime
     price_t0: Price
     price_tx: Price
-    return_bps: BasisPoints
-    mfe_bps: BasisPoints
-    mae_bps: BasisPoints
+    t0_observed_at: datetime
+    tx_observed_at: datetime
+    target_return_bps: Decimal
+    mfe_bps: Decimal | None
+    mae_bps: Decimal | None
     realized_volatility: float
     completed_at: datetime
+    market_source: str
     market_data_version: str
+    price_basis: str
+    granularity: str
+    formula_version: str
+    snapshot_id: str
 ```
+
+初期projectionは`USD -> USD_JPY (+1)`、`JPY -> USD_JPY (-1)`、
+`USD_JPY -> USD_JPY (+1)`とし、versionは`currency-usdjpy-projection-v1`とする。
+別々のUSD SignalとJPY Signalを合成してPair Signalを作らない。
 
 ### Forward return
 
-Signal directionと将来returnの関係を見る。
+market target returnは`projection_sign * ((price_tx / price_t0) - 1) * 10000`
+で保存する。Signal directionでreturnを反転しない。directionはMFE/MAEのfavorable/adverse
+方向にのみ使用する。
 
 ### MFE
 
 Maximum Favorable Excursion。
 
 Signal方向へ最大どこまで動いたか。
+
+pathは`t0 <= candle open < tx`のcomplete M1 candleとし、tx candleのhigh/lowは含めない。
+neutral directionではMFE/MAEをnullにする。
 
 ### MAE
 
@@ -89,6 +118,9 @@ Signalと逆方向へ最大どこまで動いたか。
 ### Realized volatility
 
 Signal成績が単なる高Volatility regime依存でないかを確認する。
+
+`price_t0`とpath candle closeのlog returnについて`sqrt(sum(r_i**2))`を計算する。
+annualizeせず、dimensionless floatとして保存する。集約metricではない。
 
 ## Evaluation metrics
 

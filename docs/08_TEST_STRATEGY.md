@@ -86,11 +86,22 @@ What:
 
 What:
 
-- first_seen_atより前の市場情報を使わない。
+- upstream data availabilityはfirst_seen_atを守り、Forward observationは
+  Signal.created_atより前をanchorにしない。
 - horizon completion前にForward Resultをfinalizeしない。
 - original Signalをmutateしない。
-- MFE/MAEの方向規約がSignal sideと一致する。
+- 全Signalに15m/1h/4h/1d/3d jobを作る。
+- first complete M1 openをt0/txに使い、5分を超えてforward-fillしない。
+- incomplete candle、tx candle high/low、選択済みtxより未来のcandleを使わない。
+- target returnはprojection sign、MFE/MAEはprojection後のSignal directionに従う。
+- neutral directionのMFE/MAEはnullになる。
+- exact MarketSnapshotからnetworkなしで同じForwardResultを再計算できる。
+- provider failureとalignment unavailableとzero returnを区別する。
 - version別metricsが混ざらない。
+
+OANDA adapter unit testはfake transportとrecorded responseを用い、M1 midpoint、
+`smooth=false`、complete candle、Decimal OHLC、token headerを確認する。実OANDA接続は
+`oanda_smoke` marker、`RUN_OANDA_SMOKE=1`、credential/base URLが揃う場合だけ実行する。
 
 統計関数は小さなhand-calculated datasetで検証する。
 

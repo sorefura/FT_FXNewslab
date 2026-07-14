@@ -65,8 +65,9 @@
 
 - `packages/fx_core`: Research/Live共有のimmutable domain contract。
 - `packages/fx_signal_store`: append-only SQLite Signal/lineage reference store。
-- `apps/fx_research`: Fed/BOJ operational News collection、normalization、Feature/Signal
-  production one-shot経路。
+- `apps/fx_research`: Fed/BOJ operational News collection、Feature/Signal production、
+  OANDA M1 evidenceを用いたForward Result one-shot経路。
 - `apps/swap_bot`: Live固有のPortfolio/Risk/approved Execution境界とshadow runner。
 - `docs/exec-plans/0001-shared-domain-foundation.md`: 完了済みの共有domain基盤計画。
 - `docs/exec-plans/0002-operational-news-ingestion.md`: operational News ingestion計画。
+- `docs/exec-plans/0003-forward-signal-evaluation.md`: Signal単位のforward observation計画。

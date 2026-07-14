@@ -5,6 +5,7 @@ from dataclasses import asdict
 from datetime import UTC, datetime
 from pathlib import Path
 
+from fx_core import CurrencyPair
 from fx_signal_store import SQLiteSignalStore
 
 from .application import CollectOnceService, ProduceSignalsOnceService
@@ -13,7 +14,10 @@ from .feature_production import (
     RecordedFeatureProvider,
     StructuredFeatureProvider,
 )
+from .forward_application import ObserveForwardOnceService
+from .forward_persistence import SQLiteForwardEvaluationStore
 from .infrastructure.http_client import HttpGetPolicy, UrllibHttpClient
+from .infrastructure.oanda import OandaV20CandleSource, UrllibOandaTransport
 from .infrastructure.openai import (
     OPENAI_FEATURE_PROMPT_VERSION,
     OpenAIStructuredFeatureProvider,
@@ -45,6 +49,11 @@ def main() -> int:
     produce.add_argument("--timeout", type=float, default=30.0)
     produce.add_argument("--allow-partial-success", action="store_true")
 
+    observe = subparsers.add_parser("observe-forward-once")
+    observe.add_argument("--database", required=True)
+    observe.add_argument("--provider", choices=("oanda",), required=True)
+    observe.add_argument("--pair", required=True)
+
     args = parser.parse_args()
     if args.command == "collect-once":
         database = Path(args.database)
@@ -60,19 +69,31 @@ def main() -> int:
             )
         )
         exit_code = 0
-    else:
+    elif args.command == "produce-signals-once":
         extractor = _build_extractor(args, parser)
         database = Path(args.database)
-        result = ProduceSignalsOnceService(
+        production_result = ProduceSignalsOnceService(
             SQLiteSignalStore(database),
             SQLiteIngestionStateStore(database),
             clock=lambda: datetime.now(UTC),
         ).run(extractor)
-        payload = asdict(result)
+        payload = asdict(production_result)
         exit_code = int(
-            result.failed > 0
-            and not (args.allow_partial_success and result.completed > 0)
+            production_result.failed > 0
+            and not (
+                args.allow_partial_success and production_result.completed > 0
+            )
         )
+    else:
+        database = Path(args.database)
+        source = _build_oanda_source(parser)
+        forward_result = ObserveForwardOnceService(
+            SQLiteSignalStore(database),
+            SQLiteForwardEvaluationStore(database),
+            clock=lambda: datetime.now(UTC),
+        ).run(source, instrument=_parse_pair(args.pair, parser))
+        payload = asdict(forward_result)
+        exit_code = int(forward_result.failed > 0)
     print(json.dumps(payload, ensure_ascii=False, sort_keys=True))
     return exit_code
 
@@ -115,6 +136,31 @@ def _build_extractor(
         prompt_version=args.prompt_version,
         clock=lambda: datetime.now(UTC),
     )
+
+
+def _build_oanda_source(parser: argparse.ArgumentParser) -> OandaV20CandleSource:
+    api_token = os.getenv("OANDA_API_TOKEN")
+    if not api_token:
+        parser.error("OANDA_API_TOKEN is required for --provider oanda")
+    base_url = os.getenv("OANDA_API_BASE_URL", "https://api-fxpractice.oanda.com")
+    timeout_text = os.getenv("OANDA_API_TIMEOUT_SECONDS", "10")
+    try:
+        timeout_seconds = float(timeout_text)
+    except ValueError:
+        parser.error("OANDA_API_TIMEOUT_SECONDS must be numeric")
+    return OandaV20CandleSource(
+        UrllibOandaTransport(),
+        api_token=api_token,
+        base_url=base_url,
+        timeout_seconds=timeout_seconds,
+    )
+
+
+def _parse_pair(value: str, parser: argparse.ArgumentParser) -> CurrencyPair:
+    try:
+        return CurrencyPair.parse(value)
+    except ValueError:
+        parser.error("--pair must use BASE_QUOTE or BASE/QUOTE")
 
 
 if __name__ == "__main__":

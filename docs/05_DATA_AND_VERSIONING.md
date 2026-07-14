@@ -15,6 +15,8 @@
 - observations
 - features
 - signals
+- market candle revisions
+- market snapshots
 - forward results
 - evaluations
 - live decisions
@@ -67,6 +69,20 @@ Signal組合せとCandidate生成。
 ### risk_policy_version
 
 risk limits/policy set。
+
+### projection_version
+
+Signal targetを観測instrumentへ写像する規約。初期値は
+`currency-usdjpy-projection-v1`。
+
+### market_data_version
+
+provider responseからimmutable MarketCandleへ変換するadapter/market contract。
+
+### formula_version
+
+alignment、return、MFE/MAE、realized volatilityを含むForwardResult計算規約。
+初期値は`forward-result-v1`。
 
 バージョンを単一`app_version`だけで代用しない。
 
@@ -142,6 +158,11 @@ RiskまたはApplication policyでstale dataを拒否できるようにする。
 
 float `0.0`に集約しない。
 
+Forward observationではprovider/transport/contract failureを`FAILED`、alignment window内に
+complete candleがない状態を`UNAVAILABLE`として分ける。後者は
+`T0_CANDLE_NOT_AVAILABLE`または`TARGET_CANDLE_NOT_AVAILABLE`を保持し、どちらもzero returnを
+生成しない。
+
 ## Suggested logical tables
 
 ### observation
@@ -204,17 +225,56 @@ feature_id
 ### forward_result
 
 ```text
+result_id
 signal_id
 horizon
+instrument
+projection_sign
+projection_version
+anchor_at
+target_at
 price_t0
 price_tx
-return_bps
+t0_observed_at
+tx_observed_at
+target_return_bps
 mfe_bps
 mae_bps
 realized_volatility
+market_source
 market_data_version
+price_basis
+granularity
+formula_version
+snapshot_id
 completed_at
 ```
+
+ForwardResultとmarket evidenceを分離する。
+
+```text
+market_candle_revision
+  revision_id
+  source / instrument / granularity / price_basis
+  open_time
+  decimal OHLC
+  complete
+  market_data_version
+
+market_snapshot
+  snapshot_id
+  captured_at
+
+market_snapshot_candle
+  snapshot_id
+  ordinal
+  candle_revision_id
+```
+
+同じopen timeでもcontentが変われば別revisionとする。Snapshotはt0からtxまで実際に使用した
+complete candle revisionを順序付きで参照する。Forward jobの
+`PENDING/COMPLETED/FAILED/UNAVAILABLE`はretryのためのmutable operational stateであり、
+immutable evidence/result tableとは分離する。
 
 ### trade_candidate
 

@@ -16,3 +16,7 @@ class DetailContentError(NewsCollectionError):
 
 class FeatureProductionError(RuntimeError):
     pass
+
+
+class MarketDataError(RuntimeError):
+    pass

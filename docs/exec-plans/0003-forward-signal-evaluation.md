@@ -322,8 +322,10 @@ offline evidence replay.
 - [x] (2026-07-14) Milestone 3 - Added versioned alignment, Decimal return and
   directional extrema, realized volatility, explicit unavailability, and future-data
   exclusion.
-- [ ] Milestone 4 - OANDA adapter and one-shot observation.
-- [ ] Full validation and handoff.
+- [x] (2026-07-14) Milestone 4 - Added the OANDA v20 adapter, environment-backed
+  configuration, one-shot CLI, due-job orchestration, fake transport tests, and opt-in
+  smoke test.
+- [x] (2026-07-14) Full Python 3.11 tests, Ruff, and strict mypy validation passed.
 
 ## Surprises & Discoveries
 
@@ -332,6 +334,12 @@ offline evidence replay.
   its specification confirms `/v3/instruments/{instrument}/candles`, midpoint price
   component `M`, M1 granularity, unsmoothed candles, open timestamps, completeness, and
   decimal-string OHLC fields.
+- The managed workspace denies pytest cache creation and the default pytest basetemp was
+  not reusable. Validation therefore disables the cache provider and uses a unique
+  external basetemp; this changes no test semantics.
+- No OANDA token/base URL or explicit smoke opt-in was available in the validation
+  environment. The network smoke remained skipped, while its adapter contract ran with
+  a recorded official-schema response and fake transport.
 
 ## Decision log
 
@@ -346,10 +354,14 @@ offline evidence replay.
   previously computed result.
 - 2026-07-14: Keep Research evaluation contracts in `fx_research`; they are downstream
   consumers and are not shared trading domain concepts.
+- 2026-07-14: Use direct HTTP against the small OANDA v20 candle boundary instead of an
+  SDK dependency. The adapter needs one stable GET operation and remains isolated behind
+  `MarketDataSource`.
+- 2026-07-14: Treat `UNAVAILABLE` as a terminal observation outcome and `FAILED` as
+  retryable operational state. Later data cannot silently replace a completed or
+  explicitly unavailable horizon.
 
 ## Validation
-
-Implementation validation is pending.
 
 Milestone 1 focused validation: 16 tests passed; Ruff and strict mypy passed for the
 new contract module. Pytest could not write its cache under the managed workspace, but
@@ -362,3 +374,21 @@ results reject SQL update/delete, while job status remains operationally mutable
 Milestone 3 focused validation: 28 forward domain, persistence, and calculation tests
 passed; Ruff and strict mypy passed. A candle after the selected tx is excluded before
 semantic validation, so even unrelated future content cannot alter the result.
+
+Final validation on 2026-07-14:
+
+- Runtime: Python 3.11.9.
+- Tests: 133 passed, 4 opt-in external smoke tests skipped, 0 failed.
+- Ruff: all checks passed.
+- Strict mypy: 49 source files checked, no issues.
+- OANDA smoke: not run because `RUN_OANDA_SMOKE`, `OANDA_API_TOKEN`, and
+  `OANDA_API_BASE_URL` were not configured.
+- One immutable Signal scheduled five jobs and completed five results in the one-shot
+  application contract test.
+- A second run scheduled zero jobs, made zero further market-source calls, and retained
+  exactly five results.
+- Signal content before and after the completed observation cycle compared equal.
+- Each persisted MarketSnapshot replayed to the identical ForwardResult without a
+  provider call.
+- Provider failure persisted five `FAILED` jobs and zero results; missing target candles
+  persisted five `UNAVAILABLE` jobs and zero results.

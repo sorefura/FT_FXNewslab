@@ -24,3 +24,6 @@ boundaries without enabling orders. Operational collection and Research evaluati
 separate plans so that provider operations and future observations cannot alter the ex-ante
 Signal contract.
 
+ExecPlan 0002 operationalizes News collection and Feature production. ExecPlan 0003 observes
+each immutable Signal at five fixed forward horizons and stores exact market evidence plus a
+replayable result. Aggregate metrics and validation remain ExecPlan 0004 responsibilities.

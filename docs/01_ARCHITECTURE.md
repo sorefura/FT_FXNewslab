@@ -78,6 +78,11 @@ Researchの出力は統計、評価結果、Signal specificationである。
 
 ResearchからBroker orderを作らない。
 
+Forward ObserverはResearch applicationが所有する。初期adapterはOANDA v20の`USD_JPY`
+M1 midpoint candleを取得し、complete candleだけをResearch contractへ変換する。Job state、
+immutable MarketSnapshot、append-only ForwardResultはResearch SQLite schemaに保存する。
+共有`fx_core`とLive applicationへMarketCandleやForwardResultを持ち込まない。
+
 ## Live path
 
 ```text

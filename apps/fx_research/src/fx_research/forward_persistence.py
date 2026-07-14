@@ -150,14 +150,16 @@ class SQLiteForwardEvaluationStore:
             raise ValueError("ForwardResult must reference the supplied MarketSnapshot")
         with closing(self._connect()) as connection, connection:
             row = connection.execute(
-                "SELECT signal_id, status FROM research_forward_jobs WHERE job_id = ?",
+                "SELECT * FROM research_forward_jobs WHERE job_id = ?",
                 (job_id,),
             ).fetchone()
             if row is None:
                 raise KeyError(job_id)
-            if row["signal_id"] != result.signal_id.value:
-                raise ValueError("ForwardResult signal does not match its job")
-            if row["status"] == ForwardJobStatus.COMPLETED.value:
+            record = self._job_record(row)
+            self._validate_completion(record.job, result, snapshot)
+            if record.status is ForwardJobStatus.COMPLETED:
+                if record.result_id != result.result_id:
+                    raise ValueError("completed forward job references another result")
                 return False
             self._append_snapshot(connection, snapshot, captured_at=result.completed_at)
             cursor = connection.execute(
@@ -184,6 +186,69 @@ class SQLiteForwardEvaluationStore:
                 (result.result_id, result.completed_at.isoformat(), job_id),
             )
         return cursor.rowcount == 1
+
+    @staticmethod
+    def _validate_completion(
+        job: ForwardObservationJob,
+        result: ForwardResult,
+        snapshot: MarketSnapshot,
+    ) -> None:
+        job_semantics = (
+            job.signal_id,
+            job.horizon,
+            job.projection.instrument,
+            job.projection.sign,
+            job.projection.version,
+            job.anchor_at,
+            job.target_at,
+            job.market_source,
+            job.market_data_version,
+            job.price_basis,
+            job.granularity,
+            job.formula_version,
+        )
+        result_semantics = (
+            result.signal_id,
+            result.horizon,
+            result.instrument,
+            result.projection_sign,
+            result.projection_version,
+            result.anchor_at,
+            result.target_at,
+            result.market_source,
+            result.market_data_version,
+            result.price_basis,
+            result.granularity,
+            result.formula_version,
+        )
+        if result_semantics != job_semantics:
+            raise ValueError("ForwardResult semantics do not match its persisted job")
+        market_semantics = (
+            result.market_source,
+            result.instrument,
+            result.granularity,
+            result.price_basis,
+            result.market_data_version,
+        )
+        if any(
+            (
+                candle.source,
+                candle.instrument,
+                candle.granularity,
+                candle.price_basis,
+                candle.market_data_version,
+            )
+            != market_semantics
+            for candle in snapshot.candles
+        ):
+            raise ValueError("MarketSnapshot semantics do not match its ForwardResult")
+        if (
+            snapshot.candles[0].open_time != result.t0_observed_at
+            or snapshot.candles[0].open != result.price_t0
+            or snapshot.candles[-1].open_time != result.tx_observed_at
+            or snapshot.candles[-1].open != result.price_tx
+        ):
+            raise ValueError("MarketSnapshot boundaries do not match its ForwardResult")
 
     def get_snapshot(self, snapshot_id: str) -> MarketSnapshot:
         with closing(self._connect()) as connection:

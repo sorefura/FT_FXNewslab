@@ -1,7 +1,7 @@
 import hashlib
 from collections.abc import Sequence
 from dataclasses import dataclass
-from datetime import datetime
+from datetime import datetime, timedelta
 from decimal import Decimal
 from enum import StrEnum
 from typing import Protocol
@@ -22,6 +22,7 @@ DEFAULT_INSTRUMENT = CurrencyPair.parse("USD_JPY")
 DEFAULT_GRANULARITY = "M1"
 DEFAULT_PRICE_BASIS = "midpoint"
 ALIGNMENT_DELAY_MINUTES = 5
+_GRANULARITY_DURATIONS = {DEFAULT_GRANULARITY: timedelta(minutes=1)}
 
 
 class UnsupportedProjectionError(ValueError):
@@ -260,6 +261,13 @@ class MarketDataSource(Protocol):
         start_at: datetime,
         end_at: datetime,
     ) -> Sequence[MarketCandle]: ...
+
+
+def market_granularity_duration(granularity: str) -> timedelta:
+    try:
+        return _GRANULARITY_DURATIONS[granularity]
+    except KeyError as error:
+        raise ValueError(f"unsupported market granularity: {granularity}") from error
 
 
 def resolve_projection(

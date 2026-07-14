@@ -117,6 +117,29 @@ def test_alignment_accepts_five_minutes_but_not_six() -> None:
     assert error.value.reason is UnavailableReason.TARGET_CANDLE_NOT_AVAILABLE
 
 
+def test_result_cannot_complete_before_aligned_tx_candle_closes() -> None:
+    source = _source()
+    job = _job(source)
+    t0 = _candle(job.anchor_at)
+    tx = _candle(job.target_at + timedelta(minutes=5))
+
+    with pytest.raises(ValueError, match="closes"):
+        calculate_forward_result(
+            source,
+            job,
+            (t0, tx),
+            completed_at=tx.open_time + timedelta(seconds=59),
+        )
+
+    calculation = calculate_forward_result(
+        source,
+        job,
+        (t0, tx),
+        completed_at=tx.open_time + timedelta(minutes=1),
+    )
+    assert calculation.result.completed_at == tx.open_time + timedelta(minutes=1)
+
+
 def test_missing_entry_and_target_have_distinct_unavailable_reasons() -> None:
     source = _source()
     job = _job(source)

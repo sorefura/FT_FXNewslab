@@ -11,6 +11,7 @@ from .forward import (
     ForwardJobStatus,
     MarketDataSource,
     UnsupportedProjectionError,
+    market_granularity_duration,
     schedule_forward_jobs,
 )
 from .forward_calculation import CandleAlignmentUnavailable, calculate_forward_result
@@ -78,7 +79,11 @@ class ObserveForwardOnceService:
                 or job.projection.instrument != instrument
             ):
                 continue
-            due_at = job.target_at + timedelta(minutes=ALIGNMENT_DELAY_MINUTES)
+            due_at = (
+                job.target_at
+                + timedelta(minutes=ALIGNMENT_DELAY_MINUTES)
+                + market_granularity_duration(job.granularity)
+            )
             if now < due_at:
                 pending += 1
                 continue
@@ -90,7 +95,7 @@ class ObserveForwardOnceService:
                         granularity=job.granularity,
                         price_basis=job.price_basis,
                         start_at=job.anchor_at,
-                        end_at=due_at + timedelta(minutes=1),
+                        end_at=due_at,
                     )
                 )
                 calculation = calculate_forward_result(

@@ -326,6 +326,9 @@ offline evidence replay.
   configuration, one-shot CLI, due-job orchestration, fake transport tests, and opt-in
   smoke test.
 - [x] (2026-07-14) Full Python 3.11 tests, Ruff, and strict mypy validation passed.
+- [ ] (2026-07-14) Review correction reopened: fix alignment readiness and persisted
+  semantic-chain validation, evaluate GMO FX capability, and record a Primary Market
+  Data Source decision before ExecPlan 0004.
 
 ## Surprises & Discoveries
 

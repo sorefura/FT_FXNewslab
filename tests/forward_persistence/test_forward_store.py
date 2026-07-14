@@ -1,4 +1,5 @@
 import sqlite3
+from dataclasses import replace
 from datetime import UTC, datetime, timedelta
 from decimal import Decimal
 
@@ -55,8 +56,8 @@ def _result(job_id: str, snapshot: MarketSnapshot) -> ForwardResult:
         projection_version=job.projection.version,
         anchor_at=job.anchor_at,
         target_at=job.target_at,
-        price_t0=Decimal("150.00"),
-        price_tx=Decimal("150.05"),
+        price_t0=snapshot.candles[0].open,
+        price_tx=snapshot.candles[-1].open,
         t0_observed_at=snapshot.candles[0].open_time,
         tx_observed_at=snapshot.candles[-1].open_time,
         target_return_bps=Decimal("3.333333333333333333333333000"),
@@ -199,6 +200,37 @@ def test_same_timestamp_correction_is_a_separate_persisted_revision(tmp_path) ->
             (jobs[0].anchor_at.isoformat(),),
         ).fetchone()
     assert count == (2,)
+
+
+def test_cross_horizon_result_attachment_is_rejected_without_writes(tmp_path) -> None:
+    store = SQLiteForwardEvaluationStore(tmp_path / "research.db")
+    first_job, second_job = _jobs()[:2]
+    store.append_jobs((first_job, second_job), scheduled_at=NOW)
+    snapshot = MarketSnapshot(
+        (_candle(second_job.anchor_at), _candle(second_job.target_at))
+    )
+    result = _result(second_job.job_id, snapshot)
+
+    with pytest.raises(ValueError, match="persisted job"):
+        store.complete(first_job.job_id, snapshot=snapshot, result=result)
+
+    assert not store.list_results()
+    assert store.get_job(first_job.job_id).status is ForwardJobStatus.PENDING
+
+
+def test_snapshot_semantic_mismatch_is_rejected_without_writes(tmp_path) -> None:
+    store = SQLiteForwardEvaluationStore(tmp_path / "research.db")
+    job = _jobs()[0]
+    store.append_jobs((job,), scheduled_at=NOW)
+    mismatched = replace(_candle(job.anchor_at), source="another-market-source")
+    snapshot = MarketSnapshot((mismatched, replace(mismatched, open_time=job.target_at)))
+    result = replace(_result(job.job_id, snapshot), market_source=job.market_source)
+
+    with pytest.raises(ValueError, match="Snapshot semantics"):
+        store.complete(job.job_id, snapshot=snapshot, result=result)
+
+    assert not store.list_results()
+    assert store.get_job(job.job_id).status is ForwardJobStatus.PENDING
 
 
 def test_existing_research_migrations_are_applied_without_modification(tmp_path) -> None:

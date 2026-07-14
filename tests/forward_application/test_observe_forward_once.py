@@ -126,6 +126,23 @@ def test_pending_jobs_do_not_call_market_provider_before_target_delay(tmp_path: 
     assert source.calls == 0
 
 
+def test_alignment_window_end_remains_pending_until_m1_candle_can_close(
+    tmp_path: Path,
+) -> None:
+    signal_store, forward_store = _stores(tmp_path / "research.db")
+    source = RecordedMarketSource()
+
+    result = ObserveForwardOnceService(
+        signal_store,
+        forward_store,
+        clock=lambda: signal().created_at + timedelta(minutes=20),
+    ).run(source, instrument=CurrencyPair.parse("USD_JPY"))
+
+    assert result.pending_jobs == 5
+    assert result.due_jobs == 0
+    assert source.calls == 0
+
+
 def test_provider_failure_is_failed_and_does_not_create_result(tmp_path: Path) -> None:
     signal_store, forward_store = _stores(tmp_path / "research.db")
 

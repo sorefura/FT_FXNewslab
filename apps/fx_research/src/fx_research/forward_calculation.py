@@ -13,6 +13,7 @@ from .forward import (
     MarketCandle,
     MarketSnapshot,
     UnavailableReason,
+    market_granularity_duration,
 )
 
 _BPS = Decimal(10_000)
@@ -56,8 +57,8 @@ def calculate_forward_result(
         candle for candle in relevant if t0.open_time <= candle.open_time <= tx.open_time
     )
     _validate_evidence_semantics(job, evidence)
-    if completed_at < tx.open_time:
-        raise ValueError("ForwardResult cannot complete before its target candle")
+    if completed_at < tx.open_time + market_granularity_duration(job.granularity):
+        raise ValueError("ForwardResult cannot complete before its target candle closes")
     snapshot = MarketSnapshot(evidence)
     path = tuple(candle for candle in evidence if candle.open_time < tx.open_time)
     target_return_bps = (

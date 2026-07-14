@@ -45,6 +45,18 @@ def test_signal_store_depends_on_shared_domain_not_applications() -> None:
         assert forbidden.isdisjoint(imported_roots), f"forbidden import in {path}"
 
 
+def test_forward_evaluation_contracts_do_not_leak_into_shared_or_live_packages() -> None:
+    for root in (
+        ROOT / "packages/fx_core/src/fx_core",
+        ROOT / "packages/fx_signal_store/src/fx_signal_store",
+        ROOT / "apps/swap_bot/src/swap_bot",
+    ):
+        for path in root.rglob("*.py"):
+            assert "fx_research" not in {
+                name.split(".")[0] for name in _imports(path)
+            }, f"Research contract import in {path}"
+
+
 def test_portfolio_and_risk_do_not_import_broker_or_execution() -> None:
     for module in ("portfolio.py", "risk.py"):
         imports = _imports(ROOT / "apps/swap_bot/src/swap_bot" / module)

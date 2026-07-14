@@ -314,7 +314,8 @@ offline evidence replay.
 - [x] (2026-07-14) Confirmed OANDA v20 official OpenAPI candle request and response
   fields.
 - [x] (2026-07-14) Created this living ExecPlan before implementation.
-- [ ] Milestone 1 - Research contracts and deterministic projection.
+- [x] (2026-07-14) Milestone 1 - Added immutable Research contracts, explicit
+  USD/JPY/USD_JPY projection, five-horizon scheduling, and architecture guards.
 - [ ] Milestone 2 - Append-only evidence and result persistence.
 - [ ] Milestone 3 - Versioned calculation and future-leakage checks.
 - [ ] Milestone 4 - OANDA adapter and one-shot observation.
@@ -345,3 +346,7 @@ offline evidence replay.
 ## Validation
 
 Implementation validation is pending.
+
+Milestone 1 focused validation: 16 tests passed; Ruff and strict mypy passed for the
+new contract module. Pytest could not write its cache under the managed workspace, but
+test execution itself succeeded.

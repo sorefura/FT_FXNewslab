@@ -408,7 +408,9 @@ Acceptance requires all of the following:
 - [x] (2026-07-14) Milestone 2 - Added average-rank Spearman, deterministic paired
   bootstrap, Hit Rate/Wilson diagnostics, fixed buckets/monotonicity, excursion
   summaries, quarterly slices, and hand-calculated tests.
-- [ ] Milestone 3 - Consistent input capture and append-only persistence.
+- [x] (2026-07-14) Milestone 3 - Added migration 0004, single-transaction input
+  capture, deterministic run/report identities, ordered input replay, immutable policy
+  snapshots, append-only storage, and update/delete rejection.
 - [ ] Milestone 4 - Optional policy assessment and one-shot CLI.
 - [ ] Milestone 5 - Program validation and reproducibility audit.
 
@@ -436,6 +438,10 @@ Acceptance requires all of the following:
 - 2026-07-14: Use fixed calendar quarters from `Signal.created_at`, the ex-ante record
   availability boundary. Forward completion time remains a report diagnostic rather
   than deciding the historical slice containing the Signal.
+- 2026-07-14: Capture Signal, Forward job, and ForwardResult rows through one SQLite
+  read transaction, then calculate from that immutable in-memory snapshot. Holding a
+  write transaction across bootstrap calculation would add unnecessary contention;
+  exact ordered IDs provide the stable persistence boundary instead.
 - 2026-07-14: Do not create a new ADR at plan creation. The design follows accepted
   Research/Live sibling, immutable Signal, shared SQLite boundary, and market semantic
   separation decisions rather than changing them.
@@ -470,3 +476,17 @@ Milestone 1/2 focused validation on 2026-07-14:
   Signal/Forward horizons produced separate cohort identities.
 - Original frozen Signal and ForwardResult values remained equal before and after sample
   extraction.
+
+Milestone 3 focused validation on 2026-07-14:
+
+- Evaluation persistence plus Forward migration regression: 15 passed.
+- Ruff: all checks passed for new persistence and tests.
+- Strict mypy: new persistence module checked, no issues.
+- One completed result became one sample while PENDING, FAILED, and UNAVAILABLE jobs
+  remained explicit exclusions.
+- Identical ordered inputs/configuration reused the same run and report; a second
+  completed ForwardResult created a distinct run while the first run replayed its
+  original exact input IDs.
+- Canonical cohort/metric payloads replayed with separate Signal and Forward horizons.
+- Evaluation run/report update and delete attempts failed through immutable triggers.
+- Reusing one policy version with different content was rejected.

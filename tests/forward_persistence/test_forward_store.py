@@ -247,4 +247,5 @@ def test_existing_research_migrations_are_applied_without_modification(tmp_path)
         "0001_ingestion_state.sql",
         "0002_fetch_run_stage.sql",
         "0003_forward_signal_evaluation.sql",
+        "0004_signal_validation_framework.sql",
     }

@@ -402,8 +402,12 @@ Acceptance requires all of the following:
 - [x] (2026-07-14) Confirmed clean synchronized baseline at `d7cad8f` and mapped
   current Signal, ForwardResult, Research migration, persistence, and CLI boundaries.
 - [x] (2026-07-14) Created this living ExecPlan before implementation.
-- [ ] Milestone 1 - Evaluation Dataset and strict cohort contracts.
-- [ ] Milestone 2 - Deterministic Research metrics and stability.
+- [x] (2026-07-14) Milestone 1 - Added immutable Evaluation samples/configuration,
+  exact strict cohort identity, direction-only score extraction, deterministic grouping,
+  and explicit non-completed exclusion types.
+- [x] (2026-07-14) Milestone 2 - Added average-rank Spearman, deterministic paired
+  bootstrap, Hit Rate/Wilson diagnostics, fixed buckets/monotonicity, excursion
+  summaries, quarterly slices, and hand-calculated tests.
 - [ ] Milestone 3 - Consistent input capture and append-only persistence.
 - [ ] Milestone 4 - Optional policy assessment and one-shot CLI.
 - [ ] Milestone 5 - Program validation and reproducibility audit.
@@ -429,6 +433,9 @@ Acceptance requires all of the following:
 - 2026-07-14: Treat non-completed Forward jobs as diagnostics, not samples. Zero return,
   neutral direction, and null MFE/MAE remain completed samples with metric-specific
   denominator/null handling.
+- 2026-07-14: Use fixed calendar quarters from `Signal.created_at`, the ex-ante record
+  availability boundary. Forward completion time remains a report diagnostic rather
+  than deciding the historical slice containing the Signal.
 - 2026-07-14: Do not create a new ADR at plan creation. The design follows accepted
   Research/Live sibling, immutable Signal, shared SQLite boundary, and market semantic
   separation decisions rather than changing them.
@@ -446,3 +453,20 @@ Record at completion:
 - Strict scorer/model/prompt/formula/projection and GMO/OANDA separation evidence.
 - Duplicate/new-input run identities and immutable Evaluation storage evidence.
 - Signal/ForwardResult before/after equality and zero Strategy/Broker invocation.
+
+Milestone 1/2 focused validation on 2026-07-14:
+
+- Evaluation domain, metrics, and architecture: 28 passed.
+- Ruff: all checks passed for new production and test modules.
+- Strict mypy: 2 new source files checked, no issues.
+- Hand-calculated Spearman: positive `1.0`, inverse `-1.0`, tied
+  `0.9486832980505138`; insufficient and constant inputs remained undefined.
+- Hit Rate fixture: 5 total, 3 eligible, 2 hits, 1 neutral, 1 zero return, with Wilson
+  interval matching the hand-calculated fixture.
+- Fixed bucket boundaries produced counts `(1, 1, 1, 1, 2)`; explicit empty,
+  monotonic, non-monotonic, and out-of-range Pair score states passed.
+- Identical bootstrap input/configuration produced identical intervals.
+- Scorer/model/prompt/transformation, projection/formula, GMO BID/OANDA midpoint, and
+  Signal/Forward horizons produced separate cohort identities.
+- Original frozen Signal and ForwardResult values remained equal before and after sample
+  extraction.

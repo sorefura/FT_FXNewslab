@@ -1,5 +1,27 @@
 # Test Strategy
 
+## Strategy adoption tests
+
+ExecPlan 0005 tests state What each authority boundary guarantees:
+
+- explicit assessment-ID reads validate full Research lineage and perform no Research
+  writes;
+- EXPERIMENTAL/PROMISING, missing evidence, bad hashes, malformed JSON, and unknown
+  snapshot contracts fail closed;
+- dry-run creates no Live database and `--apply` is atomic and idempotent;
+- every strict cohort dimension, nullable version, mode, and bounded time is exact;
+- no approval, historical Signal, expiration, revocation, mismatch, and ambiguity stop
+  before Strategy with structured reason codes;
+- Candidate persistence requires exact current authorization and leaves no partial row
+  on failure;
+- the full approved shadow path preserves Candidate -> Portfolio -> Risk -> intent
+  lineage and records `NOT_SUBMITTED`;
+- Broker submission safety is measured with an injected counting gateway. Tests assert
+  its observed call count is zero and never rely on a hardcoded summary field.
+
+Architecture tests prohibit Live imports of Research and adoption-gate imports of
+Execution/Broker ports.
+
 ## Goal
 
 テストは内部実装を固定するためではなく、Layerが保証するWhatを固定する。

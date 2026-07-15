@@ -1,5 +1,20 @@
 # Repository Structure
 
+## Current adoption modules
+
+ExecPlan 0005 keeps Research-specific validation types out of `fx_core`. The Live
+application owns:
+
+- `adoption.py`: immutable evidence, policy, decision, authorization, and exact cohort
+  contracts.
+- `research_evidence.py`: Live-owned Port plus read-only Research SQLite adapter.
+- `adoption_application.py`: explicit approve/revoke one-shot orchestration.
+- `adoption_store.py` and `migrations/`: append-only Live state.
+- `adoption_gate.py`: Live-only runtime authorization.
+- `authorized_shadow.py`: shadow composition with existing Portfolio/Risk/Execution.
+
+Research application code remains unchanged and has no Live import.
+
 ## Recommended monorepo
 
 ```text

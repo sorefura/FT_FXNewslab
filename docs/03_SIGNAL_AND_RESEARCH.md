@@ -1,5 +1,18 @@
 # Signal and Research
 
+## Validation evidence is not Live authority
+
+`VALIDATED_FOR_RESEARCH` means that one exact Evaluation Report satisfied one exact
+Research validation policy. Its cohort, metrics, conditions, Evaluation Run, and full
+input snapshot remain Research evidence. Research neither creates
+`APPROVED_FOR_STRATEGY` nor edits a Signal.
+
+Live adoption selects an assessment explicitly by ID. A read-only adapter validates
+the assessment -> report -> run -> policy -> input-snapshot lineage and copies the
+canonical payloads and hashes into an append-only Live snapshot. Live does not
+recompute Spearman, Hit Rate, bootstrap results, or Research thresholds. A latest
+assessment is never selected implicitly.
+
 ## Objective
 
 Researchの目的は、Signalが未来を「当てたか」を単純集計することではない。

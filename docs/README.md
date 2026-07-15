@@ -1,5 +1,14 @@
 # Design Index
 
+## ExecPlan 0005 adoption boundary
+
+- `exec-plans/0005-validated-signal-live-adoption.md`
+  - Exact Research evidence snapshot, explicit Strategy adoption, runtime
+    authorization, Candidate lineage, and shadow proof.
+- `adr/0007-validated-research-evidence-requires-explicit-live-adoption.md`
+  - Research validation is evidence; only a separate Live decision grants bounded
+    Strategy-input authority.
+
 ## Foundation
 
 - `PROGRAM.md`
@@ -44,6 +53,7 @@
 - `adr/0004-signals-are-immutable.md`
 - `adr/0005-shared-sqlite-signal-store.md`
 - `adr/0006-gmo-fx-is-primary-forward-market-source.md`
+- `adr/0007-validated-research-evidence-requires-explicit-live-adoption.md`
 
 ## Reading route by task
 

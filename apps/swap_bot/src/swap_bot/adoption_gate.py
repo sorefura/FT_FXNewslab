@@ -31,9 +31,15 @@ class LiveAdoptionGate:
         strategy_config_identity: str | None = None,
     ) -> AuthorizedSignal:
         require_utc(authorized_at, "authorization time")
-        approvals = self._store.list_approvals(
-            strategy_id=strategy_id, strategy_version=strategy_version
-        )
+        try:
+            approvals = self._store.list_approvals(
+                strategy_id=strategy_id, strategy_version=strategy_version
+            )
+        except (KeyError, TypeError, ValueError) as error:
+            raise AdoptionRejected(
+                AdoptionFailureReason.NO_ACTIVE_ADOPTION,
+                "persisted adoption state is malformed",
+            ) from error
         if not approvals:
             self._reject(
                 AdoptionFailureReason.NO_ACTIVE_ADOPTION,

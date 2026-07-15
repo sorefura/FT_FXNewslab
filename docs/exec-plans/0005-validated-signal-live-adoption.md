@@ -223,7 +223,9 @@ supported Python versions.
 - [x] (2026-07-15) Milestone 4 - Added authorized shadow orchestration through the
   existing Strategy port, Portfolio, Risk, approved intent, dry-run Execution, and
   append-only decision records, with an injected Broker call probe.
-- [ ] Milestone 5 - Documentation and final validation.
+- [x] (2026-07-15) Milestone 5 - Updated the Program, architecture, Research,
+  Swap Bot, data/versioning, repository, test-strategy, and design-index documents;
+  passed the complete Python 3.11/3.14 validation matrix.
 
 ## Surprises & discoveries
 
@@ -246,10 +248,18 @@ supported Python versions.
   wildcards or implicit latest-version behavior.
 - 2026-07-15: Preserve the existing fixture characterization seam while requiring a
   stricter atomic Candidate append path for all validated-adoption traffic.
+- 2026-07-15: Introduce additive Live migrations 0001/0002 without rewriting the
+  inline historical base schema; migration 0002 adds Candidate authorization lineage
+  integrity after migration 0001 was committed.
+- 2026-07-15: Keep runtime adoption entirely on immutable Live state and retain
+  Research payloads as opaque audit evidence rather than copying evaluator logic.
+- 2026-07-15: Use a test-support Strategy for the complete shadow proof because no
+  production Strategy exists; production Strategy implementation remains outside
+  ExecPlan 0005.
 
 ## Validation
 
-Pending implementation. Final commands:
+Completed locally on 2026-07-15 with the same commands used by CI:
 
 ```powershell
 python -m pytest -q
@@ -257,7 +267,19 @@ python -m ruff check .
 python -m mypy packages/fx_core/src packages/fx_signal_store/src apps/fx_research/src apps/swap_bot/src
 ```
 
-GitHub Actions must pass the existing Python 3.11 and 3.14 matrix.
+Final matrix results:
+
+- Python 3.11: `254 passed, 5 skipped`; Ruff passed; strict mypy passed for
+  63 source files.
+- Python 3.14: `254 passed, 5 skipped`; Ruff passed; strict mypy passed for
+  63 source files.
+- The five skips are opt-in external provider smoke tests.
+- Exact validated evidence import, EXPERIMENTAL/PROMISING rejection, dry-run zero
+  writes, atomic apply, exact cohort/version matching, bounded time, no retroactive
+  activation, revocation, ambiguity, Candidate authorization lineage, and Research
+  import boundaries passed.
+- The complete shadow path ended `NOT_SUBMITTED`; the injected BrokerGateway measured
+  zero submit calls.
 
 Milestone 1 validation on Python 3.11:
 

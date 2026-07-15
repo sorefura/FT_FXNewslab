@@ -97,6 +97,7 @@ class ApproveSignalAdoptionOnceService:
             raise AdoptionRejected(
                 AdoptionFailureReason.RESEARCH_STATUS_NOT_VALIDATED,
                 f"Research status is {evidence.status.value}",
+                context={"research_status": evidence.status.value},
             )
         if (
             evidence.research_policy_version

@@ -1,5 +1,29 @@
 # Data and Versioning
 
+## Live adoption records
+
+The Live database adds numbered migrations and append-only tables for:
+
+```text
+live_research_validation_evidence_snapshots
+live_strategy_adoption_policies
+live_strategy_adoption_decisions
+live_signal_authorizations
+live_candidate_signal_authorizations
+```
+
+Evidence snapshots retain assessment/report/run IDs, Research policy version/hash and
+payload, exact cohort payload/hash, opaque metric and condition payloads, Evaluation
+input snapshot version/hash/payload, source contract version, Research timestamps, and
+import time. Runtime never resolves these identities through a current Research
+database.
+
+Strategy adoption policy versions are immutable content identities. Reusing a version
+with different content is rejected. Approvals and revocations are separate records;
+revocation references one exact approval. Evidence, policy, decision, authorization,
+and Candidate authorization lineage reject UPDATE and DELETE. Identical imports,
+approvals, revocations, and authorizations reuse deterministic semantic identities.
+
 ## Principle
 
 市場研究では「現在の最良値」より「当時何を知っていたか」が重要である。

@@ -29,3 +29,15 @@ each immutable Signal at five fixed forward horizons and stores exact market evi
 replayable result. ExecPlan 0004 groups completed outcomes by strict semantic cohorts, stores
 versioned aggregate metrics, and permits Research validation only through an explicit immutable
 policy. Strategy adoption and Live authority remain ExecPlan 0005 responsibilities.
+
+ExecPlan 0005 preserves three distinct authorities:
+
+```text
+VALIDATED_FOR_RESEARCH != APPROVED_FOR_STRATEGY != ORDER_APPROVED
+```
+
+Live imports one explicitly selected Research assessment as immutable evidence, then
+requires a Live-owned, exact-match, time-bounded, revocable operator decision before a
+Signal may reach Strategy. Runtime uses only copied Live evidence and decision state.
+Strategy adoption never bypasses Portfolio, Risk, approved intent, Execution arming,
+or idempotency, and ExecPlan 0005 keeps Broker submission disabled.

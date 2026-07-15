@@ -51,9 +51,16 @@ class AdoptionFailureReason(StrEnum):
 
 
 class AdoptionRejected(ValueError):
-    def __init__(self, reason: AdoptionFailureReason, detail: str) -> None:
+    def __init__(
+        self,
+        reason: AdoptionFailureReason,
+        detail: str,
+        *,
+        context: Mapping[str, object] | None = None,
+    ) -> None:
         super().__init__(detail)
         self.reason = reason
+        self.context = dict(context or {})
 
 
 @dataclass(frozen=True, slots=True)

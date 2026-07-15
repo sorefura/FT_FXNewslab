@@ -1,5 +1,25 @@
 # Architecture
 
+## Research-to-Live adoption boundary
+
+Research and Live remain sibling applications. The only adoption flow is:
+
+```text
+Research Validation Evidence
+    -> explicit assessment-ID read at approval time
+    -> immutable Live-owned evidence snapshot
+    -> explicit Live Strategy adoption decision
+    -> Live-only runtime adoption gate
+    -> AuthorizedSignal
+    -> Strategy -> Portfolio -> Risk -> Execution
+```
+
+`swap_bot` owns the evidence-source Port and read-only SQLite adapter but imports no
+`fx_research` module. Normal Strategy cycles do not read the Research database. The
+gate never imports or calls Broker/Execution and never mutates `fx_core.Signal`.
+Zero or multiple exact approvals, version/target/horizon mismatch, invalid time,
+revocation, and runtime-mode mismatch all fail before Strategy.
+
 ## Architectural style
 
 Modular Monolithを基本とする。

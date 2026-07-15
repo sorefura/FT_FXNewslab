@@ -144,3 +144,43 @@ def test_policy_without_expiration_is_rejected() -> None:
 
     with pytest.raises(ValueError, match="fields"):
         StrategyAdoptionPolicy.from_mapping(payload)
+
+
+def test_nonvalidated_cli_result_keeps_structured_rejection_summary(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    research = tmp_path / "research.sqlite3"
+    live = tmp_path / "live.sqlite3"
+    seed_research_evidence(research, status="PROMISING")
+    policy = _policy_file(tmp_path / "policy.json")
+    monkeypatch.setattr(
+        sys,
+        "argv",
+        [
+            "swap_bot",
+            "approve-signal-adoption-once",
+            "--research-database",
+            str(research),
+            "--live-database",
+            str(live),
+            "--assessment-id",
+            "assessment-validated-1",
+            "--policy",
+            str(policy),
+            "--approved-by",
+            "reviewer@example.com",
+            "--reason",
+            "reviewed evidence",
+        ],
+    )
+
+    assert main() == 1
+
+    summary = json.loads(capsys.readouterr().out)
+    assert summary["assessment_found"]
+    assert summary["research_status"] == "PROMISING"
+    assert summary["research_lineage_valid"]
+    assert summary["failure_reasons"] == ["RESEARCH_STATUS_NOT_VALIDATED"]
+    assert not live.exists()

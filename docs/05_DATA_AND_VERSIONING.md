@@ -310,7 +310,10 @@ created_at
 
 `evaluation_run_input`はordinal付きでexact Signal IDとForwardResult IDを参照する。一回の
 SQLite read transactionでinput setを固定し、計算中に追加されたForwardResultは既存runへ
-含めない。同じordered inputと全configurationは同じrunを再利用する。
+含めない。run identityはordered completed inputだけでなく、非完了job ID/statusとそのcohort、
+unsupported Signal ID、incomplete-horizon Signal ID、および全configurationを含む。同じfull
+snapshotとconfigurationだけが同じrunを再利用する。full snapshotはcanonical JSONとcontent
+hashでappend-only保存し、診断を後からcurrent job stateで再構成しない。
 
 `evaluation_report`はrun内のstrict cohortごとにcohort identityとversion付きmetric payloadを
 保存する。cohort identityにはSignal/Forward horizon、Signal version群、market semantics、
@@ -318,6 +321,8 @@ projection/formula/score definition versionを含める。
 
 `validation_policy`と`validation_assessment`はReportから分離する。policy versionは同じ名前で
 contentを変更できず、AssessmentはEvaluation Run、Report、policy version/content hashを参照する。
+Assessment保存時には参照の存在だけでなく、Reportのrun所属、persisted policy hash、および
+再計算したstrict cohort/metric payloadとpersisted Reportの一致を検証する。
 run/input/report/policy/assessmentはすべてappend-onlyとし、UPDATE/DELETEを拒否する。
 
 Evaluation metricのbootstrap version、seed、iteration count、bucket boundaries、quantilesは

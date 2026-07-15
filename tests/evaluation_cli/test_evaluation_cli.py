@@ -32,10 +32,12 @@ def test_evaluate_signals_once_cli_emits_json_summary(
         "completed_forward_results_scanned": 1,
         "evaluation_sample_count": 1,
         "failed": 0,
+        "incomplete_horizon_signal_count": 0,
         "insufficient_sample_count": 2,
         "reports_created": 1,
         "reports_reused": 0,
         "undefined_metric_count": 2,
+        "unsupported_signal_count": 0,
     }
 
 
@@ -94,6 +96,8 @@ def test_cli_returns_nonzero_when_evaluation_reports_processing_failure(
         lambda self, policy: EvaluateSignalsOnceResult(
             completed_forward_results_scanned=1,
             evaluation_sample_count=0,
+            unsupported_signal_count=0,
+            incomplete_horizon_signal_count=0,
             cohort_count=1,
             reports_created=0,
             reports_reused=0,

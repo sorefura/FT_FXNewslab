@@ -9,6 +9,7 @@ from .evaluation import (
     CohortEvaluation,
     EvaluationConfiguration,
     EvaluationExclusionReason,
+    EvaluationInputSnapshot,
     ValidationAssessment,
     ValidationPolicy,
     ValidationStatus,
@@ -22,6 +23,8 @@ from .evaluation_persistence import SQLiteEvaluationStore, StoredEvaluationRepor
 class EvaluateSignalsOnceResult:
     completed_forward_results_scanned: int
     evaluation_sample_count: int
+    unsupported_signal_count: int
+    incomplete_horizon_signal_count: int
     cohort_count: int
     reports_created: int
     reports_reused: int
@@ -67,7 +70,7 @@ class EvaluateSignalsOnceService:
             except (ArithmeticError, ValueError):
                 failed += 1
         if failed:
-            return self._summary(snapshot.completed_results_scanned, evaluations, failed)
+            return self._summary(snapshot, evaluations, failed)
         created_at = self._clock()
         appended = self._store.append_run(
             snapshot,
@@ -90,7 +93,9 @@ class EvaluateSignalsOnceService:
                     validation_policy,
                     created_at=self._clock(),
                 )
-                assessments_created += int(self._store.append_assessment(assessment))
+                assessments_created += int(
+                    self._store.append_assessment(assessment, evaluation)
+                )
         undefined = sum(item.metrics.undefined_metric_count for item in evaluations)
         insufficient = sum(
             item.metrics.insufficient_sample_count for item in evaluations
@@ -99,6 +104,10 @@ class EvaluateSignalsOnceService:
         return EvaluateSignalsOnceResult(
             completed_forward_results_scanned=snapshot.completed_results_scanned,
             evaluation_sample_count=len(snapshot.samples),
+            unsupported_signal_count=len(snapshot.unsupported_signal_ids),
+            incomplete_horizon_signal_count=len(
+                snapshot.incomplete_horizon_signal_ids
+            ),
             cohort_count=len(evaluations),
             reports_created=report_count if appended.created else 0,
             reports_reused=0 if appended.created else report_count,
@@ -110,14 +119,18 @@ class EvaluateSignalsOnceService:
 
     @staticmethod
     def _summary(
-        completed_results: int,
+        snapshot: EvaluationInputSnapshot,
         evaluations: list[CohortEvaluation],
         failed: int,
     ) -> EvaluateSignalsOnceResult:
         return EvaluateSignalsOnceResult(
-            completed_forward_results_scanned=completed_results,
+            completed_forward_results_scanned=snapshot.completed_results_scanned,
             evaluation_sample_count=sum(
                 len(item.sample_input_ids) for item in evaluations
+            ),
+            unsupported_signal_count=len(snapshot.unsupported_signal_ids),
+            incomplete_horizon_signal_count=len(
+                snapshot.incomplete_horizon_signal_ids
             ),
             cohort_count=len(evaluations) + failed,
             reports_created=0,

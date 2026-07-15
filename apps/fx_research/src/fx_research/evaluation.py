@@ -16,6 +16,7 @@ SCORE_DEFINITION_VERSION = "signal-direction-v1"
 COHORT_DEFINITION_VERSION = "strict-evaluation-cohort-v1"
 METRIC_CONFIGURATION_VERSION = "research-metrics-v1"
 BOOTSTRAP_VERSION = "paired-bootstrap-v1"
+EVALUATION_INPUT_SNAPSHOT_VERSION = "evaluation-input-snapshot-v2"
 DEFAULT_BOOTSTRAP_SEED = 20260714
 DEFAULT_BOOTSTRAP_ITERATIONS = 2_000
 SCORE_BUCKET_BOUNDARIES = (-1.0, -0.6, -0.2, 0.2, 0.6, 1.0)
@@ -226,10 +227,25 @@ class ExcludedForwardObservation:
     signal_id: SignalId
     job_id: str
     cohort: CohortIdentity
+    captured_status: ForwardJobStatus
     reason: EvaluationExclusionReason
 
     def __post_init__(self) -> None:
         _require_text(self.job_id, "excluded Forward job id")
+        if self.captured_status is ForwardJobStatus.COMPLETED:
+            raise ValueError("completed Forward job is not an exclusion")
+        if self.reason is not exclusion_reason(self.captured_status):
+            raise ValueError("Forward job status and exclusion reason differ")
+
+    def identity_payload(self) -> dict[str, object]:
+        return {
+            "signal_id": self.signal_id.value,
+            "job_id": self.job_id,
+            "captured_status": self.captured_status.value,
+            "reason": self.reason.value,
+            "cohort_id": self.cohort.cohort_id,
+            "cohort": self.cohort.identity_payload(),
+        }
 
 
 @dataclass(frozen=True, slots=True)
@@ -248,10 +264,50 @@ class EvaluationInputSnapshot:
             raise ValueError("completed result count must match Evaluation samples")
         if tuple(sorted(self.samples, key=lambda item: item.input_identity)) != self.samples:
             raise ValueError("Evaluation samples must use deterministic input order")
+        sample_ids = tuple(item.input_identity for item in self.samples)
+        if len(set(sample_ids)) != len(sample_ids):
+            raise ValueError("Evaluation samples must not duplicate input identities")
+        exclusion_order = tuple(
+            sorted(self.exclusions, key=lambda item: (item.cohort.cohort_id, item.job_id))
+        )
+        if exclusion_order != self.exclusions:
+            raise ValueError("Evaluation exclusions must use deterministic input order")
+        exclusion_job_ids = tuple(item.job_id for item in self.exclusions)
+        if len(set(exclusion_job_ids)) != len(exclusion_job_ids):
+            raise ValueError("Evaluation exclusions must not duplicate Forward jobs")
+        for signal_ids, label in (
+            (self.unsupported_signal_ids, "unsupported Signal IDs"),
+            (self.incomplete_horizon_signal_ids, "incomplete-horizon Signal IDs"),
+        ):
+            values = tuple(item.value for item in signal_ids)
+            if values != tuple(sorted(set(values))):
+                raise ValueError(f"{label} must be unique and ordered")
 
     @property
     def ordered_input_identity(self) -> tuple[tuple[str, str], ...]:
         return tuple(item.input_identity for item in self.samples)
+
+    def identity_payload(self) -> dict[str, object]:
+        return {
+            "version": EVALUATION_INPUT_SNAPSHOT_VERSION,
+            "signals_scanned": self.signals_scanned,
+            "completed_results_scanned": self.completed_results_scanned,
+            "completed_inputs": [
+                {
+                    "signal_id": sample.signal_id.value,
+                    "forward_result_id": sample.forward_result_id,
+                    "cohort_id": sample.cohort.cohort_id,
+                }
+                for sample in self.samples
+            ],
+            "exclusions": [item.identity_payload() for item in self.exclusions],
+            "unsupported_signal_ids": [
+                item.value for item in self.unsupported_signal_ids
+            ],
+            "incomplete_horizon_signal_ids": [
+                item.value for item in self.incomplete_horizon_signal_ids
+            ],
+        }
 
 
 @dataclass(frozen=True, slots=True)

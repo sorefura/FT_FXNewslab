@@ -40,10 +40,10 @@ Signal + ForwardResult
         -> Optional ValidationAssessment
 ```
 
-Repeated execution over the same ordered inputs and configuration reuses one
-Evaluation Run. Newly completed ForwardResult records produce a new run. Statistical
-undefined states and insufficient samples remain explicit data, not application
-failures.
+Repeated execution over the same full captured input snapshot and configuration reuses
+one Evaluation Run. Newly completed ForwardResult records or changed non-completed job
+states produce a new run. Statistical undefined states and insufficient samples remain
+explicit data, not application failures.
 
 ## Non-goals
 
@@ -111,6 +111,8 @@ Expected modules:
 - `fx_research/evaluation_application.py`: one-shot grouping, evaluation,
   idempotency, and optional assessment orchestration.
 - `fx_research/migrations/0004_signal_validation_framework.sql`: new schema only.
+- `fx_research/migrations/0005_evaluation_input_snapshot.sql`: append-only full input
+  snapshot evidence added without editing migration 0004.
 - `fx_research/__main__.py`: `evaluate-signals-once` command.
 
 ### Evaluation input snapshot
@@ -121,8 +123,11 @@ Later database writes cannot alter that run's input set.
 
 Only a completed numeric ForwardResult becomes an EvaluationSample. `PENDING`,
 `FAILED`, and `UNAVAILABLE` jobs remain exclusion diagnostics and never become zero
-return samples. Neutral direction, zero return, and missing MFE/MAE remain included
-samples with metric-specific denominator/null diagnostics.
+return samples. Their job IDs, captured statuses, reasons, and strict cohort identities
+are part of the immutable run snapshot. Unsupported Signal IDs and incomplete-horizon
+Signal IDs are also persisted as formal snapshot evidence. Neutral direction, zero
+return, and missing MFE/MAE remain included samples with metric-specific denominator/
+null diagnostics.
 
 The initial score definition is fixed:
 
@@ -179,14 +184,18 @@ metric configuration snapshot and contribute to run identity.
 An Evaluation Run identity is the deterministic digest of:
 
 - the ordered `(Signal ID, ForwardResult ID)` input pairs;
+- non-completed job IDs, captured statuses, reasons, and exclusion cohort identities;
+- unsupported and incomplete-horizon Signal IDs;
 - evaluator version;
 - score-definition version;
 - strict grouping configuration;
 - metric and bootstrap configuration.
 
 One run contains one report per strict cohort. Exact ordered input IDs are persisted
-with ordinals. Repeating the same identity returns the existing run and reports.
-Adding a completed ForwardResult changes the ordered inputs and therefore the run ID.
+with ordinals, and the full captured snapshot is persisted as canonical append-only
+evidence. Repeating the same identity returns the existing run and reports. Adding a
+completed ForwardResult or changing a captured non-completed job status changes the
+run ID.
 
 EvaluationReport contains cohort identity, metrics, confidence intervals, explicit
 undefined/insufficient reasons, diagnostics, and creation time. JSON payloads are
@@ -198,6 +207,11 @@ Hit Rate point/CI, bucket coverage, monotonicity, and stability-slice conditions
 The evaluator may emit only `EXPERIMENTAL`, `PROMISING`, or
 `VALIDATED_FOR_RESEARCH`. It cannot emit `APPROVED_FOR_STRATEGY` or automatically emit
 `DEPRECATED`.
+
+The persistence boundary revalidates that every captured sample belongs to the report
+cohort, appears exactly once across reports, and is not omitted. Assessment persistence
+also verifies the Report belongs to the referenced run, the persisted policy hash
+matches, and the recomputed cohort and metric payloads equal the persisted Report.
 
 ## Invariants
 
@@ -214,7 +228,7 @@ The evaluator may emit only `EXPERIMENTAL`, `PROMISING`, or
 - Every sliced metric includes its sample count.
 - Evaluation input IDs are fixed before metric calculation begins.
 - Evaluation runs, input links, reports, policies, and assessments are append-only.
-- Existing migrations 0001, 0002, and 0003 are not edited.
+- Existing migrations 0001, 0002, 0003, and 0004 are not edited.
 - UTC-aware timestamps and deterministic configuration/version identities are required.
 
 ## Milestones
@@ -285,6 +299,7 @@ auditable without changing upstream records.
 Deliverables:
 
 - Migration `0004_signal_validation_framework.sql` without changing 0001-0003.
+- Migration `0005_evaluation_input_snapshot.sql` without changing 0004.
 - Single-read input capture from Signal/Forward records.
 - Append-only run, ordered input, report, policy, and assessment tables.
 - Deterministic run idempotency and replay reads.
@@ -362,7 +377,8 @@ python -m mypy packages/fx_core/src packages/fx_signal_store/src apps/fx_researc
 
 ## Migration and compatibility
 
-- Add only migration 0004 to the Research migration package. Preserve 0001-0003.
+- Preserve migrations 0001-0004. Add migration 0005 for immutable full-snapshot
+  evidence; do not rewrite existing Evaluation rows.
 - Keep evaluation data in the same SQLite file so one read transaction can freeze
   Signal and ForwardResult inputs; do not move Research statistics into the shared
   Signal store.
@@ -386,8 +402,13 @@ Acceptance requires all of the following:
 - Spearman, deterministic bootstrap, Hit Rate, fixed buckets, MFE, MAE, diagnostics,
   and quarterly stability meet their explicit contracts.
 - Undefined/insufficient/missing states are persisted and never replaced by zero.
-- Exact ordered input IDs, configuration, reports, and optional assessments replay.
-- Identical runs are idempotent; newly completed results create a new run.
+- Exact full input snapshot, configuration, reports, and optional assessments replay.
+- Identical full snapshots are idempotent; newly completed results or changed captured
+  job states create a new run.
+- Report persistence rejects cross-cohort, duplicate, missing, or out-of-snapshot
+  inputs before any partial run is written.
+- Assessment persistence rejects cross-run Reports, policy hash mismatches, and
+  recomputed cohort/metric payload mismatches before any assessment is written.
 - All evaluation records reject update/delete.
 - Validation policy is required for assessment and cannot approve Strategy use.
 - Signal and ForwardResult remain unchanged.
@@ -416,6 +437,10 @@ Acceptance requires all of the following:
   assessment persistence, JSON summary, failure exit behavior, and Live import guards.
 - [x] (2026-07-14) Milestone 5 - Updated permanent Research/data/test contracts and
   passed the full pytest, Ruff, and strict mypy suite on Python 3.11.9 and 3.14.6.
+- [x] (2026-07-15) Review correction - Expanded run identity and append-only replay to
+  the full captured diagnostic snapshot, added report/sample cohort membership checks,
+  enforced Assessment Run/Report/Policy/payload lineage, and exposed unsupported and
+  incomplete-horizon counts in the CLI result.
 
 ## Surprises & Discoveries
 
@@ -428,6 +453,15 @@ Acceptance requires all of the following:
 - Python 3.14 was not initially present in the local environment. The official
   `Python.Python.3.14` user-scoped package supplied Python 3.14.6, allowing the same
   CI commands to run locally rather than inferring compatibility from Python 3.13.
+- Completed input IDs alone did not identify exclusion diagnostics because Forward job
+  status is mutable operational state. A PENDING job becoming FAILED or UNAVAILABLE can
+  change captured evidence without changing any completed Result ID.
+- SQLite foreign keys could prove that a Run, Report, and Policy each existed, but not
+  that the Report belonged to the Assessment Run or that the referenced policy hash
+  matched the immutable policy content.
+- The Python 3.14 mypy binary wheel was blocked by local Windows application control.
+  Installing the same mypy release from source produced a pure-Python wheel and allowed
+  the required 3.14 type check to run successfully.
 
 ## Decision log
 
@@ -455,6 +489,16 @@ Acceptance requires all of the following:
 - 2026-07-14: Do not create a new ADR at plan creation. The design follows accepted
   Research/Live sibling, immutable Signal, shared SQLite boundary, and market semantic
   separation decisions rather than changing them.
+- 2026-07-15: Define `evaluation-input-snapshot-v2` over ordered completed IDs,
+  non-completed job/status/reason/cohort evidence, unsupported/incomplete Signal IDs,
+  and captured counts. Persist it through migration 0005 instead of modifying the
+  already-applied migration 0004.
+- 2026-07-15: Revalidate report membership at the persistence boundary rather than
+  trusting the evaluator's flattened IDs. Each captured sample must match the report
+  cohort and appear exactly once before the transaction writes a Run.
+- 2026-07-15: Require Assessment persistence to compare Report run ownership, policy
+  content hash, and recomputed cohort/metric payloads. Separate valid foreign-key
+  references do not by themselves establish this lineage.
 
 ## Validation
 
@@ -538,3 +582,24 @@ Final validation on 2026-07-14:
   could not be reused with changed content, and Assessment required its persisted policy.
 - Signal and ForwardResult before/after equality passed. Evaluation modules import and
   invoke no Strategy, Portfolio, Risk, Execution, Broker, or Swap Bot path.
+
+Review-correction validation on 2026-07-15:
+
+- Focused Evaluation domain/persistence/application/CLI and Forward migration tests:
+  43 passed.
+- Python 3.11.9: 201 passed, 5 opt-in external smoke tests skipped, 0 failed; Ruff all
+  checks passed; strict mypy checked 54 source files with no issues.
+- Python 3.14.6: 201 passed, 5 opt-in external smoke tests skipped, 0 failed; Ruff all
+  checks passed; strict mypy checked 54 source files with no issues. The local Windows
+  policy required the mypy 2.3.0 source-built pure-Python wheel.
+- Identical full snapshots reused one run. PENDING-to-FAILED and separate
+  PENDING-to-UNAVAILABLE transitions produced distinct runs while completed Result IDs
+  remained unchanged.
+- Persisted snapshot replay retained captured non-completed job status/reason/cohort,
+  unsupported Signal IDs, incomplete-horizon Signal IDs, and completed identities.
+  Exclusions remained outside Evaluation samples and were not converted to zero.
+- Cross-cohort input assignment, duplicate input assignment, and missing input coverage
+  were rejected before any Run or Report row was written.
+- Cross-run Report references, wrong policy content hashes, and reused-run recomputed
+  cohort/metric mismatches were rejected before any Assessment row was written. A valid
+  identical rerun continued to reuse its Report and Assessment.

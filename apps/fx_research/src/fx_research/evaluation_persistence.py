@@ -15,6 +15,7 @@ from fx_core import Horizon, SignalId
 from fx_core.time import require_utc
 
 from .evaluation import (
+    EVALUATION_INPUT_SNAPSHOT_VERSION,
     CohortEvaluation,
     CohortIdentity,
     EvaluationConfiguration,
@@ -40,9 +41,19 @@ class StoredEvaluationReport:
 
 
 @dataclass(frozen=True, slots=True)
+class StoredEvaluationInputSnapshot:
+    version: str
+    identity_hash: str
+    signals_scanned: int
+    completed_results_scanned: int
+    identity_payload: Mapping[str, Any]
+
+
+@dataclass(frozen=True, slots=True)
 class StoredEvaluationRun:
     run_id: str
     ordered_input_identity: tuple[tuple[str, str], ...]
+    input_snapshot: StoredEvaluationInputSnapshot | None
     reports: tuple[StoredEvaluationReport, ...]
     created_at: datetime
 
@@ -93,6 +104,7 @@ class SQLiteEvaluationStore:
                         signal_id=SignalId(row["signal_id"]),
                         job_id=row["job_id"],
                         cohort=cohort,
+                        captured_status=status,
                         reason=_status_exclusion(status),
                     )
                 )
@@ -129,9 +141,12 @@ class SQLiteEvaluationStore:
         require_utc(created_at, "Evaluation Run created_at")
         self._validate_evaluations(snapshot, evaluations)
         ordered_hash = _digest(snapshot.ordered_input_identity)
+        snapshot_payload = snapshot.identity_payload()
+        snapshot_json = _canonical_json(snapshot_payload)
+        snapshot_hash = _digest(snapshot_payload)
         run_id = "evaluation-run-" + _digest(
             {
-                "ordered_input_identity": snapshot.ordered_input_identity,
+                "input_snapshot": snapshot_payload,
                 "configuration": configuration.identity_payload(),
             }
         )
@@ -155,6 +170,21 @@ class SQLiteEvaluationStore:
             )
             created = cursor.rowcount == 1
             if created:
+                connection.execute(
+                    """
+                    INSERT INTO research_evaluation_input_snapshots VALUES (
+                        ?, ?, ?, ?, ?, ?
+                    )
+                    """,
+                    (
+                        run_id,
+                        EVALUATION_INPUT_SNAPSHOT_VERSION,
+                        snapshot_hash,
+                        snapshot.signals_scanned,
+                        snapshot.completed_results_scanned,
+                        snapshot_json,
+                    ),
+                )
                 cohort_by_input = {
                     item.input_identity: item.cohort.cohort_id
                     for item in snapshot.samples
@@ -188,6 +218,23 @@ class SQLiteEvaluationStore:
                         for evaluation in evaluations
                     ),
                 )
+            else:
+                persisted_snapshot = connection.execute(
+                    """
+                    SELECT snapshot_identity_hash, snapshot_json
+                    FROM research_evaluation_input_snapshots
+                    WHERE run_id = ?
+                    """,
+                    (run_id,),
+                ).fetchone()
+                if (
+                    persisted_snapshot is None
+                    or persisted_snapshot["snapshot_identity_hash"] != snapshot_hash
+                    or persisted_snapshot["snapshot_json"] != snapshot_json
+                ):
+                    raise ValueError(
+                        "persisted Evaluation Run input snapshot does not match replay"
+                    )
         return AppendEvaluationRunResult(self.get_run(run_id), created)
 
     def get_run(self, run_id: str) -> StoredEvaluationRun:
@@ -205,6 +252,12 @@ class SQLiteEvaluationStore:
                 """,
                 (run_id,),
             ).fetchall()
+            snapshot = connection.execute(
+                """
+                SELECT * FROM research_evaluation_input_snapshots WHERE run_id = ?
+                """,
+                (run_id,),
+            ).fetchone()
             reports = connection.execute(
                 "SELECT * FROM research_evaluation_reports "
                 "WHERE run_id = ? ORDER BY cohort_id",
@@ -214,6 +267,17 @@ class SQLiteEvaluationStore:
             run_id=run_id,
             ordered_input_identity=tuple(
                 (row["signal_id"], row["forward_result_id"]) for row in inputs
+            ),
+            input_snapshot=(
+                StoredEvaluationInputSnapshot(
+                    version=snapshot["snapshot_version"],
+                    identity_hash=snapshot["snapshot_identity_hash"],
+                    signals_scanned=snapshot["signals_scanned"],
+                    completed_results_scanned=snapshot["completed_results_scanned"],
+                    identity_payload=_json_object(snapshot["snapshot_json"]),
+                )
+                if snapshot is not None
+                else None
             ),
             reports=tuple(self._report(row) for row in reports),
             created_at=datetime.fromisoformat(run["created_at"]),
@@ -243,8 +307,48 @@ class SQLiteEvaluationStore:
                 raise ValueError("validation policy version already has different content")
         return cursor.rowcount == 1
 
-    def append_assessment(self, assessment: ValidationAssessment) -> bool:
+    def append_assessment(
+        self,
+        assessment: ValidationAssessment,
+        evaluation: CohortEvaluation,
+    ) -> bool:
         with closing(self._connect()) as connection, connection:
+            report = connection.execute(
+                """
+                SELECT run_id, cohort_id, cohort_identity_json, metrics_json
+                FROM research_evaluation_reports
+                WHERE report_id = ?
+                """,
+                (assessment.report_id,),
+            ).fetchone()
+            if report is None:
+                raise ValueError("Validation Assessment report does not exist")
+            if report["run_id"] != assessment.evaluation_run_id:
+                raise ValueError("Validation Assessment report belongs to another run")
+            expected_cohort = _canonical_json(evaluation.cohort.identity_payload())
+            expected_metrics = _canonical_json(asdict(evaluation.metrics))
+            if (
+                report["cohort_id"] != evaluation.cohort.cohort_id
+                or report["cohort_identity_json"] != expected_cohort
+            ):
+                raise ValueError(
+                    "recomputed Evaluation cohort does not match persisted report"
+                )
+            if report["metrics_json"] != expected_metrics:
+                raise ValueError(
+                    "recomputed Evaluation metrics do not match persisted report"
+                )
+            policy = connection.execute(
+                """
+                SELECT content_hash FROM research_validation_policies
+                WHERE policy_version = ?
+                """,
+                (assessment.policy_version,),
+            ).fetchone()
+            if policy is None:
+                raise ValueError("Validation Assessment policy does not exist")
+            if policy["content_hash"] != assessment.policy_content_hash:
+                raise ValueError("Validation Assessment policy content hash differs")
             cursor = connection.execute(
                 """
                 INSERT OR IGNORE INTO research_validation_assessments VALUES (
@@ -334,18 +438,35 @@ class SQLiteEvaluationStore:
         snapshot: EvaluationInputSnapshot,
         evaluations: tuple[CohortEvaluation, ...],
     ) -> None:
-        evaluated_inputs = tuple(
-            sorted(
-                input_id
-                for evaluation in evaluations
-                for input_id in evaluation.sample_input_ids
-            )
-        )
-        if evaluated_inputs != snapshot.ordered_input_identity:
-            raise ValueError("Evaluation reports do not cover the exact input snapshot")
+        samples_by_input: dict[tuple[str, str], EvaluationSample] = {}
+        for sample in snapshot.samples:
+            if sample.input_identity in samples_by_input:
+                raise ValueError("Evaluation input snapshot contains duplicate inputs")
+            samples_by_input[sample.input_identity] = sample
         cohort_ids = tuple(item.cohort.cohort_id for item in evaluations)
         if len(set(cohort_ids)) != len(cohort_ids):
             raise ValueError("Evaluation Run contains duplicate cohort reports")
+        evaluated_inputs: set[tuple[str, str]] = set()
+        for evaluation in evaluations:
+            if tuple(sorted(evaluation.sample_input_ids)) != evaluation.sample_input_ids:
+                raise ValueError("Evaluation report inputs must use deterministic order")
+            for input_id in evaluation.sample_input_ids:
+                if input_id in evaluated_inputs:
+                    raise ValueError(
+                        "Evaluation input appears in more than one report"
+                    )
+                captured_sample = samples_by_input.get(input_id)
+                if captured_sample is None:
+                    raise ValueError(
+                        "Evaluation report contains input outside the captured snapshot"
+                    )
+                if captured_sample.cohort != evaluation.cohort:
+                    raise ValueError(
+                        "Evaluation report cohort differs from captured sample cohort"
+                    )
+                evaluated_inputs.add(input_id)
+        if evaluated_inputs != set(samples_by_input):
+            raise ValueError("Evaluation reports do not cover the exact input snapshot")
 
     @staticmethod
     def _report(row: sqlite3.Row) -> StoredEvaluationReport:

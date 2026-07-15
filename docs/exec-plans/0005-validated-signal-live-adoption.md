@@ -209,7 +209,10 @@ supported Python versions.
 - [x] (2026-07-15) Confirmed exact clean baseline and inspected Research and Live
   persistence/contracts.
 - [x] (2026-07-15) Created ExecPlan 0005 before implementation.
-- [ ] Milestone 1 - Evidence snapshot and explicit adoption decisions.
+- [x] (2026-07-15) Milestone 1 - Added the read-only exact-assessment evidence
+  adapter, immutable evidence/policy/decision contracts, the first additive Live
+  migration, atomic/idempotent approval and revocation persistence, and dry-run-first
+  one-shot CLI commands.
 - [ ] Milestone 2 - Runtime adoption gate and Signal authorization.
 - [ ] Milestone 3 - Candidate authorization lineage.
 - [ ] Milestone 4 - Authorized shadow decision cycle.
@@ -248,3 +251,9 @@ python -m mypy packages/fx_core/src packages/fx_signal_store/src apps/fx_researc
 ```
 
 GitHub Actions must pass the existing Python 3.11 and 3.14 matrix.
+
+Milestone 1 validation on Python 3.11:
+
+- `25 passed` across evidence, adoption-decision, and adoption CLI tests.
+- Ruff passed for the full repository.
+- strict mypy passed for `packages apps` (61 source files).

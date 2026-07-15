@@ -3,6 +3,7 @@ import sqlite3
 from contextlib import closing
 from pathlib import Path
 
+from .live_migrations import migrate_live_database
 from .models import (
     ApprovedExecutionIntent,
     CandidateId,
@@ -113,6 +114,7 @@ class SQLiteLiveDecisionStore:
         self.path.parent.mkdir(parents=True, exist_ok=True)
         with closing(self._connect()) as connection, connection:
             connection.executescript(_SCHEMA)
+            migrate_live_database(connection)
 
     def _connect(self) -> sqlite3.Connection:
         connection = sqlite3.connect(self.path)

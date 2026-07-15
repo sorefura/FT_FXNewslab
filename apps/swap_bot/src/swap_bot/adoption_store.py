@@ -10,12 +10,16 @@ from .adoption import (
     AdoptionDecisionType,
     AdoptionMode,
     ResearchValidationEvidenceSnapshot,
+    ResearchValidationStatus,
     RuntimeMode,
     SignalAuthorization,
     StrategyAdoptionDecision,
     StrategyAdoptionPolicy,
     StrictCohortIdentity,
+    approval_decision,
     canonical_json,
+    digest,
+    revocation_decision,
 )
 from .decision_store import _SCHEMA
 from .live_migrations import migrate_live_database
@@ -54,6 +58,7 @@ class SQLiteAdoptionStore:
     ) -> ApplyAdoptionResult:
         if decision.decision_type is not AdoptionDecisionType.APPROVED_FOR_STRATEGY:
             raise ValueError("apply_approval requires an approval decision")
+        self._validate_approval(snapshot, policy, decision)
         with closing(self._connect()) as connection, connection:
             evidence_created = self._append_evidence(connection, snapshot)
             policy_created = self._append_policy(connection, policy, decision.decided_at)
@@ -71,14 +76,15 @@ class SQLiteAdoptionStore:
             ).fetchone()
             if approval is None:
                 raise ValueError("approval decision does not exist")
-            expected = self._decision_from_row(approval)
-            if (
-                decision.evidence_snapshot_id != expected.evidence_snapshot_id
-                or decision.adoption_policy_version != expected.adoption_policy_version
-                or decision.strategy_id != expected.strategy_id
-                or decision.strategy_version != expected.strategy_version
-            ):
-                raise ValueError("revocation does not preserve exact approval identity")
+            persisted_approval = self._decision_from_row(approval)
+            expected = revocation_decision(
+                persisted_approval,
+                decided_at=decision.decided_at,
+                actor=decision.actor,
+                reason=decision.reason,
+            )
+            if decision != expected:
+                raise ValueError("revocation is not derived from the persisted approval")
             return self._append_decision(connection, decision)
 
     def get_decision(self, decision_id: str) -> StrategyAdoptionDecision:
@@ -164,6 +170,42 @@ class SQLiteAdoptionStore:
             raise ValueError("unsupported adoption table")
         with closing(self._connect()) as connection:
             return int(connection.execute(f"SELECT COUNT(*) FROM {table}").fetchone()[0])
+
+    @staticmethod
+    def _validate_approval(
+        snapshot: ResearchValidationEvidenceSnapshot,
+        policy: StrategyAdoptionPolicy,
+        decision: StrategyAdoptionDecision,
+    ) -> None:
+        if snapshot.status is not ResearchValidationStatus.VALIDATED_FOR_RESEARCH:
+            raise ValueError("Research evidence is not validated for adoption")
+        cohort = StrictCohortIdentity.from_payload(snapshot.cohort_identity_payload)
+        if snapshot.cohort_identity_hash != digest(snapshot.cohort_identity_payload):
+            raise ValueError("Research evidence cohort content hash does not match")
+        if snapshot.research_policy_content_hash != digest(
+            snapshot.research_policy_payload
+        ):
+            raise ValueError("Research evidence policy content hash does not match")
+        if snapshot.metric_payload_hash != digest(snapshot.metric_payload):
+            raise ValueError("Research evidence metric content hash does not match")
+        if (
+            snapshot.research_policy_version
+            != policy.expected_research_policy_version
+            or cohort != policy.expected_cohort
+        ):
+            raise ValueError("Research evidence does not match the adoption policy")
+        policy_content_hash = digest(policy.identity_payload)
+        if policy.content_hash != policy_content_hash:
+            raise ValueError("adoption policy content hash does not match")
+        expected = approval_decision(
+            snapshot,
+            policy,
+            decided_at=decision.decided_at,
+            actor=decision.actor,
+            reason=decision.reason,
+        )
+        if decision != expected:
+            raise ValueError("approval is not derived from the exact evidence and policy")
 
     @staticmethod
     def _append_evidence(
@@ -270,22 +312,7 @@ class SQLiteAdoptionStore:
         if row is None:
             raise ValueError("adoption decision was not persisted")
         persisted = SQLiteAdoptionStore._decision_from_row(row)
-        if (
-            persisted.decision_type != decision.decision_type
-            or persisted.evidence_snapshot_id != decision.evidence_snapshot_id
-            or persisted.adoption_policy_version != decision.adoption_policy_version
-            or persisted.adoption_policy_content_hash
-            != decision.adoption_policy_content_hash
-            or persisted.strategy_id != decision.strategy_id
-            or persisted.strategy_version != decision.strategy_version
-            or persisted.strategy_config_identity != decision.strategy_config_identity
-            or persisted.approved_signal_specification
-            != decision.approved_signal_specification
-            or persisted.adoption_mode != decision.adoption_mode
-            or persisted.effective_from != decision.effective_from
-            or persisted.expires_at != decision.expires_at
-            or persisted.approval_decision_id != decision.approval_decision_id
-        ):
+        if persisted != decision:
             raise ValueError("adoption decision identity already has different content")
         return cursor.rowcount == 1
 

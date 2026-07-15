@@ -515,6 +515,14 @@ def approval_decision(
     )
 
 
+def adoption_authority_start(
+    effective_from: datetime, decided_at: datetime
+) -> datetime:
+    require_utc(effective_from, "adoption effective_from")
+    require_utc(decided_at, "adoption decided_at")
+    return max(effective_from, decided_at)
+
+
 def revocation_decision(
     approval: StrategyAdoptionDecision,
     *,

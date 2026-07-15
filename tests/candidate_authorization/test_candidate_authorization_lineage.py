@@ -7,7 +7,9 @@ from fx_core import CurrencyPair, Probability
 from swap_bot.adoption import (
     AdoptionFailureReason,
     AdoptionRejected,
+    AuthorizedSignal,
     RuntimeMode,
+    SignalAuthorization,
     revocation_decision,
 )
 from swap_bot.adoption_application import ApproveSignalAdoptionOnceService
@@ -163,6 +165,97 @@ def test_revoked_approval_invalidates_stale_authorization_for_new_candidate(
         )
 
     assert rejected.value.reason is AdoptionFailureReason.ADOPTION_REVOKED
+
+
+def test_pre_approval_signal_authorization_cannot_create_a_candidate(
+    tmp_path: Path,
+) -> None:
+    live, adoption_store, approval_id, authorized = _authorized(tmp_path)
+    approval = adoption_store.get_decision(approval_id)
+    stale_signal = adoptable_signal(
+        "signal-pre-approval", created_at=NOW - timedelta(minutes=1)
+    )
+    stale_authorization = SignalAuthorization(
+        authorization_id="signal-authorization-pre-approval",
+        signal_id=stale_signal.signal_id.value,
+        adoption_decision_id=approval.adoption_decision_id,
+        evidence_snapshot_id=approval.evidence_snapshot_id,
+        adoption_policy_version=approval.adoption_policy_version,
+        strategy_id=approval.strategy_id,
+        strategy_version=approval.strategy_version,
+        adoption_mode=approval.adoption_mode,
+        runtime_mode=RuntimeMode.SHADOW,
+        authorized_at=NOW,
+    )
+    adoption_store.append_authorization(stale_authorization)
+    stale = AuthorizedSignal(stale_signal, stale_authorization)
+    candidate = _candidate(
+        authorized,
+        signal_ids=(stale_signal.signal_id,),
+        created_at=NOW + timedelta(seconds=1),
+    )
+
+    with pytest.raises(AdoptionRejected) as rejected:
+        SQLiteLiveDecisionStore(live).append_authorized_candidate(candidate, (stale,))
+
+    assert rejected.value.reason is AdoptionFailureReason.ADOPTION_NOT_YET_EFFECTIVE
+    with pytest.raises(KeyError):
+        SQLiteLiveDecisionStore(live).decision_chain(candidate.candidate_id)
+
+
+def test_pre_authority_authorization_cannot_create_a_candidate(
+    tmp_path: Path,
+) -> None:
+    live, adoption_store, approval_id, authorized = _authorized(tmp_path)
+    approval = adoption_store.get_decision(approval_id)
+    signal = adoptable_signal("signal-pre-authority-authorization", created_at=NOW)
+    stale_authorization = SignalAuthorization(
+        authorization_id="signal-authorization-before-authority",
+        signal_id=signal.signal_id.value,
+        adoption_decision_id=approval.adoption_decision_id,
+        evidence_snapshot_id=approval.evidence_snapshot_id,
+        adoption_policy_version=approval.adoption_policy_version,
+        strategy_id=approval.strategy_id,
+        strategy_version=approval.strategy_version,
+        adoption_mode=approval.adoption_mode,
+        runtime_mode=RuntimeMode.SHADOW,
+        authorized_at=NOW - timedelta(seconds=1),
+    )
+    adoption_store.append_authorization(stale_authorization)
+    stale = AuthorizedSignal(signal, stale_authorization)
+    candidate = _candidate(
+        authorized,
+        signal_ids=(signal.signal_id,),
+        created_at=NOW + timedelta(seconds=1),
+    )
+
+    with pytest.raises(AdoptionRejected) as rejected:
+        SQLiteLiveDecisionStore(live).append_authorized_candidate(candidate, (stale,))
+
+    assert rejected.value.reason is AdoptionFailureReason.ADOPTION_NOT_YET_EFFECTIVE
+    with pytest.raises(KeyError):
+        SQLiteLiveDecisionStore(live).decision_chain(candidate.candidate_id)
+
+
+def test_revocation_does_not_rewrite_historical_candidate_authorization_lineage(
+    tmp_path: Path,
+) -> None:
+    live, adoption_store, approval_id, authorized = _authorized(tmp_path)
+    store = SQLiteLiveDecisionStore(live)
+    candidate = _candidate(authorized)
+    store.append_authorized_candidate(candidate, (authorized,))
+    before = store.candidate_authorization_lineage(candidate.candidate_id)
+
+    adoption_store.append_revocation(
+        revocation_decision(
+            adoption_store.get_decision(approval_id),
+            decided_at=NOW + timedelta(seconds=1),
+            actor="reviewer@example.com",
+            reason="superseded",
+        )
+    )
+
+    assert store.candidate_authorization_lineage(candidate.candidate_id) == before
 
 
 def test_authorized_candidate_keeps_portfolio_and_risk_chain_consistent(

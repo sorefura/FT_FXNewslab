@@ -5,15 +5,17 @@
 Before Strategy, `LiveAdoptionGate` compares a Signal with one Live-owned approval.
 The approval fixes Strategy identity, exact Signal/cohort versions, target, Signal and
 Forward horizons, market semantics, mode, effective time, and expiration. `None` is an
-exact value, not a wildcard. A Signal created before `effective_from` is not activated
-retroactively.
+exact value, not a wildcard. Live authority starts at
+`max(effective_from, approval.decided_at)`. A Signal created before that boundary is
+not activated retroactively.
 
 The gate emits a Live-only `AuthorizedSignal` envelope and immutable
 `SignalAuthorization`; approval metadata is not added to `fx_core.Signal`. Strategy
 accepts authorized envelopes. The strict Candidate persistence path requires one
 current authorization per contributing Signal and stores
 `candidate_signal_authorization` lineage. It rechecks revocation and validity at
-Candidate creation, so an old authorization cannot authorize a new Candidate.
+Candidate creation, including Signal creation and authorization against the same
+authority-start boundary, so an old authorization cannot authorize a new Candidate.
 
 `LIVE_ELIGIBLE` still means only Strategy-input eligibility. It does not mean
 Portfolio acceptance, Risk approval, approved Execution intent, arming, or Broker

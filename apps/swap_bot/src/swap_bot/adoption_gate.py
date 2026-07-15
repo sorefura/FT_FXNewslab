@@ -11,6 +11,7 @@ from .adoption import (
     RuntimeMode,
     SignalAuthorization,
     StrategyAdoptionDecision,
+    adoption_authority_start,
     digest,
 )
 from .adoption_store import SQLiteAdoptionStore
@@ -121,7 +122,10 @@ class LiveAdoptionGate:
     ) -> AdoptionFailureReason | None:
         if self._store.is_revoked_at(approval.adoption_decision_id, at):
             return AdoptionFailureReason.ADOPTION_REVOKED
-        if at < approval.effective_from or signal.created_at < approval.effective_from:
+        authority_start = adoption_authority_start(
+            approval.effective_from, approval.decided_at
+        )
+        if at < authority_start or signal.created_at < authority_start:
             return AdoptionFailureReason.ADOPTION_NOT_YET_EFFECTIVE
         if at >= approval.expires_at:
             return AdoptionFailureReason.ADOPTION_EXPIRED

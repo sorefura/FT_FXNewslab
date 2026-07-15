@@ -10,8 +10,9 @@ ExecPlan 0005 tests state What each authority boundary guarantees:
   snapshot contracts fail closed;
 - dry-run creates no Live database and `--apply` is atomic and idempotent;
 - every strict cohort dimension, nullable version, mode, and bounded time is exact;
-- no approval, historical Signal, expiration, revocation, mismatch, and ambiguity stop
-  before Strategy with structured reason codes;
+- no approval, pre-approval Signal, pre-authority authorization, expiration,
+  revocation, mismatch, and ambiguity stop before Strategy with structured reason
+  codes;
 - Candidate persistence requires exact current authorization and leaves no partial row
   on failure;
 - the full approved shadow path preserves Candidate -> Portfolio -> Risk -> intent

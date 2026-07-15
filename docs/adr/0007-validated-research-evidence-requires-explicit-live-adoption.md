@@ -33,9 +33,15 @@ decision referencing the approval. Dry-run is the default.
 Runtime reads only Live records. It grants a Signal authorization only when exactly
 one current, unrevoked decision matches Strategy identity, Signal target/type/horizon,
 all nullable semantic versions, validity period, and runtime mode. Signal creation
-before the approval's effective time is not eligible. The authorization is immutable
-lineage and must accompany the Signal through the new strict Candidate persistence
-path.
+or authorization before `max(approval.effective_from, approval.decided_at)` is not
+eligible. The strict Candidate persistence boundary rechecks the same authority start.
+The authorization is immutable lineage and must accompany the Signal through the new
+strict Candidate persistence path.
+
+The Live persistence boundary reconstructs each approval from its exact evidence
+snapshot and adoption policy, and each revocation from its persisted approval, before
+any append. Application-service validation alone is not treated as an integrity
+boundary.
 
 `APPROVED_FOR_STRATEGY` is not an Execution approval. Portfolio and Risk remain
 mandatory and Broker submission remains disabled for this rollout.

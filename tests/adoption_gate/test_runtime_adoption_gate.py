@@ -101,6 +101,70 @@ def test_signal_created_before_effective_time_is_not_retroactively_activated(
     assert rejected.value.reason is AdoptionFailureReason.ADOPTION_NOT_YET_EFFECTIVE
 
 
+def test_signal_created_after_effective_time_but_before_approval_is_not_activated(
+    tmp_path: Path,
+) -> None:
+    policy = adoption_policy(effective_from=NOW - timedelta(hours=2))
+    store, _, _ = _approved_store(tmp_path, policy=policy, approval_time=NOW)
+
+    with pytest.raises(AdoptionRejected) as rejected:
+        LiveAdoptionGate(store).authorize(
+            adoptable_signal(created_at=NOW - timedelta(hours=1)),
+            strategy_id=policy.strategy_id,
+            strategy_version=policy.strategy_version,
+            runtime_mode=RuntimeMode.SHADOW,
+            authorized_at=NOW + timedelta(minutes=1),
+        )
+
+    assert rejected.value.reason is AdoptionFailureReason.ADOPTION_NOT_YET_EFFECTIVE
+
+
+def test_signal_created_after_approval_is_authorized(tmp_path: Path) -> None:
+    policy = adoption_policy(effective_from=NOW - timedelta(hours=2))
+    store, _, _ = _approved_store(tmp_path, policy=policy, approval_time=NOW)
+
+    authorized = LiveAdoptionGate(store).authorize(
+        adoptable_signal(created_at=NOW + timedelta(minutes=1)),
+        strategy_id=policy.strategy_id,
+        strategy_version=policy.strategy_version,
+        runtime_mode=RuntimeMode.SHADOW,
+        authorized_at=NOW + timedelta(minutes=2),
+    )
+
+    assert authorized.authorization.authorized_at == NOW + timedelta(minutes=2)
+
+
+def test_signal_and_authorization_at_authority_start_are_eligible(
+    tmp_path: Path,
+) -> None:
+    store, _, _ = _approved_store(tmp_path, approval_time=NOW)
+
+    authorized = LiveAdoptionGate(store).authorize(
+        adoptable_signal(created_at=NOW),
+        strategy_id="validated-signal-shadow",
+        strategy_version="strategy-v1",
+        runtime_mode=RuntimeMode.SHADOW,
+        authorized_at=NOW,
+    )
+
+    assert authorized.signal.created_at == NOW
+
+
+def test_authorization_before_authority_start_is_rejected(tmp_path: Path) -> None:
+    store, _, _ = _approved_store(tmp_path, approval_time=NOW)
+
+    with pytest.raises(AdoptionRejected) as rejected:
+        LiveAdoptionGate(store).authorize(
+            adoptable_signal(created_at=NOW),
+            strategy_id="validated-signal-shadow",
+            strategy_version="strategy-v1",
+            runtime_mode=RuntimeMode.SHADOW,
+            authorized_at=NOW - timedelta(seconds=1),
+        )
+
+    assert rejected.value.reason is AdoptionFailureReason.ADOPTION_NOT_YET_EFFECTIVE
+
+
 def test_not_yet_effective_and_expired_approvals_fail_closed(tmp_path: Path) -> None:
     future = adoption_policy(
         effective_from=NOW + timedelta(hours=1),

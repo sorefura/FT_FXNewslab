@@ -117,15 +117,18 @@ matches `None` exactly. Wildcards and open-ended validity are invalid.
 An approval or revocation is a separate immutable decision with actor, reason,
 decision time, evidence/policy identity, and deterministic semantic identity.
 Dry-run is the default. `--apply` writes the evidence snapshot, policy, and approval
-atomically. A revocation references the exact prior approval and never mutates it.
+atomically. Persistence revalidates evidence status, exact Research policy/cohort,
+content hashes, and an approval re-derived by `approval_decision()`. A revocation is
+re-derived from the exact persisted approval and never mutates it.
 
 Runtime authorization fails closed on zero or multiple matches, revocation, expired
-or not-yet-effective periods, pre-effective Signal creation, target/horizon/version
-mismatch, and `SHADOW_ONLY` use in Live mode. The runtime gate reads no Research data.
+or not-yet-effective periods, Signal creation or authorization before
+`max(effective_from, decided_at)`, target/horizon/version mismatch, and `SHADOW_ONLY`
+use in Live mode. The runtime gate reads no Research data.
 Each authorization records Signal, approval, policy, evidence, Strategy, runtime mode,
 and authorization time. Candidate persistence in the new adoption path requires one
-valid authorization for every contributing Signal and rechecks current revocation and
-validity state.
+valid authorization for every contributing Signal and rechecks current revocation,
+validity state, and the same authority-start boundary.
 
 ## Milestones
 
@@ -226,6 +229,10 @@ supported Python versions.
 - [x] (2026-07-15) Milestone 5 - Updated the Program, architecture, Research,
   Swap Bot, data/versioning, repository, test-strategy, and design-index documents;
   passed the complete Python 3.11/3.14 validation matrix.
+- [x] (2026-07-15) P1 review - Re-derived Approval/Revocation at the persistence
+  boundary before writes, required exact decision equality, and enforced
+  `max(effective_from, decided_at)` in both runtime authorization and strict Candidate
+  persistence.
 
 ## Surprises & discoveries
 
@@ -237,6 +244,14 @@ supported Python versions.
 - Observation: there is a Strategy Protocol but no production Strategy implementation.
   Resolution: validate the port with a test-support Strategy in shadow; do not invent
   a production strategy in this plan.
+- Observation: public persistence methods remained callable without the Application
+  Service, so Application validation could not establish stored decision authenticity.
+  Resolution: re-derive the complete immutable decision at the final write boundary
+  and reject before opening an approval transaction when any field differs.
+- Observation: `effective_from` can precede the operator's approval decision, leaving
+  a window in which already-created Signals could gain authority retroactively.
+  Resolution: define authority start as the later of policy effect and decision time,
+  then share that calculation across the runtime gate and Candidate persistence.
 
 ## Decision log
 
@@ -256,6 +271,13 @@ supported Python versions.
 - 2026-07-15: Use a test-support Strategy for the complete shadow proof because no
   production Strategy exists; production Strategy implementation remains outside
   ExecPlan 0005.
+- 2026-07-15: Treat Approval and Revocation factories as the single derivation logic
+  and require exact re-derived equality at persistence; lineage references alone do
+  not prove that a supplied status, specification, mode, identity, or version is
+  authentic.
+- 2026-07-15: Set Live authority start to
+  `max(approval.effective_from, approval.decided_at)` so a backdated policy cannot
+  promote a Signal that existed before the explicit operator decision.
 
 ## Validation
 
@@ -269,15 +291,22 @@ python -m mypy packages/fx_core/src packages/fx_signal_store/src apps/fx_researc
 
 Final matrix results:
 
-- Python 3.11: `254 passed, 5 skipped`; Ruff passed; strict mypy passed for
+- Python 3.11: `270 passed, 5 skipped`; Ruff passed; strict mypy passed for
   63 source files.
-- Python 3.14: `254 passed, 5 skipped`; Ruff passed; strict mypy passed for
+- Python 3.14: `270 passed, 5 skipped`; Ruff passed; strict mypy passed for
   63 source files.
 - The five skips are opt-in external provider smoke tests.
 - Exact validated evidence import, EXPERIMENTAL/PROMISING rejection, dry-run zero
   writes, atomic apply, exact cohort/version matching, bounded time, no retroactive
   activation, revocation, ambiguity, Candidate authorization lineage, and Research
   import boundaries passed.
+- Direct persistence forgery of approval specification/mode/Strategy version/policy
+  hash/decision ID and revocation content was rejected with no partial rows; identical
+  valid approval/revocation remained idempotent.
+- Signals created between `effective_from` and `decided_at`, pre-authority
+  authorizations, and stale Candidate envelopes were rejected. Equality at the
+  authority boundary remained eligible, while historical Candidate lineage remained
+  unchanged after revocation.
 - The complete shadow path ended `NOT_SUBMITTED`; the injected BrokerGateway measured
   zero submit calls.
 

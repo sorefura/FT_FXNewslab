@@ -9,6 +9,7 @@ from .adoption import (
     AdoptionRejected,
     AuthorizedSignal,
     StrictCohortIdentity,
+    adoption_authority_start,
 )
 from .live_migrations import migrate_live_database
 from .models import (
@@ -389,10 +390,18 @@ class SQLiteLiveDecisionStore:
                 "authorization does not preserve the exact approval",
             )
         candidate_at = candidate.created_at.isoformat()
-        if candidate.created_at < datetime.fromisoformat(approval["effective_from"]):
+        authority_start = adoption_authority_start(
+            datetime.fromisoformat(approval["effective_from"]),
+            datetime.fromisoformat(approval["decided_at"]),
+        )
+        if (
+            authorized.signal.created_at < authority_start
+            or authorization.authorized_at < authority_start
+            or candidate.created_at < authority_start
+        ):
             raise AdoptionRejected(
                 AdoptionFailureReason.ADOPTION_NOT_YET_EFFECTIVE,
-                "approval is not effective for Candidate creation",
+                "approval authority had not started for Signal authorization or Candidate creation",
             )
         if candidate.created_at >= datetime.fromisoformat(approval["expires_at"]):
             raise AdoptionRejected(

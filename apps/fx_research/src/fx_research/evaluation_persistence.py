@@ -25,6 +25,7 @@ from .evaluation import (
     ExcludedForwardObservation,
     ValidationAssessment,
     ValidationPolicy,
+    derive_validation_assessment,
 )
 from .forward import FORWARD_HORIZONS, ForwardJobStatus
 from .forward_persistence import SQLiteForwardEvaluationStore
@@ -126,8 +127,12 @@ class SQLiteEvaluationStore:
             exclusions=tuple(
                 sorted(exclusions, key=lambda item: (item.cohort.cohort_id, item.job_id))
             ),
-            unsupported_signal_ids=tuple(unsupported),
-            incomplete_horizon_signal_ids=tuple(incomplete),
+            unsupported_signal_ids=tuple(
+                sorted(unsupported, key=lambda item: item.value)
+            ),
+            incomplete_horizon_signal_ids=tuple(
+                sorted(incomplete, key=lambda item: item.value)
+            ),
         )
 
     def append_run(
@@ -311,6 +316,7 @@ class SQLiteEvaluationStore:
         self,
         assessment: ValidationAssessment,
         evaluation: CohortEvaluation,
+        policy: ValidationPolicy,
     ) -> bool:
         with closing(self._connect()) as connection, connection:
             report = connection.execute(
@@ -338,17 +344,37 @@ class SQLiteEvaluationStore:
                 raise ValueError(
                     "recomputed Evaluation metrics do not match persisted report"
                 )
-            policy = connection.execute(
+            persisted_policy = connection.execute(
                 """
-                SELECT content_hash FROM research_validation_policies
+                SELECT content_hash, policy_json FROM research_validation_policies
                 WHERE policy_version = ?
                 """,
                 (assessment.policy_version,),
             ).fetchone()
-            if policy is None:
+            if persisted_policy is None:
                 raise ValueError("Validation Assessment policy does not exist")
-            if policy["content_hash"] != assessment.policy_content_hash:
+            if persisted_policy["content_hash"] != assessment.policy_content_hash:
                 raise ValueError("Validation Assessment policy content hash differs")
+            if (
+                policy.policy_version != assessment.policy_version
+                or policy.content_hash != persisted_policy["content_hash"]
+                or _canonical_json(policy.identity_payload())
+                != persisted_policy["policy_json"]
+            ):
+                raise ValueError(
+                    "Validation Assessment policy differs from persisted content"
+                )
+            expected_assessment = derive_validation_assessment(
+                report["run_id"],
+                assessment.report_id,
+                evaluation,
+                policy,
+                created_at=assessment.created_at,
+            )
+            if assessment != expected_assessment:
+                raise ValueError(
+                    "Validation Assessment differs from the derived decision"
+                )
             cursor = connection.execute(
                 """
                 INSERT OR IGNORE INTO research_validation_assessments VALUES (

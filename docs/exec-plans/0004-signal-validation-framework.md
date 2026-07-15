@@ -211,7 +211,9 @@ The evaluator may emit only `EXPERIMENTAL`, `PROMISING`, or
 The persistence boundary revalidates that every captured sample belongs to the report
 cohort, appears exactly once across reports, and is not omitted. Assessment persistence
 also verifies the Report belongs to the referenced run, the persisted policy hash
-matches, and the recomputed cohort and metric payloads equal the persisted Report.
+matches, and the recomputed cohort and metric payloads equal the persisted Report. It
+uses the same Research-owned pure derivation as the Application to reconstruct the
+Assessment ID, status, and condition results before accepting the supplied record.
 
 ## Invariants
 
@@ -227,6 +229,8 @@ matches, and the recomputed cohort and metric payloads equal the persisted Repor
   sample, and application failure remain distinct states.
 - Every sliced metric includes its sample count.
 - Evaluation input IDs are fixed before metric calculation begins.
+- Unsupported and incomplete-horizon Signal IDs are ordered by typed ID, independent of
+  Signal creation order.
 - Evaluation runs, input links, reports, policies, and assessments are append-only.
 - Existing migrations 0001, 0002, 0003, and 0004 are not edited.
 - UTC-aware timestamps and deterministic configuration/version identities are required.
@@ -441,6 +445,9 @@ Acceptance requires all of the following:
   the full captured diagnostic snapshot, added report/sample cohort membership checks,
   enforced Assessment Run/Report/Policy/payload lineage, and exposed unsupported and
   incomplete-horizon counts in the CLI result.
+- [x] (2026-07-15) Final P1 correction - Canonically ordered unsupported/incomplete
+  Signal IDs at capture and required Persistence to rederive the exact Assessment
+  decision before append or idempotent reuse.
 
 ## Surprises & Discoveries
 
@@ -499,6 +506,13 @@ Acceptance requires all of the following:
 - 2026-07-15: Require Assessment persistence to compare Report run ownership, policy
   content hash, and recomputed cohort/metric payloads. Separate valid foreign-key
   references do not by themselves establish this lineage.
+- 2026-07-15: Sort unsupported and incomplete-horizon diagnostics by `SignalId.value`
+  at the capture boundary. Creation time controls observation history, but it must not
+  alter the identity of an otherwise equal diagnostic ID set.
+- 2026-07-15: Place Assessment decision derivation in one Research-owned pure function.
+  Application uses it to construct the record and Persistence uses the same function to
+  verify ID, status, and condition results; valid Report/Run/Policy references alone do
+  not prove that the decision itself is authentic.
 
 ## Validation
 
@@ -603,3 +617,20 @@ Review-correction validation on 2026-07-15:
 - Cross-run Report references, wrong policy content hashes, and reused-run recomputed
   cohort/metric mismatches were rejected before any Assessment row was written. A valid
   identical rerun continued to reuse its Report and Assessment.
+
+Final P1 validation on 2026-07-15:
+
+- Focused Evaluation persistence/application tests: 26 passed.
+- Python 3.11.9: 207 passed, 5 opt-in external smoke tests skipped, 0 failed; Ruff all
+  checks passed; strict mypy checked 54 source files with no issues.
+- Python 3.14.6: 207 passed, 5 opt-in external smoke tests skipped, 0 failed; Ruff all
+  checks passed; strict mypy checked 54 source files with no issues. The local Windows
+  policy used the mypy 2.3.0 source-built pure-Python wheel.
+- Unsupported and incomplete-horizon fixtures created `signal-z` before `signal-a` and
+  in the reverse order. Both captures produced lexical `(signal-a, signal-z)` IDs and
+  identical snapshot identity payloads.
+- Persistence rejected forged `VALIDATED_FOR_RESEARCH` status, changed condition
+  results, and changed Assessment ID before inserting any Assessment row.
+- The policy-derived EXPERIMENTAL Assessment was stored successfully, and an identical
+  valid append reused it without creating a duplicate. Application and Persistence both
+  used the same `derive_validation_assessment` pure function.

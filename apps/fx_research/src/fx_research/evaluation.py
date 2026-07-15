@@ -496,6 +496,97 @@ class ValidationAssessment:
         require_utc(self.created_at, "assessment created_at")
 
 
+def derive_validation_assessment(
+    run_id: str,
+    report_id: str,
+    evaluation: CohortEvaluation,
+    policy: ValidationPolicy,
+    *,
+    created_at: datetime,
+) -> ValidationAssessment:
+    metrics = evaluation.metrics
+    conditions = (
+        (
+            "minimum_sample_count",
+            metrics.diagnostics.included_samples >= policy.minimum_sample_count,
+        ),
+        (
+            "minimum_spearman",
+            metrics.spearman.value is not None
+            and metrics.spearman.value >= policy.minimum_spearman,
+        ),
+        (
+            "minimum_spearman_ci_lower",
+            policy.minimum_spearman_ci_lower is None
+            or (
+                metrics.spearman.confidence_lower is not None
+                and metrics.spearman.confidence_lower
+                >= policy.minimum_spearman_ci_lower
+            ),
+        ),
+        (
+            "minimum_hit_rate",
+            metrics.hit_rate.value is not None
+            and metrics.hit_rate.value >= policy.minimum_hit_rate,
+        ),
+        (
+            "minimum_hit_rate_ci_lower",
+            policy.minimum_hit_rate_ci_lower is None
+            or (
+                metrics.hit_rate.confidence_lower is not None
+                and metrics.hit_rate.confidence_lower
+                >= policy.minimum_hit_rate_ci_lower
+            ),
+        ),
+        (
+            "required_non_empty_bucket_count",
+            metrics.monotonicity.non_empty_bucket_count
+            >= policy.required_non_empty_bucket_count,
+        ),
+        (
+            "minimum_adjacent_step_ratio",
+            metrics.monotonicity.adjacent_step_ratio is not None
+            and metrics.monotonicity.adjacent_step_ratio
+            >= policy.minimum_adjacent_step_ratio,
+        ),
+        (
+            "stability_slice_minimum_count",
+            bool(metrics.stability_slices)
+            and all(
+                item.sample_count >= policy.stability_slice_minimum_count
+                for item in metrics.stability_slices
+            ),
+        ),
+    )
+    condition_map = dict(conditions)
+    if all(condition_map.values()):
+        status = ValidationStatus.VALIDATED_FOR_RESEARCH
+    elif all(
+        condition_map[name]
+        for name in (
+            "minimum_sample_count",
+            "minimum_spearman",
+            "minimum_hit_rate",
+        )
+    ):
+        status = ValidationStatus.PROMISING
+    else:
+        status = ValidationStatus.EXPERIMENTAL
+    assessment_id = "validation-assessment-" + _digest(
+        (run_id, report_id, policy.policy_version, policy.content_hash)
+    )
+    return ValidationAssessment(
+        assessment_id=assessment_id,
+        evaluation_run_id=run_id,
+        report_id=report_id,
+        policy_version=policy.policy_version,
+        policy_content_hash=policy.content_hash,
+        status=status,
+        condition_results=conditions,
+        created_at=created_at,
+    )
+
+
 def evaluation_sample(signal: Signal, result: ForwardResult) -> EvaluationSample:
     if result.signal_id != signal.signal_id:
         raise ValueError("ForwardResult does not belong to the supplied Signal")

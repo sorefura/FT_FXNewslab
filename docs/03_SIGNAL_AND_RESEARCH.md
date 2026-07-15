@@ -150,7 +150,8 @@ midpoint、または異なるversionを暗黙に結合しない。
 Evaluation Report保存時には、captured sampleがそのreportのstrict cohortに属し、全sampleが
 重複なく一度だけ含まれることを永続化境界で再検証する。Validation Assessment保存時には、
 Reportが同じEvaluation Runに属すること、policy content hash、および再計算したcohort/metric
-payloadがpersisted Reportと一致することを検証する。
+payloadがpersisted Reportと一致することを検証する。同じResearch-owned pure derivationで
+Assessment ID、status、condition resultsも再構築し、呼出側が改変したdecisionを保存しない。
 
 ### Information Coefficient
 

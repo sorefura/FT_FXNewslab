@@ -128,6 +128,7 @@ def _append_signal_records(
     *,
     signal_id: str,
     target: CurrencyTarget | None = None,
+    created_at: datetime | None = None,
 ):  # type: ignore[no-untyped-def]
     observation_id = f"obs-{signal_id}"
     feature_id = f"feature-{signal_id}"
@@ -136,6 +137,12 @@ def _append_signal_records(
     source_signal = signal(signal_id, feature_id)
     if target is not None:
         source_signal = replace(source_signal, target=target)
+    if created_at is not None:
+        source_signal = replace(
+            source_signal,
+            observed_at=created_at,
+            created_at=created_at,
+        )
     store.append_signal(source_signal)
     return source_signal
 
@@ -289,6 +296,63 @@ def test_snapshot_persists_exclusions_and_unsupported_or_incomplete_signals_as_e
     assert evidence["incomplete_horizon_signal_ids"] == [incomplete.signal_id.value]
     assert len(evidence["completed_inputs"]) == 1
     assert len(evidence["exclusions"]) == 4
+
+
+def test_unsupported_signal_ids_are_deterministic_across_creation_order(
+    tmp_path: Path,
+) -> None:
+    snapshots = []
+    for database_name, creation_order in (
+        ("z-first.db", ("signal-z", "signal-a")),
+        ("a-first.db", ("signal-a", "signal-z")),
+    ):
+        database = tmp_path / database_name
+        signal_store = SQLiteSignalStore(database)
+        for offset, signal_id in enumerate(creation_order):
+            _append_signal_records(
+                signal_store,
+                signal_id=signal_id,
+                target=CurrencyTarget(Currency("EUR")),
+                created_at=NOW + timedelta(minutes=offset),
+            )
+        snapshots.append(SQLiteEvaluationStore(database).capture_inputs())
+
+    assert tuple(item.value for item in snapshots[0].unsupported_signal_ids) == (
+        "signal-a",
+        "signal-z",
+    )
+    assert tuple(item.value for item in snapshots[1].unsupported_signal_ids) == (
+        "signal-a",
+        "signal-z",
+    )
+    assert snapshots[0].identity_payload() == snapshots[1].identity_payload()
+
+
+def test_incomplete_horizon_signal_ids_are_deterministic_across_creation_order(
+    tmp_path: Path,
+) -> None:
+    snapshots = []
+    for database_name, creation_order in (
+        ("z-first.db", ("signal-z", "signal-a")),
+        ("a-first.db", ("signal-a", "signal-z")),
+    ):
+        database = tmp_path / database_name
+        signal_store = SQLiteSignalStore(database)
+        for offset, signal_id in enumerate(creation_order):
+            _append_signal_records(
+                signal_store,
+                signal_id=signal_id,
+                created_at=NOW + timedelta(minutes=offset),
+            )
+        snapshots.append(SQLiteEvaluationStore(database).capture_inputs())
+
+    assert tuple(
+        item.value for item in snapshots[0].incomplete_horizon_signal_ids
+    ) == ("signal-a", "signal-z")
+    assert tuple(
+        item.value for item in snapshots[1].incomplete_horizon_signal_ids
+    ) == ("signal-a", "signal-z")
+    assert snapshots[0].identity_payload() == snapshots[1].identity_payload()
 
 
 def test_new_completed_result_creates_new_run_without_changing_old_input_snapshot(

@@ -1,5 +1,3 @@
-import hashlib
-import json
 from collections import defaultdict
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass
@@ -10,13 +8,12 @@ from .evaluation import (
     EvaluationConfiguration,
     EvaluationExclusionReason,
     EvaluationInputSnapshot,
-    ValidationAssessment,
     ValidationPolicy,
-    ValidationStatus,
+    derive_validation_assessment,
     group_samples,
 )
 from .evaluation_metrics import evaluate_cohort
-from .evaluation_persistence import SQLiteEvaluationStore, StoredEvaluationReport
+from .evaluation_persistence import SQLiteEvaluationStore
 
 
 @dataclass(frozen=True, slots=True)
@@ -86,15 +83,19 @@ class EvaluateSignalsOnceService:
             }
             for evaluation in evaluations:
                 report = reports_by_cohort[evaluation.cohort.cohort_id]
-                assessment = assess_evaluation(
+                assessment = derive_validation_assessment(
                     appended.run.run_id,
-                    report,
+                    report.report_id,
                     evaluation,
                     validation_policy,
                     created_at=self._clock(),
                 )
                 assessments_created += int(
-                    self._store.append_assessment(assessment, evaluation)
+                    self._store.append_assessment(
+                        assessment,
+                        evaluation,
+                        validation_policy,
+                    )
                 )
         undefined = sum(item.metrics.undefined_metric_count for item in evaluations)
         insufficient = sum(
@@ -144,100 +145,6 @@ class EvaluateSignalsOnceService:
             ),
             failed=failed,
         )
-
-
-def assess_evaluation(
-    run_id: str,
-    report: StoredEvaluationReport,
-    evaluation: CohortEvaluation,
-    policy: ValidationPolicy,
-    *,
-    created_at: datetime,
-) -> ValidationAssessment:
-    metrics = evaluation.metrics
-    conditions = (
-        (
-            "minimum_sample_count",
-            metrics.diagnostics.included_samples >= policy.minimum_sample_count,
-        ),
-        (
-            "minimum_spearman",
-            metrics.spearman.value is not None
-            and metrics.spearman.value >= policy.minimum_spearman,
-        ),
-        (
-            "minimum_spearman_ci_lower",
-            policy.minimum_spearman_ci_lower is None
-            or (
-                metrics.spearman.confidence_lower is not None
-                and metrics.spearman.confidence_lower
-                >= policy.minimum_spearman_ci_lower
-            ),
-        ),
-        (
-            "minimum_hit_rate",
-            metrics.hit_rate.value is not None
-            and metrics.hit_rate.value >= policy.minimum_hit_rate,
-        ),
-        (
-            "minimum_hit_rate_ci_lower",
-            policy.minimum_hit_rate_ci_lower is None
-            or (
-                metrics.hit_rate.confidence_lower is not None
-                and metrics.hit_rate.confidence_lower
-                >= policy.minimum_hit_rate_ci_lower
-            ),
-        ),
-        (
-            "required_non_empty_bucket_count",
-            metrics.monotonicity.non_empty_bucket_count
-            >= policy.required_non_empty_bucket_count,
-        ),
-        (
-            "minimum_adjacent_step_ratio",
-            metrics.monotonicity.adjacent_step_ratio is not None
-            and metrics.monotonicity.adjacent_step_ratio
-            >= policy.minimum_adjacent_step_ratio,
-        ),
-        (
-            "stability_slice_minimum_count",
-            bool(metrics.stability_slices)
-            and all(
-                item.sample_count >= policy.stability_slice_minimum_count
-                for item in metrics.stability_slices
-            ),
-        ),
-    )
-    condition_map = dict(conditions)
-    if all(condition_map.values()):
-        status = ValidationStatus.VALIDATED_FOR_RESEARCH
-    elif all(
-        condition_map[name]
-        for name in (
-            "minimum_sample_count",
-            "minimum_spearman",
-            "minimum_hit_rate",
-        )
-    ):
-        status = ValidationStatus.PROMISING
-    else:
-        status = ValidationStatus.EXPERIMENTAL
-    assessment_id = "validation-assessment-" + hashlib.sha256(
-        json.dumps(
-            (run_id, report.report_id, policy.policy_version, policy.content_hash),
-            separators=(",", ":"),
-        ).encode()
-    ).hexdigest()
-    return ValidationAssessment(
-        assessment_id=assessment_id,
-        evaluation_run_id=run_id,
-        report_id=report.report_id,
-        policy_version=policy.policy_version,
-        policy_content_hash=policy.content_hash,
-        status=status,
-        condition_results=conditions,
-        created_at=created_at,
-    )
 
 
 def validation_policy_from_mapping(payload: Mapping[str, object]) -> ValidationPolicy:

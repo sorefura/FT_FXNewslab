@@ -322,7 +322,9 @@ projection/formula/score definition versionを含める。
 `validation_policy`と`validation_assessment`はReportから分離する。policy versionは同じ名前で
 contentを変更できず、AssessmentはEvaluation Run、Report、policy version/content hashを参照する。
 Assessment保存時には参照の存在だけでなく、Reportのrun所属、persisted policy hash、および
-再計算したstrict cohort/metric payloadとpersisted Reportの一致を検証する。
+再計算したstrict cohort/metric payloadとpersisted Reportの一致を検証する。さらに同じpure
+derivationからAssessment ID、status、condition resultsを再生成し、完全一致するdecisionだけを
+保存する。
 run/input/report/policy/assessmentはすべてappend-onlyとし、UPDATE/DELETEを拒否する。
 
 Evaluation metricのbootstrap version、seed、iteration count、bucket boundaries、quantilesは

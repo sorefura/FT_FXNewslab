@@ -1,8 +1,7 @@
 from collections.abc import Sequence
 from typing import Protocol
 
-from fx_core import Signal
-
+from .adoption import AuthorizedSignal
 from .models import (
     ApprovedExecutionIntent,
     OrderResult,
@@ -11,7 +10,7 @@ from .models import (
 
 
 class Strategy(Protocol):
-    def evaluate(self, signals: Sequence[Signal]) -> TradeCandidate | None: ...
+    def evaluate(self, signals: Sequence[AuthorizedSignal]) -> TradeCandidate | None: ...
 
 
 class BrokerGateway(Protocol):
@@ -20,4 +19,3 @@ class BrokerGateway(Protocol):
 
 class IdempotencyStore(Protocol):
     def claim(self, key: str) -> bool: ...
-

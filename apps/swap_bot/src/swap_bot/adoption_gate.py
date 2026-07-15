@@ -99,7 +99,10 @@ class LiveAdoptionGate:
             runtime_mode=runtime_mode,
             authorized_at=authorized_at,
         )
-        self._store.append_authorization(authorization)
+        if not self._store.append_authorization(authorization):
+            authorization = self._store.get_authorization(
+                authorization.authorization_id
+            )
         return AuthorizedSignal(signal=signal, authorization=authorization)
 
     def _ineligible_reason(

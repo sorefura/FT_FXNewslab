@@ -1,8 +1,15 @@
 import json
 import sqlite3
 from contextlib import closing
+from datetime import datetime
 from pathlib import Path
 
+from .adoption import (
+    AdoptionFailureReason,
+    AdoptionRejected,
+    AuthorizedSignal,
+    StrictCohortIdentity,
+)
 from .live_migrations import migrate_live_database
 from .models import (
     ApprovedExecutionIntent,
@@ -124,22 +131,56 @@ class SQLiteLiveDecisionStore:
 
     def append_candidate(self, candidate: TradeCandidate) -> None:
         with closing(self._connect()) as connection, connection:
-            connection.execute(
-                "INSERT INTO live_candidates VALUES (?, ?, ?, ?, ?, ?, ?)",
+            self._insert_candidate(connection, candidate)
+
+    def append_authorized_candidate(
+        self,
+        candidate: TradeCandidate,
+        authorized_signals: tuple[AuthorizedSignal, ...],
+    ) -> None:
+        candidate_signal_ids = tuple(item.value for item in candidate.signal_ids)
+        authorization_signal_ids = tuple(
+            item.authorization.signal_id for item in authorized_signals
+        )
+        if (
+            len(set(candidate_signal_ids)) != len(candidate_signal_ids)
+            or len(set(authorization_signal_ids)) != len(authorization_signal_ids)
+            or set(candidate_signal_ids) != set(authorization_signal_ids)
+        ):
+            raise AdoptionRejected(
+                AdoptionFailureReason.SIGNAL_SPECIFICATION_MISMATCH,
+                "Candidate requires one exact authorization per contributing Signal",
+            )
+        with closing(self._connect()) as connection, connection:
+            for authorized in authorized_signals:
+                self._validate_candidate_authorization(
+                    connection, candidate, authorized
+                )
+            self._insert_candidate(connection, candidate)
+            connection.executemany(
+                "INSERT INTO live_candidate_signal_authorizations "
+                "VALUES (?, ?, ?, ?)",
                 (
-                    candidate.candidate_id.value,
-                    candidate.strategy_id,
-                    candidate.strategy_version,
-                    candidate.pair.symbol,
-                    candidate.side.value,
-                    candidate.score.value,
-                    candidate.created_at.isoformat(),
+                    (
+                        candidate.candidate_id.value,
+                        authorized.signal.signal_id.value,
+                        authorized.authorization.authorization_id,
+                        authorized.authorization.adoption_decision_id,
+                    )
+                    for authorized in authorized_signals
                 ),
             )
-            connection.executemany(
-                "INSERT INTO live_candidate_signals VALUES (?, ?)",
-                ((candidate.candidate_id.value, item.value) for item in candidate.signal_ids),
-            )
+
+    def candidate_authorization_lineage(
+        self, candidate_id: CandidateId
+    ) -> tuple[dict[str, object], ...]:
+        with closing(self._connect()) as connection:
+            rows = connection.execute(
+                "SELECT * FROM live_candidate_signal_authorizations "
+                "WHERE candidate_id = ? ORDER BY signal_id",
+                (candidate_id.value,),
+            ).fetchall()
+        return tuple(dict(row) for row in rows)
 
     def append_portfolio_decision(self, decision: PortfolioDecision) -> None:
         exposure = {
@@ -255,3 +296,117 @@ class SQLiteLiveDecisionStore:
             "intent": dict(intent) if intent is not None else None,
             "order_result": dict(result) if result is not None else None,
         }
+
+    @staticmethod
+    def _insert_candidate(
+        connection: sqlite3.Connection, candidate: TradeCandidate
+    ) -> None:
+        connection.execute(
+            "INSERT INTO live_candidates VALUES (?, ?, ?, ?, ?, ?, ?)",
+            (
+                candidate.candidate_id.value,
+                candidate.strategy_id,
+                candidate.strategy_version,
+                candidate.pair.symbol,
+                candidate.side.value,
+                candidate.score.value,
+                candidate.created_at.isoformat(),
+            ),
+        )
+        connection.executemany(
+            "INSERT INTO live_candidate_signals VALUES (?, ?)",
+            ((candidate.candidate_id.value, item.value) for item in candidate.signal_ids),
+        )
+
+    @staticmethod
+    def _validate_candidate_authorization(
+        connection: sqlite3.Connection,
+        candidate: TradeCandidate,
+        authorized: AuthorizedSignal,
+    ) -> None:
+        authorization = authorized.authorization
+        if (
+            authorized.signal.signal_id.value != authorization.signal_id
+            or authorization.strategy_id != candidate.strategy_id
+            or authorization.strategy_version != candidate.strategy_version
+            or authorization.authorized_at > candidate.created_at
+        ):
+            raise AdoptionRejected(
+                AdoptionFailureReason.SIGNAL_SPECIFICATION_MISMATCH,
+                "Candidate and Signal authorization identities differ",
+            )
+        persisted = connection.execute(
+            "SELECT * FROM live_signal_authorizations WHERE authorization_id = ?",
+            (authorization.authorization_id,),
+        ).fetchone()
+        if persisted is None or tuple(persisted) != (
+            authorization.authorization_id,
+            authorization.signal_id,
+            authorization.adoption_decision_id,
+            authorization.evidence_snapshot_id,
+            authorization.adoption_policy_version,
+            authorization.strategy_id,
+            authorization.strategy_version,
+            authorization.adoption_mode.value,
+            authorization.runtime_mode.value,
+            authorization.authorized_at.isoformat(),
+        ):
+            raise AdoptionRejected(
+                AdoptionFailureReason.SIGNAL_SPECIFICATION_MISMATCH,
+                "Signal authorization is not exact persisted Live state",
+            )
+        approval = connection.execute(
+            "SELECT * FROM live_strategy_adoption_decisions "
+            "WHERE adoption_decision_id = ? "
+            "AND decision_type = 'APPROVED_FOR_STRATEGY'",
+            (authorization.adoption_decision_id,),
+        ).fetchone()
+        if approval is None:
+            raise AdoptionRejected(
+                AdoptionFailureReason.NO_ACTIVE_ADOPTION,
+                "authorization approval no longer exists",
+            )
+        specification_payload = json.loads(
+            approval["approved_signal_specification_json"]
+        )
+        if not isinstance(specification_payload, dict):
+            raise AdoptionRejected(
+                AdoptionFailureReason.NO_ACTIVE_ADOPTION,
+                "approval Signal specification is malformed",
+            )
+        specification = StrictCohortIdentity.from_payload(specification_payload)
+        if (
+            approval["evidence_snapshot_id"] != authorization.evidence_snapshot_id
+            or approval["adoption_policy_version"]
+            != authorization.adoption_policy_version
+            or approval["strategy_id"] != candidate.strategy_id
+            or approval["strategy_version"] != candidate.strategy_version
+            or approval["adoption_mode"] != authorization.adoption_mode.value
+            or not specification.matches_signal(authorized.signal)
+        ):
+            raise AdoptionRejected(
+                AdoptionFailureReason.SIGNAL_SPECIFICATION_MISMATCH,
+                "authorization does not preserve the exact approval",
+            )
+        candidate_at = candidate.created_at.isoformat()
+        if candidate.created_at < datetime.fromisoformat(approval["effective_from"]):
+            raise AdoptionRejected(
+                AdoptionFailureReason.ADOPTION_NOT_YET_EFFECTIVE,
+                "approval is not effective for Candidate creation",
+            )
+        if candidate.created_at >= datetime.fromisoformat(approval["expires_at"]):
+            raise AdoptionRejected(
+                AdoptionFailureReason.ADOPTION_EXPIRED,
+                "approval expired before Candidate creation",
+            )
+        revoked = connection.execute(
+            "SELECT 1 FROM live_strategy_adoption_decisions "
+            "WHERE decision_type = 'REVOKED' AND approval_decision_id = ? "
+            "AND decided_at <= ? LIMIT 1",
+            (authorization.adoption_decision_id, candidate_at),
+        ).fetchone()
+        if revoked is not None:
+            raise AdoptionRejected(
+                AdoptionFailureReason.ADOPTION_REVOKED,
+                "approval was revoked before Candidate creation",
+            )

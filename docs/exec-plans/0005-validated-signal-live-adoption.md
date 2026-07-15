@@ -216,7 +216,10 @@ supported Python versions.
 - [x] (2026-07-15) Milestone 2 - Added the Live-only exact-match adoption gate,
   bounded/revocable/mode-aware/no-retroactive checks, immutable idempotent Signal
   authorization lineage, and structured fail-closed reasons.
-- [ ] Milestone 3 - Candidate authorization lineage.
+- [x] (2026-07-15) Milestone 3 - Changed the Strategy port to authorized envelopes,
+  added an atomic strict Candidate append path and additive lineage-integrity
+  migration, and revalidated persisted authorization, approval period, revocation,
+  Signal, and Strategy identity at Candidate creation.
 - [ ] Milestone 4 - Authorized shadow decision cycle.
 - [ ] Milestone 5 - Documentation and final validation.
 
@@ -266,3 +269,12 @@ Milestone 2 validation on Python 3.11:
 - Runtime authorization succeeded while the Research database was exclusively locked,
   proving the gate reads Live state only.
 - Ruff passed for the full repository; strict mypy passed for 62 source files.
+
+Milestone 3 validation on Python 3.11:
+
+- `23 passed` across Candidate authorization, runtime gate, and existing Live boundary
+  tests.
+- Missing, cross-Signal, cross-Strategy, and revoked stale authorizations left no
+  partial Candidate rows.
+- Candidate -> Portfolio -> Risk ID consistency remained intact.
+- Ruff and strict mypy passed for the affected Live source.

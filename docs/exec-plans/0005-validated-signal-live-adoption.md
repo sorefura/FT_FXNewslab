@@ -220,7 +220,9 @@ supported Python versions.
   added an atomic strict Candidate append path and additive lineage-integrity
   migration, and revalidated persisted authorization, approval period, revocation,
   Signal, and Strategy identity at Candidate creation.
-- [ ] Milestone 4 - Authorized shadow decision cycle.
+- [x] (2026-07-15) Milestone 4 - Added authorized shadow orchestration through the
+  existing Strategy port, Portfolio, Risk, approved intent, dry-run Execution, and
+  append-only decision records, with an injected Broker call probe.
 - [ ] Milestone 5 - Documentation and final validation.
 
 ## Surprises & discoveries
@@ -277,4 +279,15 @@ Milestone 3 validation on Python 3.11:
 - Missing, cross-Signal, cross-Strategy, and revoked stale authorizations left no
   partial Candidate rows.
 - Candidate -> Portfolio -> Risk ID consistency remained intact.
+- Ruff and strict mypy passed for the affected Live source.
+
+Milestone 4 validation on Python 3.11:
+
+- `17 passed` across the authorized adoption shadow cycle and existing shadow,
+  Execution, Portfolio, and Risk tests.
+- Explicit approval reached Candidate -> Portfolio ACCEPT -> Risk APPROVE -> approved
+  intent -> `NOT_SUBMITTED`.
+- The injected Counting BrokerGateway observed exactly zero submit calls.
+- Research validation without Live approval stopped before Strategy; revocation
+  stopped the next cycle before Strategy while preserving the historical cycle.
 - Ruff and strict mypy passed for the affected Live source.

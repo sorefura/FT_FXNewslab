@@ -73,3 +73,9 @@ def test_portfolio_and_risk_do_not_import_broker_or_execution() -> None:
         roots = {name.split(".")[-1] for name in imports}
         assert "execution" not in roots
         assert "ports" not in roots
+
+
+def test_live_adoption_gate_does_not_import_research_execution_or_broker_ports() -> None:
+    imports = _imports(ROOT / "apps/swap_bot/src/swap_bot/adoption_gate.py")
+    imported_modules = {name.split(".")[-1] for name in imports}
+    assert {"fx_research", "execution", "ports"}.isdisjoint(imported_modules)

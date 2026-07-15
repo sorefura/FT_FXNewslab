@@ -4,6 +4,7 @@ from collections.abc import Mapping
 from dataclasses import dataclass
 from datetime import datetime
 from enum import StrEnum
+from types import MappingProxyType
 from typing import Any
 
 from fx_core import CurrencyTarget, Horizon, PairTarget, Signal
@@ -541,7 +542,12 @@ def revocation_decision(
 
 
 def canonical_json(payload: object) -> str:
-    return json.dumps(payload, ensure_ascii=True, sort_keys=True, separators=(",", ":"))
+    return json.dumps(
+        _json_plain(payload),
+        ensure_ascii=True,
+        sort_keys=True,
+        separators=(",", ":"),
+    )
 
 
 def digest(payload: object) -> str:
@@ -577,11 +583,32 @@ def _datetime(value: object, label: str) -> datetime:
 
 
 def _freeze_json(value: object) -> object:
-    return json.loads(canonical_json(value))
+    return _immutable_json(json.loads(canonical_json(value)))
 
 
 def _frozen_mapping(value: Mapping[str, Any]) -> Mapping[str, Any]:
     copied = json.loads(canonical_json(value))
     if not isinstance(copied, dict):
         raise TypeError("evidence payload must be an object")
-    return copied
+    frozen = _immutable_json(copied)
+    if not isinstance(frozen, Mapping):
+        raise TypeError("evidence payload must remain an object")
+    return frozen
+
+
+def _immutable_json(value: object) -> object:
+    if isinstance(value, dict):
+        return MappingProxyType(
+            {str(key): _immutable_json(item) for key, item in value.items()}
+        )
+    if isinstance(value, list):
+        return tuple(_immutable_json(item) for item in value)
+    return value
+
+
+def _json_plain(value: object) -> object:
+    if isinstance(value, Mapping):
+        return {str(key): _json_plain(item) for key, item in value.items()}
+    if isinstance(value, (list, tuple)):
+        return [_json_plain(item) for item in value]
+    return value

@@ -10,6 +10,8 @@ from .adoption import (
     AdoptionDecisionType,
     AdoptionMode,
     ResearchValidationEvidenceSnapshot,
+    RuntimeMode,
+    SignalAuthorization,
     StrategyAdoptionDecision,
     StrategyAdoptionPolicy,
     StrictCohortIdentity,
@@ -89,6 +91,66 @@ class SQLiteAdoptionStore:
         if row is None:
             raise KeyError(decision_id)
         return self._decision_from_row(row)
+
+    def list_approvals(
+        self, *, strategy_id: str, strategy_version: str
+    ) -> tuple[StrategyAdoptionDecision, ...]:
+        with closing(self._connect()) as connection:
+            rows = connection.execute(
+                "SELECT * FROM live_strategy_adoption_decisions "
+                "WHERE decision_type = 'APPROVED_FOR_STRATEGY' "
+                "AND strategy_id = ? AND strategy_version = ? "
+                "ORDER BY adoption_decision_id",
+                (strategy_id, strategy_version),
+            ).fetchall()
+        return tuple(self._decision_from_row(row) for row in rows)
+
+    def is_revoked_at(self, approval_decision_id: str, at: datetime) -> bool:
+        with closing(self._connect()) as connection:
+            row = connection.execute(
+                "SELECT 1 FROM live_strategy_adoption_decisions "
+                "WHERE decision_type = 'REVOKED' AND approval_decision_id = ? "
+                "AND decided_at <= ? LIMIT 1",
+                (approval_decision_id, at.isoformat()),
+            ).fetchone()
+        return row is not None
+
+    def append_authorization(self, authorization: SignalAuthorization) -> bool:
+        values = (
+            authorization.authorization_id,
+            authorization.signal_id,
+            authorization.adoption_decision_id,
+            authorization.evidence_snapshot_id,
+            authorization.adoption_policy_version,
+            authorization.strategy_id,
+            authorization.strategy_version,
+            authorization.adoption_mode.value,
+            authorization.runtime_mode.value,
+            authorization.authorized_at.isoformat(),
+        )
+        with closing(self._connect()) as connection, connection:
+            cursor = connection.execute(
+                "INSERT OR IGNORE INTO live_signal_authorizations "
+                "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                values,
+            )
+            row = connection.execute(
+                "SELECT * FROM live_signal_authorizations WHERE authorization_id = ?",
+                (authorization.authorization_id,),
+            ).fetchone()
+            if row is None or tuple(row)[:-1] != values[:-1]:
+                raise ValueError("Signal authorization identity has different content")
+        return cursor.rowcount == 1
+
+    def get_authorization(self, authorization_id: str) -> SignalAuthorization:
+        with closing(self._connect()) as connection:
+            row = connection.execute(
+                "SELECT * FROM live_signal_authorizations WHERE authorization_id = ?",
+                (authorization_id,),
+            ).fetchone()
+        if row is None:
+            raise KeyError(authorization_id)
+        return self._authorization_from_row(row)
 
     def count_rows(self, table: str) -> int:
         allowed = {
@@ -247,6 +309,21 @@ class SQLiteAdoptionStore:
             actor=row["actor"],
             reason=row["reason"],
             approval_decision_id=row["approval_decision_id"],
+        )
+
+    @staticmethod
+    def _authorization_from_row(row: sqlite3.Row) -> SignalAuthorization:
+        return SignalAuthorization(
+            authorization_id=row["authorization_id"],
+            signal_id=row["signal_id"],
+            adoption_decision_id=row["adoption_decision_id"],
+            evidence_snapshot_id=row["evidence_snapshot_id"],
+            adoption_policy_version=row["adoption_policy_version"],
+            strategy_id=row["strategy_id"],
+            strategy_version=row["strategy_version"],
+            adoption_mode=AdoptionMode(row["adoption_mode"]),
+            runtime_mode=RuntimeMode(row["runtime_mode"]),
+            authorized_at=datetime.fromisoformat(row["authorized_at"]),
         )
 
 

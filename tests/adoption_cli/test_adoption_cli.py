@@ -15,7 +15,7 @@ def _policy_file(path: Path) -> Path:
         "adoption_policy_version": "adoption-policy-cli-v1",
         "strategy_id": "validated-signal-shadow",
         "strategy_version": "strategy-v1",
-        "strategy_config_identity": "config-sha256-1",
+        "strategy_config_identity": None,
         "expected_research_policy_version": "research-policy-v1",
         "expected_exact_cohort_identity": cohort_payload(),
         "adoption_mode": "SHADOW_ONLY",

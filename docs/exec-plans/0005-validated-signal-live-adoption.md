@@ -213,7 +213,9 @@ supported Python versions.
   adapter, immutable evidence/policy/decision contracts, the first additive Live
   migration, atomic/idempotent approval and revocation persistence, and dry-run-first
   one-shot CLI commands.
-- [ ] Milestone 2 - Runtime adoption gate and Signal authorization.
+- [x] (2026-07-15) Milestone 2 - Added the Live-only exact-match adoption gate,
+  bounded/revocable/mode-aware/no-retroactive checks, immutable idempotent Signal
+  authorization lineage, and structured fail-closed reasons.
 - [ ] Milestone 3 - Candidate authorization lineage.
 - [ ] Milestone 4 - Authorized shadow decision cycle.
 - [ ] Milestone 5 - Documentation and final validation.
@@ -257,3 +259,10 @@ Milestone 1 validation on Python 3.11:
 - `25 passed` across evidence, adoption-decision, and adoption CLI tests.
 - Ruff passed for the full repository.
 - strict mypy passed for `packages apps` (61 source files).
+
+Milestone 2 validation on Python 3.11:
+
+- `36 passed` across evidence, decisions, CLI, and runtime adoption-gate tests.
+- Runtime authorization succeeded while the Research database was exclusively locked,
+  proving the gate reads Live state only.
+- Ruff passed for the full repository; strict mypy passed for 62 source files.

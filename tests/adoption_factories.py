@@ -4,6 +4,17 @@ import sqlite3
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
+from fx_core import (
+    Currency,
+    CurrencyTarget,
+    DirectionScore,
+    FeatureId,
+    Horizon,
+    Probability,
+    Signal,
+    SignalId,
+    VersionMetadata,
+)
 from fx_research.evaluation_persistence import SQLiteEvaluationStore
 from swap_bot.adoption import AdoptionMode, StrategyAdoptionPolicy, StrictCohortIdentity
 
@@ -39,7 +50,7 @@ def adoption_policy(**changes: object) -> StrategyAdoptionPolicy:
         "adoption_policy_version": "adoption-policy-v1",
         "strategy_id": "validated-signal-shadow",
         "strategy_version": "strategy-v1",
-        "strategy_config_identity": "config-sha256-1",
+        "strategy_config_identity": None,
         "expected_research_policy_version": "research-policy-v1",
         "expected_cohort": StrictCohortIdentity.from_payload(cohort_payload()),
         "adoption_mode": AdoptionMode.SHADOW_ONLY,
@@ -48,6 +59,32 @@ def adoption_policy(**changes: object) -> StrategyAdoptionPolicy:
     }
     values.update(changes)
     return StrategyAdoptionPolicy(**values)  # type: ignore[arg-type]
+
+
+def adoptable_signal(
+    identifier: str = "signal-adopted-1",
+    *,
+    created_at: datetime = NOW,
+) -> Signal:
+    return Signal(
+        signal_id=SignalId(identifier),
+        target=CurrencyTarget(Currency("USD")),
+        signal_type="currency_fundamental",
+        direction=DirectionScore(0.4),
+        strength=Probability(0.7),
+        confidence=Probability(0.8),
+        horizon=Horizon.DAYS_3,
+        observed_at=created_at,
+        created_at=created_at,
+        source_feature_ids=(FeatureId("feature-adopted-1"),),
+        versions=VersionMetadata(
+            producer_version="producer-v1",
+            model_version="model-v1",
+            prompt_version="prompt-v1",
+            scorer_version="fundamental-scorer-v1",
+            transformation_version=None,
+        ),
+    )
 
 
 def seed_research_evidence(

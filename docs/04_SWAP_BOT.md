@@ -64,10 +64,34 @@ swap evidence, and appends fictional order/fill/position/account/PnL records. It
 cannot import or construct the real Broker Private transport. `LIVE` is rejected
 until ExecPlan 0007.
 
+Execution authority and Adoption authorization are separate. Both
+`SHADOW_NOT_SUBMITTED` and `PAPER` authorize Signals with existing
+`RuntimeMode.SHADOW`; `LIVE` maps to `RuntimeMode.LIVE` only under ExecPlan 0007.
+Consequently `SHADOW_ONLY` and `LIVE_ELIGIBLE` approvals can both support Paper input,
+but neither a Paper cycle nor Paper result can create `RuntimeMode.LIVE` authorization
+or Live Broker authority. The Paper cycle separately records
+`ExecutionAuthorityMode.PAPER`; no `RuntimeMode.PAPER` is introduced.
+
 Order lifecycle includes accepted, rejected, open, partially filled, filled,
 cancelled, and expired states. Restart/retry must reconcile append-only state without
 duplicating an order, fill, ledger entry, or swap accrual. Paper burn-in is evidence,
 not Live authority.
+
+One semantic schedule slot is identified by scheduled/as-of time, execution
+authority, Strategy/config identity, and cycle-policy version. Its first claim
+atomically freezes one immutable input snapshot containing exact Signal,
+authorization/adoption, swap/market, Position/Account, checkpoint, and selection/
+freshness-policy lineage. Inputs are not part of the slot ID. Retrying adds a separate
+attempt record and reuses the frozen snapshot; a newly arrived or corrected input is
+for a later slot.
+
+One approved intent similarly freezes one `FillEvaluationPlan`, including the due
+boundary, exact model/policy versions, and seed. Paper selects market evidence once
+before fill calculation from the exact Pair with
+`intent.created_at <= received_at <= fill_due_at`, then orders eligible observations
+by received time, provider time, and observation ID. The immutable selection or
+terminal no-market record is reused after restart. A newer quote cannot revise the
+historical Paper result, and a Research Forward Result is never eligible.
 
 ## Validated Signal adoption
 

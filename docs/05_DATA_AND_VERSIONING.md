@@ -7,8 +7,9 @@ the current numbered migrations end at `0002`. The following records are target
 contracts and are not implemented at the planning milestone:
 
 ```text
-paper_cycle / paper_cycle_attempt
+paper_cycle_slot / paper_cycle_input_snapshot / paper_cycle_attempt
 paper_order / paper_order_event
+paper_fill_evaluation_plan / paper_market_observation_selection
 paper_fill
 paper_position_event or paper_position_snapshot
 paper_ledger_entry / paper_account_snapshot
@@ -22,11 +23,58 @@ version dimensions; audit attempt/time remains separate. Built-in `hash()` is no
 persistent identity. Current projections must be rebuildable from exact ordered
 events and checked by reconciliation.
 
+`CycleSlotId` commits to UTC `scheduled_for`, UTC `as_of`, execution-authority mode,
+Strategy ID/version/config identity, and cycle-policy version. It does not include
+selected input IDs. The schema must enforce one row for that semantic slot and one
+`paper_cycle_input_snapshot` per slot. First claim selects and inserts the snapshot in
+one transaction; a conflicting second snapshot rolls back in full.
+
+The input snapshot records its slot/as-of, canonical ordered Currency Signal and Pair
+Signal IDs, Signal Authorization and Adoption Decision IDs, Swap and cycle-time market
+evidence IDs, Position snapshot/event IDs, Account snapshot ID, selection/freshness
+policy versions, checkpoint identity, and `input_snapshot_hash`. The hash includes
+the canonical inputs and policy versions but excludes first-write audit `captured_at`.
+Retry reads this row and never reruns input selection. Late/backfilled/corrected data
+cannot alter a historical slot. Each retry instead appends a `paper_cycle_attempt`
+with worker/process, resumed stage, outcome/failure, and audit timestamps; none of
+those fields changes the slot or input identity.
+
+Creating a Paper order first-writes exactly one `paper_fill_evaluation_plan` for its
+approved intent. The plan fixes fill/model policy, market-selection policy,
+spread/slippage/liquidity/partial-fill versions, due boundary or full boundary
+schedule, and seed. Its audit `created_at` is preserved but does not make a retry a
+new semantic plan. A unique approved-intent reference prevents a changed due time,
+seed, or version set from being inserted on retry.
+
+Before calculation, one immutable `paper_market_observation_selection` is written for
+the plan. Eligibility requires the exact Pair, valid UTC timestamps, local
+`intent.created_at <= received_at <= fill_due_at`, availability by evaluation, and
+the configured freshness contract. Provider timestamp cannot be after local receipt
+or the boundary. Research `ForwardResult` is a different evidence type and cannot be
+referenced. Selection is exactly:
+
+```sql
+ORDER BY received_at ASC, provider_timestamp ASC, market_observation_id ASC
+LIMIT 1
+```
+
+The row stores either that exact observation or the versioned no-market decision.
+`fill-no-market-v1` is `PENDING` before due and terminal
+`REJECTED_NO_MARKET_EVIDENCE` at/after due. Once either evidence is first-written, a
+newer or backfilled observation cannot replace it. A late-retrieved observation is
+eligible only before the first terminal write and only when its persisted local
+`received_at` proves it was available by the frozen due boundary.
+
 Paper fill identity includes exact approved intent, Pair, side, Decimal quantity,
-market quote identity and provider/receipt/evaluation timestamps, fill model, spread,
+fill plan and selected market-observation identity/timestamps, fill model, spread,
 slippage, liquidity/partial-fill versions, and an explicit seed if randomness exists.
-Only market observations locally available at or after intent creation may be used.
-Research Forward Result is never Paper fill evidence.
+Outputs append after the frozen cycle input and never rewrite or become that slot's
+input. Research Forward Result is never Paper fill evidence.
+
+Paper cycle/order/fill lineage persists execution authority independently from
+Adoption authorization. `SHADOW_NOT_SUBMITTED` and `PAPER` both use existing
+`RuntimeMode.SHADOW`; `LIVE` maps to `RuntimeMode.LIVE` only for ExecPlan 0007. No
+`RuntimeMode.PAPER` row or reinterpretation of an existing authorization is required.
 
 Paper swap evidence adds unit basis, settlement currency, source/source version,
 effective period, capture time, applicable rollover date, and content identity to the

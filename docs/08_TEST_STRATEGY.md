@@ -35,6 +35,59 @@ ExecPlan 0006 implementation tests will state the following guarantees:
 Paper results are asserted from observable events/ledger/probes. They are not proven
 by hardcoded `paper_executed` or Broker-call summary fields.
 
+### Authority mapping target tests
+
+- `SHADOW_NOT_SUBMITTED` maps to Adoption `RuntimeMode.SHADOW`.
+- `PAPER` maps to Adoption `RuntimeMode.SHADOW`.
+- `LIVE` maps to Adoption `RuntimeMode.LIVE`, while the ExecPlan 0006 composition
+  rejects it before Signal authorization or cycle claim.
+- A `SHADOW_ONLY` approval is usable for Paper, as is `LIVE_ELIGIBLE`, without
+  creating Live Broker authority.
+- Paper cycle/order/fill lineage retains `ExecutionAuthorityMode.PAPER` separately
+  from the SHADOW Signal authorization.
+- A Paper result cannot create `RuntimeMode.LIVE` authorization, Live rollout
+  authority, or real Broker construction/submission.
+
+### Cycle first-write target tests
+
+- The same schedule slot, as-of, authority, Strategy/config, and cycle-policy version
+  always resolve one `CycleSlotId`, regardless of discovered input rows.
+- A late Signal cannot create another logical cycle after the first claim.
+- Late Authorization and Adoption Decision rows cannot alter the persisted input
+  snapshot.
+- Newer SwapQuote and cycle market evidence cannot alter the persisted input
+  snapshot.
+- Newer Account or Position evidence cannot alter the persisted input snapshot.
+- A conflicting second input snapshot for one slot is rejected atomically and leaves
+  the original row unchanged.
+- Retry creates only a new `CycleAttempt` and reuses the exact frozen input snapshot.
+- First-write `captured_at`, checkpoint, canonical input hash, selected IDs, and
+  policy-version metadata remain unchanged across retry.
+- Cycle, order, fill, ledger, and swap semantic IDs exclude attempt wall-clock and
+  worker metadata.
+- Tests never depend on database natural order or an implicit latest-row selection.
+
+### Fill selection target tests
+
+- Multiple valid quotes select by `received_at ASC`, provider timestamp ASC, then
+  market-observation ID ASC.
+- Identical receipt/provider timestamps use market-observation ID as the deterministic
+  tie-breaker.
+- A quote received before intent creation is rejected.
+- A quote received after the frozen `fill_due_at` is rejected.
+- A future provider timestamp, malformed observation, wrong Pair, or observation not
+  locally available by evaluation is rejected.
+- A Research `ForwardResult` cannot satisfy the Paper fill input contract.
+- Market selection is persisted before fill evidence and reused after restart.
+- A newer quote appearing after selection does not replace the selected evidence.
+- No eligible quote remains `PENDING` before due and produces the versioned terminal
+  `REJECTED_NO_MARKET_EVIDENCE` outcome at/after due.
+- Once terminal no-market evidence exists, retry cannot turn it into a fill; a late-
+  retrieved quote is usable only if persisted local receipt proves availability by
+  due and no earlier selection/terminal record exists.
+- Retry does not move `fill_due_at`, change a seed, or change any fill/selection/
+  spread/slippage/liquidity/partial-fill policy version.
+
 ## Strategy adoption tests
 
 ExecPlan 0005 tests state What each authority boundary guarantees:

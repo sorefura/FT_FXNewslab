@@ -195,8 +195,27 @@ any cycle starts. ExecPlan 0007 must add a new explicit rollout decision before 
 real adapter can be composed.
 
 The current adoption `RuntimeMode` is a distinct Strategy-input authorization
-concept. Milestone 2 must add an explicit, tested mapping from operational authority
-to adoption authorization without weakening `SHADOW_ONLY` or `LIVE_ELIGIBLE`.
+concept. The mapping is fixed as follows:
+
+```text
+ExecutionAuthorityMode.SHADOW_NOT_SUBMITTED -> Adoption RuntimeMode.SHADOW
+ExecutionAuthorityMode.PAPER                -> Adoption RuntimeMode.SHADOW
+ExecutionAuthorityMode.LIVE                 -> Adoption RuntimeMode.LIVE
+```
+
+`PAPER` is fictional execution, so it must not request Adoption `RuntimeMode.LIVE`.
+A `SHADOW_ONLY` approval is usable by `SHADOW_NOT_SUBMITTED` and `PAPER` cycles. A
+`LIVE_ELIGIBLE` approval is also usable by those modes, but does not grant real
+Broker authority. `LIVE` mapping and its additional rollout authority belong only to
+ExecPlan 0007; ExecPlan 0006 rejects `ExecutionAuthorityMode.LIVE` before Signal
+authorization or cycle claim.
+
+The two enums remain distinct. Adoption `RuntimeMode.SHADOW` is not
+`ExecutionAuthorityMode.PAPER`, and Adoption `RuntimeMode.LIVE` is not approval to
+execute against a Live Broker. A Paper cycle authorizes its Signals with
+`RuntimeMode.SHADOW` and separately persists `ExecutionAuthorityMode.PAPER` in cycle,
+order, and fill lineage. This plan adds neither `RuntimeMode.PAPER` nor a migration or
+reinterpretation of existing adoption rows.
 
 ### Production Strategy
 
@@ -259,11 +278,53 @@ calls an AI provider.
 
 ### Operational inputs and time
 
-Operational selection is deterministic for one cycle identity. It uses only immutable
-Signals present at the cycle's `as_of`, exact adoption state, public market/swap data
-received by that time, and Live-owned position/account evidence. Ambiguous matching
-Signals fail closed; selection never means "latest row wins" without an explicit
-ordering and checkpoint contract.
+One scheduled semantic slot has one `CycleSlotId`, derived only from:
+
+```text
+scheduled_for
+as_of
+execution_authority_mode
+strategy_id
+strategy_version
+strategy_config_identity
+cycle_policy_version
+```
+
+`scheduled_for` and `as_of` are UTC-aware. Input record IDs are deliberately excluded
+from the slot identity: a restart or backfill must claim the existing logical slot,
+not manufacture a second cycle by discovering different inputs.
+
+The first successful claim transaction selects and freezes exactly one immutable
+`CycleInputSnapshot` for that slot. Its lineage includes at least:
+
+- Cycle Slot ID and `as_of`;
+- selected Currency Signal IDs and Pair Signal IDs;
+- Signal Authorization IDs and Adoption Decision IDs;
+- Swap evidence IDs and cycle-time market observation IDs;
+- Position snapshot/event IDs and Account snapshot ID;
+- selection and freshness policy versions;
+- checkpoint identity;
+- canonical `input_snapshot_hash`; and
+- first-write audit `captured_at`.
+
+The semantic snapshot hash includes the canonical selected inputs and every policy
+version, but excludes `captured_at`. Set-like IDs are ordered by typed ID value before
+hashing; semantically ordered inputs retain explicit ordinals. One slot can have only
+one snapshot. An identical retry reads it, while a conflicting second snapshot fails
+closed without partial writes. The retry never searches for newer Signals,
+authorizations, Swap evidence, market evidence, Positions, or Account state. Late,
+backfilled, or corrected inputs are eligible only for a later slot.
+
+`CycleAttempt` is separate append-only audit evidence. Many attempts may reference
+one slot and record attempt ID, slot ID, start time, resumed stage, worker/process
+identity, outcome, failure classification, and completion time. Attempt time and
+worker identity are excluded from `CycleSlotId` and `input_snapshot_hash`; retries add
+attempt evidence without changing the slot or frozen input.
+
+Operational selection uses only immutable Signals present at the slot's `as_of`,
+exact adoption state, public market/swap data received by that time, and Live-owned
+position/account evidence. Ambiguous matching Signals fail closed; selection never
+means "latest row wins" without an explicit ordering and checkpoint contract.
 
 All application time comes from an injected Clock. Market evidence separates:
 
@@ -271,10 +332,10 @@ All application time comes from an injected Clock. Market evidence separates:
 - local `received_at`/availability time; and
 - fill evaluation time.
 
-A Paper fill may use only a market observation whose local availability is at or
-after `ApprovedExecutionIntent.created_at` and no later than fill evaluation. It must
-also satisfy the configured freshness rule. Research `ForwardResult`, future candle,
-or later-revised evidence is forbidden.
+A Paper fill may use only a market observation whose local `received_at` is at or
+after `ApprovedExecutionIntent.created_at`, no later than its frozen `fill_due_at`,
+and locally available when evaluated. It must also satisfy the configured freshness
+rule. Research `ForwardResult`, future candle, or later-revised evidence is forbidden.
 
 ### Paper execution and fill evidence
 
@@ -310,6 +371,35 @@ Append-oriented records include:
 Semantic identity is separated from audit time. Canonical SHA-256 content identity is
 used; Python's process-dependent built-in `hash()` is forbidden.
 
+Creating a Paper order first-writes one immutable `FillEvaluationPlan` for its exact
+approved intent. The plan freezes intent ID, fill-policy/model version, market
+selection policy version, spread/slippage/liquidity/partial-fill versions,
+`fill_due_at` or the full versioned evaluation-boundary schedule, an explicit seed if
+randomness exists, and first-write `created_at`. One intent has one plan. Retry does
+not move a due time, choose a new seed, or replace a policy version.
+
+Market selection is itself frozen before fill calculation as one immutable
+`MarketObservationSelection`. Eligible evidence must:
+
+- have the exact Currency Pair and a well-formed UTC-aware timestamp set;
+- satisfy `intent.created_at <= received_at <= fill_due_at`;
+- have been locally available by evaluation time;
+- satisfy the versioned freshness policy and not claim a provider timestamp after
+  local receipt or after the evaluation boundary; and
+- be Live-owned public market evidence, never a Research `ForwardResult`.
+
+The complete deterministic selection order is:
+
+```sql
+ORDER BY received_at ASC, provider_timestamp ASC, market_observation_id ASC
+LIMIT 1
+```
+
+There is no implicit current/latest row or database natural order. The selected
+observation ID, eligibility/evaluation boundary, selection-policy version, and
+selection time are persisted before fill calculation and reused after restart. A
+later quote cannot replace that evidence.
+
 The fill model is immutable, versioned, and deterministic. Its identity includes at
 least fill-model version, intent ID, Pair, side, Decimal quantity, exact market quote
 identity/timestamps, spread model version, slippage model version, liquidity or
@@ -317,9 +407,14 @@ partial-fill model version, and an explicit seed if randomness is introduced. Th
 same inputs, versions, and seed produce the same order/fill evidence. There is no
 implicit randomness.
 
-Failure to obtain usable post-intent market evidence produces an explicit rejected,
-expired, or pending operational outcome according to versioned policy; it never
-borrows Research outcome data or fabricates a price.
+No-market behavior is fixed by `fill-no-market-v1`: before `fill_due_at`, the
+evaluation remains `PENDING`; at or after that boundary, absence of eligible evidence
+first-writes terminal `REJECTED_NO_MARKET_EVIDENCE`. A retry reuses either the frozen
+selection or terminal no-data record and cannot later fill from a newer quote. A
+late-retrieved quote is eligible only when persisted local evidence proves
+`received_at <= fill_due_at` and no selection/no-data record was already frozen;
+`received_at > fill_due_at` is always forbidden. Research outcome data is never
+borrowed and a price is never fabricated.
 
 ### Swap evidence and accrual
 
@@ -351,10 +446,15 @@ Snapshot IDs commit to their inputs and formula versions.
 
 ### Recovery and reconciliation
 
-Each scheduled cycle has one persistent semantic identity derived from its schedule
-slot/as-of time, operational mode, Strategy/config identity, exact input Signal and
-authorization identities, and relevant policy versions. Audit attempt IDs and wall
-clock timestamps are separate.
+Each scheduled cycle has the single persistent `CycleSlotId` defined above. Its
+inputs are frozen once in `CycleInputSnapshot`, and each worker run is a separate
+`CycleAttempt`. Future persistence enforces one slot row and one input-snapshot row
+per semantic slot. First claim, input selection, and snapshot persistence are one
+transaction; a best-effort selection followed by a later insert is not sufficient.
+
+Swap, Account, Position, Signal, Authorization, and other selected input evidence
+remain fixed across retries. Fill, ledger, Position, and Account outputs append after
+the input snapshot; they never become or rewrite that slot's inputs.
 
 Restart and retry must:
 
@@ -384,6 +484,12 @@ cycle. A crashed lock cannot permanently block recovery.
 - Currency Exposure includes positions and pending intents/orders.
 - Unknown/unavailable/stale/malformed swap is not zero.
 - Fill and swap evidence has no future leakage.
+- `PAPER` uses Adoption `RuntimeMode.SHADOW`; it cannot create a
+  `RuntimeMode.LIVE` authorization or Live rollout authority.
+- One semantic Cycle Slot has one frozen input snapshot; retry adds attempts and does
+  not reselect inputs.
+- One approved intent has one frozen fill plan and one immutable selected-market or
+  terminal no-market decision.
 - Paper orders, fills, positions, account, PnL, swap, cycle, and reconciliation
   evidence are append-oriented and versioned.
 - Private POST automatic retry remains prohibited and Live two-step arming remains
@@ -403,9 +509,13 @@ Deliverables:
 - Record the exact current contracts and gaps above.
 - Specify `NewsFilteredCarryStrategy`, immutable versioned config, supported Pair
   scope, structured skip semantics, and shared Pair transformation use.
-- Specify explicit `SHADOW_NOT_SUBMITTED`/`PAPER`/`LIVE` authority.
-- Specify Paper order/fill/ledger/swap/time/recovery evidence and the separate
-  entry/close/emergency-liquidation branches.
+- Specify explicit `SHADOW_NOT_SUBMITTED`/`PAPER`/`LIVE` authority and the fixed
+  mapping to existing Adoption `RuntimeMode` without adding a Paper runtime mode.
+- Specify `CycleSlot`/first-write `CycleInputSnapshot`/`CycleAttempt` separation,
+  exact `FillEvaluationPlan`, deterministic market selection, and versioned terminal
+  no-market behavior.
+- Specify Paper order/fill/ledger/swap/time/recovery evidence and the separate entry,
+  close, and emergency-liquidation branches.
 - Update architecture, Swap Bot, data/versioning, repository, test strategy, and
   design index documents with clearly labeled Current and Target sections.
 
@@ -432,6 +542,9 @@ Deliverables:
 
 - Frozen `NewsFilteredCarryStrategyConfig` with canonical identity.
 - Live-owned operational Signal source/checkpoint Port and SQLite adapter.
+- Explicit authority-to-adoption mapping and contract tests: both
+  `SHADOW_NOT_SUBMITTED` and `PAPER` authorize Signals with `RuntimeMode.SHADOW`;
+  `LIVE` is rejected before authorization or cycle start in ExecPlan 0006.
 - Operational Pair Signal production via `CurrencyPairSignalTransformer`, never a
   duplicate formula in `swap_bot`.
 - Exact AuthorizedSignal input and deterministic entry Candidate/structured skip
@@ -447,7 +560,9 @@ Deliverables:
 Observable behavior: identical authorized Signals, config, swap evidence, positions,
 and clock yield the same Candidate or skip reason. Neutral, misaligned, non-positive,
 missing, stale, malformed, or wrong-Pair carry yields no entry. No approved intent is
-created inside Strategy.
+created inside Strategy. A Paper cycle can consume either `SHADOW_ONLY` or
+`LIVE_ELIGIBLE` adoption through `RuntimeMode.SHADOW`, but cannot create
+`RuntimeMode.LIVE` authorization or real Broker authority.
 
 Verification:
 
@@ -467,6 +582,13 @@ Deliverables:
 - `PaperExecutionGateway` in an isolated Paper infrastructure module.
 - Immutable Paper order lifecycle, deterministic versioned fill model, exact market
   quote evidence, partial-fill/cancel/expiry behavior, and deterministic IDs.
+- One immutable `FillEvaluationPlan` per approved intent, with fixed due boundary,
+  model/policy versions, and seed; retry cannot move or replace them.
+- One immutable `MarketObservationSelection` before fill calculation, using exact
+  post-intent/pre-due eligibility and deterministic `received_at`, provider timestamp,
+  and observation-ID ordering.
+- Versioned `PENDING` then terminal `REJECTED_NO_MARKET_EVIDENCE` behavior that cannot
+  be revised into a later fill by retry.
 - Entry, ordinary reduce-only close, partial close, and Risk liquidation handling.
 - Append-only Paper order/fill/position/account/ledger/PnL/swap/reconciliation schema,
   beginning with additive Live migration `0003`.
@@ -479,7 +601,9 @@ Deliverables:
 
 Observable behavior: exact intent and evidence replay produces exact Paper records;
 restart cannot duplicate them. Invalid or forged records leave no partial rows. No
-future quote or Research Forward Result can create a fill.
+pre-intent, post-due, locally unavailable, future, or Research Forward Result can
+create a fill. Equal-timestamp evidence uses the explicit observation-ID tie-breaker,
+and restart reuses the persisted selection even if a newer quote exists.
 
 Verification:
 
@@ -499,8 +623,13 @@ Deliverables:
 - One-shot production cycle with injected Clock and explicit authority mode.
 - Operational Signal, market quote, SwapQuote, position, account, and adoption input
   adapters.
-- Deterministic cycle identity, overlap claim, checkpoint, attempt audit, and
-  structured incomplete/failure state.
+- `CycleSlotId` derived from schedule/as-of, execution authority, Strategy/config,
+  and cycle-policy version, excluding variable input records.
+- Atomic first claim and immutable `CycleInputSnapshot` freeze, with one-slot/one-
+  snapshot constraints, canonical input/policy hash, checkpoint identity, and stable
+  first-write `captured_at`.
+- Append-only `CycleAttempt` audit, overlap claim, checkpoint, and structured
+  incomplete/failure state; retry adds an attempt but reuses the slot and snapshot.
 - Startup reconciliation and explicit recovery of crashes between intent/order,
   order/fill, fill/ledger, and ledger/cycle completion.
 - Stable idempotency across process restart for orders, fills, ledger, and accrual.
@@ -510,8 +639,10 @@ Deliverables:
 Observable behavior: one operational cycle reaches either structured skip/rejection,
 `NOT_SUBMITTED`, or Paper evidence. Re-running the same cycle after any simulated
 crash converges to one logical result with no duplicate order/fill. Stale or
-ambiguous input fails closed. Real Broker calls remain exactly zero by observation,
-not a hardcoded summary.
+ambiguous input fails closed. Signals, authorizations, Swap evidence, market evidence,
+Positions, or Account state arriving after first claim cannot change the historical
+snapshot. A conflicting second snapshot is rejected atomically. Real Broker calls
+remain exactly zero by observation, not a hardcoded summary.
 
 Verification:
 
@@ -559,7 +690,8 @@ python -m swap_bot paper-burn-in-report --config <paper-config>
 - Existing immutable Signal, Research validation, Live adoption, Candidate,
   Portfolio, Risk, intent, and `NOT_SUBMITTED` records are not rewritten.
 - Existing `SHADOW` runtime authorization rows remain readable. Operational authority
-  adds an explicit compatibility mapping rather than reinterpreting stored values.
+  uses the fixed compatibility mapping above rather than adding `RuntimeMode.PAPER`
+  or reinterpreting stored values.
 - Numbered Live schema migration starts at `0003`; no inline historical table is
   renumbered.
 - Paper tables are additive and use append-only guards. Paper projections can be
@@ -595,12 +727,20 @@ ExecPlan 0006 is complete only when all of the following are true:
   have distinct typed authority and lineage.
 - `SHADOW_NOT_SUBMITTED`, `PAPER`, and `LIVE` are explicit distinct modes; 0006 can
   run only the first two.
+- `SHADOW_NOT_SUBMITTED` and `PAPER` both request Adoption `RuntimeMode.SHADOW` while
+  preserving their distinct execution authority in operational lineage; Paper never
+  creates `RuntimeMode.LIVE` authorization.
 - Only approved intents create Paper orders. Signal/Candidate cannot call a Paper or
   real Broker Gateway directly.
 - Paper orders, fills, positions, account, PnL, swap, cycles, and reconciliation are
   immutable append-oriented evidence with deterministic semantic identities.
 - Fill uses only post-intent available market evidence and never a Research Forward
   Result or future observation.
+- One semantic Cycle Slot has one immutable first-write input snapshot; retry,
+  restart, late data, and backfill cannot create a second cycle or alter its meaning.
+- One approved intent has one immutable fill plan and deterministic frozen market
+  selection or terminal no-market decision; due boundary, seed, and first-write audit
+  metadata remain stable across retry.
 - Money/quantity/PnL uses Decimal and explicit formula versions.
 - Restart/retry/reconciliation converges without duplicate order, fill, ledger entry,
   or swap accrual.
@@ -625,6 +765,11 @@ ExecPlan 0006 is complete only when all of the following are true:
   implementation.
 - [x] (2026-07-16) Passed the full local Python 3.11/3.14 test, Ruff, and strict mypy
   matrix for the planning-only diff.
+- [x] (2026-07-17) Finalized the PAPER-to-Adoption mapping and the first-write
+  Cycle/Input/Fill identity contract across ExecPlan 0006, ADR 0008, architecture,
+  Swap Bot, data/versioning, and future-test documentation without runtime changes.
+- [x] (2026-07-17) Passed the final planning-contract diff through the full local
+  Python 3.11/3.14 test, Ruff, and strict mypy matrix.
 - [ ] Milestone 2 - Production Strategy Implementation.
 - [ ] Milestone 3 - Paper Broker and Ledger.
 - [ ] Milestone 4 - Operational Paper Cycle.
@@ -673,6 +818,26 @@ ExecPlan 0006 is complete only when all of the following are true:
   the repository.
   Resolution: rerun each interpreter with a distinct workspace `--basetemp`; both
   complete suites passed. CI jobs are already isolated by matrix runner.
+- Observation: the initial plan left the mapping between PAPER execution authority
+  and the existing Adoption runtime enum for Milestone 2, although the latter has
+  only SHADOW and LIVE.
+  Resolution: PAPER is fictional and therefore uses `RuntimeMode.SHADOW`; execution
+  authority remains a separately persisted lineage dimension, and only ExecPlan 0007
+  may use the LIVE mapping.
+- Observation: including selected input IDs in cycle identity permits a restart to
+  derive another logical cycle for the same schedule slot after late/backfilled data
+  arrives.
+  Resolution: identify the stable `CycleSlot` without input IDs, atomically freeze one
+  `CycleInputSnapshot` on first claim, and append retry-specific `CycleAttempt`
+  evidence.
+- Observation: a deterministic fill formula does not make replay deterministic when
+  retry can move its due boundary or select a newer eligible quote.
+  Resolution: first-write one `FillEvaluationPlan` and persist the exact ordered
+  market selection or terminal no-market evidence before fill calculation.
+- Observation: the sandboxed first validation attempt could not create its configured
+  pytest base directory and therefore produced setup errors rather than test failures.
+  Resolution: rerun both supported interpreters against distinct OS temporary roots;
+  both full suites passed, and Ruff/mypy ran without cache writes.
 
 ## Decision log
 
@@ -695,6 +860,16 @@ ExecPlan 0006 is complete only when all of the following are true:
   versioned deterministic evidence and prohibit lookahead/Research Forward data.
 - 2026-07-16: Start additive Paper persistence at Live migration `0003` after current
   migrations `0001`/`0002`.
+- 2026-07-17: Map both `SHADOW_NOT_SUBMITTED` and `PAPER` to Adoption
+  `RuntimeMode.SHADOW`; retain execution authority as a separate enum/lineage field,
+  add no Paper runtime mode, and reserve the LIVE mapping for ExecPlan 0007.
+- 2026-07-17: Define one `CycleSlot` per schedule/as-of/authority/Strategy/policy
+  tuple, one atomically first-written immutable `CycleInputSnapshot` per slot, and
+  append-only `CycleAttempt` records for retry audit.
+- 2026-07-17: Freeze one `FillEvaluationPlan` per approved intent and one immutable
+  market selection or `fill-no-market-v1` terminal outcome; order evidence by local
+  receipt, provider timestamp, then observation ID and never reselect after first
+  write.
 
 ## Validation
 
@@ -727,3 +902,18 @@ Completed locally on 2026-07-16 with CI-equivalent commands:
   implementation changed.
 - GitHub-hosted matrix confirmation remains pending until this local planning commit
   is pushed.
+
+Final planning-contract revision completed locally on 2026-07-17:
+
+- Python 3.11.9: `289 passed, 5 skipped`; Ruff passed; strict mypy passed for
+  63 source files.
+- Python 3.14.6: `289 passed, 5 skipped`; Ruff passed; strict mypy passed for
+  63 source files.
+- Pytest used distinct OS temporary roots with cache disabled after the sandboxed
+  base-directory creation attempt was denied. The denied attempt was an environment
+  setup failure; the clean reruns above are the recorded result.
+- Ruff used `--no-cache` and mypy used `--no-incremental` for the final matrix.
+- `git diff --check` passed, and the diff remains limited to the six requested
+  planning/architecture documents.
+- GitHub Actions has not been independently observed for this unpushed revision, so
+  no hosted-CI success is claimed here.

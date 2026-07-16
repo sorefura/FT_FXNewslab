@@ -23,9 +23,41 @@ authorities. ExecPlan 0006 can compose only the first two. The Paper adapter may
 approved-intent vocabulary, but it may not import, construct, or call the real Broker
 Private transport. `LIVE` requires the separate ExecPlan 0007 authority.
 
+Signal-input authorization remains a separate axis from execution authority:
+
+```text
+SHADOW_NOT_SUBMITTED -> Adoption RuntimeMode.SHADOW
+PAPER                -> Adoption RuntimeMode.SHADOW
+LIVE                 -> Adoption RuntimeMode.LIVE  (ExecPlan 0007 only)
+```
+
+Paper operation therefore uses existing SHADOW authorization while retaining PAPER
+in operational lineage. `RuntimeMode.LIVE` is neither required nor permitted for
+Paper, and it does not itself grant Live Broker execution approval.
+
+Operational recovery separates stable semantic work from audit attempts:
+
+```text
+CycleSlot(schedule/as-of/authority/Strategy/cycle-policy)
+    -> first-claim immutable CycleInputSnapshot
+    -> one or more append-only CycleAttempts
+    -> approved intent
+    -> immutable FillEvaluationPlan
+    -> immutable MarketObservationSelection or terminal no-market evidence
+    -> deterministic Paper fill/ledger outputs
+```
+
+Variable input IDs do not create a new cycle identity. The first claim atomically
+freezes Signal/authorization/swap/market/Position/Account/checkpoint and selection/
+freshness-policy lineage. Retry reads that snapshot; late or backfilled data applies
+only to a later slot. Paper order creation likewise freezes fill due time, policy
+versions, and seed. Market evidence is selected once by received time, provider time,
+then observation ID, and reused after restart.
+
 Paper market data is Live-owned public observation evidence. It separates provider
 timestamp, local receipt/availability, and evaluation time and must be available
-after the approved intent. Research `ForwardResult` is forbidden as fill input.
+after the approved intent and by the frozen due boundary. Research `ForwardResult` is
+forbidden as fill input.
 
 Current implementation remains the ExecPlan 0005 authorized shadow path: it reaches
 an approved intent and records `NOT_SUBMITTED`. There is no production Strategy,

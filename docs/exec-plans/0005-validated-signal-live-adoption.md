@@ -107,7 +107,10 @@ It does not choose a latest record and never writes to the Research database.
 `ResearchValidationEvidenceSnapshot` stores assessment ID/status/time, report and run
 IDs, Research policy version/hash/payload, cohort identity/hash/payload, Evaluation
 input snapshot version/hash/payload, and its own contract version/hash. All payloads
-are canonical JSON and append-only.
+are canonical JSON and append-only. Its semantic ID is derived in one shared pure
+contract from the contract version, Research lineage IDs, policy identity, status,
+cohort/metric/condition hashes, and input-snapshot identity. Persistence recomputes
+every payload/hash pair and the complete ID before writing any adoption row.
 
 `StrategyAdoptionPolicy` requires exact Strategy ID/version, exact Research policy
 version, exact strict cohort dimensions, adoption mode (`SHADOW_ONLY` or
@@ -120,6 +123,9 @@ Dry-run is the default. `--apply` writes the evidence snapshot, policy, and appr
 atomically. Persistence revalidates evidence status, exact Research policy/cohort,
 content hashes, and an approval re-derived by `approval_decision()`. A revocation is
 re-derived from the exact persisted approval and never mutates it.
+Approval and Revocation IDs identify semantic authority; `decided_at`, actor, and
+reason are first-write audit metadata. Later identical-authority retries reuse the
+persisted record and never replace those audit values.
 
 Runtime authorization fails closed on zero or multiple matches, revocation, expired
 or not-yet-effective periods, Signal creation or authorization before
@@ -230,9 +236,13 @@ supported Python versions.
   Swap Bot, data/versioning, repository, test-strategy, and design-index documents;
   passed the complete Python 3.11/3.14 validation matrix.
 - [x] (2026-07-15) P1 review - Re-derived Approval/Revocation at the persistence
-  boundary before writes, required exact decision equality, and enforced
+  boundary before writes, required exact factory derivation, and enforced
   `max(effective_from, decided_at)` in both runtime authorization and strict Candidate
   persistence.
+- [x] (2026-07-16) Final P1 review - Centralized complete Evidence Snapshot identity
+  derivation and persistence validation; restored advancing-clock Approval/Revocation
+  retry reuse while preserving first-write audit metadata and the original authority
+  start.
 
 ## Surprises & discoveries
 
@@ -252,6 +262,15 @@ supported Python versions.
   a window in which already-created Signals could gain authority retroactively.
   Resolution: define authority start as the later of policy effect and decision time,
   then share that calculation across the runtime gate and Candidate persistence.
+- Observation: re-deriving an Approval from a supplied Snapshot proves only that the
+  Decision matches that input; it does not prove the Snapshot's own payload/hash and
+  semantic ID integrity.
+  Resolution: centralize Snapshot identity derivation and verify all intrinsic fields
+  before opening the adoption transaction.
+- Observation: exact dataclass equality made deterministic semantic Decision IDs
+  conflict when a real retry supplied a later clock or different audit text.
+  Resolution: require exact factory derivation for every incoming command, compare
+  persisted authority content on collision, and retain the first successful audit.
 
 ## Decision log
 
@@ -278,6 +297,16 @@ supported Python versions.
 - 2026-07-15: Set Live authority start to
   `max(approval.effective_from, approval.decided_at)` so a backdated policy cannot
   promote a Signal that existed before the explicit operator decision.
+- 2026-07-16: Exclude Live `imported_at` and Research-side creation timestamps from
+  Evidence Snapshot semantic identity. They are audit metadata; lineage IDs, content
+  hashes, status, and supported contract versions define reproducible evidence.
+- 2026-07-16: Define Approval semantic identity as decision type plus exact evidence
+  and Adoption Policy identities, and Revocation semantic identity as decision type
+  plus approval ID. Actor, reason, and `decided_at` belong to the first successful
+  audit record and are not rewritten by retry.
+- 2026-07-16: Continue deriving `authority_start` from the first persisted Approval's
+  `decided_at`; retry command time must not shift authority for already eligible
+  Signals.
 
 ## Validation
 
@@ -291,9 +320,9 @@ python -m mypy packages/fx_core/src packages/fx_signal_store/src apps/fx_researc
 
 Final matrix results:
 
-- Python 3.11: `270 passed, 5 skipped`; Ruff passed; strict mypy passed for
+- Python 3.11: `289 passed, 5 skipped`; Ruff passed; strict mypy passed for
   63 source files.
-- Python 3.14: `270 passed, 5 skipped`; Ruff passed; strict mypy passed for
+- Python 3.14: `289 passed, 5 skipped`; Ruff passed; strict mypy passed for
   63 source files.
 - The five skips are opt-in external provider smoke tests.
 - Exact validated evidence import, EXPERIMENTAL/PROMISING rejection, dry-run zero
@@ -307,6 +336,13 @@ Final matrix results:
   authorizations, and stale Candidate envelopes were rejected. Equality at the
   authority boundary remained eligible, while historical Candidate lineage remained
   unchanged after revocation.
+- Complete Snapshot identity reconstruction rejected forged evidence IDs, contract/
+  input versions, Research lineage IDs, condition results, and input/metric/cohort/
+  policy payload-hash tampering before any Evidence, Policy, or Decision row existed.
+- Advancing-clock Approval and Revocation retries reused one semantic Decision even
+  with changed actor/reason, preserved the first `decided_at` and audit text, returned
+  the persisted ID, and left `authority_start` unchanged. Conflicting authority
+  content was rejected without partial rows.
 - The complete shadow path ended `NOT_SUBMITTED`; the injected BrokerGateway measured
   zero submit calls.
 

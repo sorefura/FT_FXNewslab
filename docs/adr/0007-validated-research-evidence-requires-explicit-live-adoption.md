@@ -43,6 +43,20 @@ snapshot and adoption policy, and each revocation from its persisted approval, b
 any append. Application-service validation alone is not treated as an integrity
 boundary.
 
+The evidence snapshot ID is reconstructed from its contract version, Research lineage
+IDs, Research policy identity, status, cohort and metric hashes, condition-results
+hash, and Evaluation input-snapshot identity. Payload/hash pairs and supported
+versions are verified before the approval transaction. Research-side creation times
+and Live `imported_at` remain first-write audit metadata rather than semantic snapshot
+identity.
+
+Approval semantic identity is the approval type plus exact evidence and adoption
+policy identities. Revocation semantic identity is the revocation type plus the exact
+approval ID. Decision time, actor, and reason are first-write audit metadata. A retry
+with the same semantic identity and authority content reuses the persisted decision;
+different authority content is a conflict. Consequently, retries do not move
+`authority_start` to a later command time.
+
 `APPROVED_FOR_STRATEGY` is not an Execution approval. Portfolio and Risk remain
 mandatory and Broker submission remains disabled for this rollout.
 

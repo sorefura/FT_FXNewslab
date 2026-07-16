@@ -132,6 +132,7 @@ class ApproveSignalAdoptionOnceService:
             result = store.apply_approval(snapshot, policy, decision)
             persisted = result.decision_created
             reused = result.reused
+            decision = store.get_decision(decision.adoption_decision_id)
         return AdoptionApprovalResult(
             assessment_found=True,
             research_status=evidence.status.value,
@@ -181,6 +182,7 @@ class RevokeSignalAdoptionOnceService:
                 raise ValueError("an adoption store is required for --apply")
             persisted = store.append_revocation(revocation)
             reused = not persisted
+            revocation = store.get_decision(revocation.adoption_decision_id)
         return AdoptionRevocationResult(
             approval_decision_id=approval_decision_id,
             revocation_decision_id=revocation.adoption_decision_id,

@@ -179,15 +179,8 @@ class SQLiteAdoptionStore:
     ) -> None:
         if snapshot.status is not ResearchValidationStatus.VALIDATED_FOR_RESEARCH:
             raise ValueError("Research evidence is not validated for adoption")
+        snapshot.validate_intrinsic_integrity()
         cohort = StrictCohortIdentity.from_payload(snapshot.cohort_identity_payload)
-        if snapshot.cohort_identity_hash != digest(snapshot.cohort_identity_payload):
-            raise ValueError("Research evidence cohort content hash does not match")
-        if snapshot.research_policy_content_hash != digest(
-            snapshot.research_policy_payload
-        ):
-            raise ValueError("Research evidence policy content hash does not match")
-        if snapshot.metric_payload_hash != digest(snapshot.metric_payload):
-            raise ValueError("Research evidence metric content hash does not match")
         if (
             snapshot.research_policy_version
             != policy.expected_research_policy_version
@@ -312,8 +305,10 @@ class SQLiteAdoptionStore:
         if row is None:
             raise ValueError("adoption decision was not persisted")
         persisted = SQLiteAdoptionStore._decision_from_row(row)
-        if persisted != decision:
+        if persisted.authority_payload != decision.authority_payload:
             raise ValueError("adoption decision identity already has different content")
+        if cursor.rowcount == 1 and persisted != decision:
+            raise ValueError("new adoption decision did not preserve exact content")
         return cursor.rowcount == 1
 
     @staticmethod

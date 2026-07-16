@@ -9,6 +9,10 @@ exact value, not a wildcard. Live authority starts at
 `max(effective_from, approval.decided_at)`. A Signal created before that boundary is
 not activated retroactively.
 
+Approval and Revocation IDs represent semantic authority, while `decided_at`, actor,
+and reason preserve the first successful write as audit metadata. A retry reuses that
+record without moving the authority-start boundary or rewriting its audit trail.
+
 The gate emits a Live-only `AuthorizedSignal` envelope and immutable
 `SignalAuthorization`; approval metadata is not added to `fx_core.Signal`. Strategy
 accepts authorized envelopes. The strict Candidate persistence path requires one

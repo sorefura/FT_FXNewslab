@@ -9,6 +9,10 @@ ExecPlan 0005 tests state What each authority boundary guarantees:
 - EXPERIMENTAL/PROMISING, missing evidence, bad hashes, malformed JSON, and unknown
   snapshot contracts fail closed;
 - dry-run creates no Live database and `--apply` is atomic and idempotent;
+- forged evidence IDs, contract versions, lineage IDs, condition results, and input/
+  metric/cohort/policy payload-hash pairs fail before any adoption row is written;
+- advancing-clock Approval/Revocation retries preserve first-write audit metadata and
+  the original authority-start boundary;
 - every strict cohort dimension, nullable version, mode, and bounded time is exact;
 - no approval, pre-approval Signal, pre-authority authorization, expiration,
   revocation, mismatch, and ambiguity stop before Strategy with structured reason

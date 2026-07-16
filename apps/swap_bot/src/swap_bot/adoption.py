@@ -270,14 +270,75 @@ class ResearchValidationEvidenceSnapshot:
     imported_at: datetime
 
     def __post_init__(self) -> None:
-        for value in (
+        for timestamp in (
             self.assessment_created_at,
             self.report_created_at,
             self.run_created_at,
             self.research_policy_created_at,
             self.imported_at,
         ):
-            require_utc(value, "evidence snapshot timestamp")
+            require_utc(timestamp, "evidence snapshot timestamp")
+
+    @property
+    def identity_payload(self) -> dict[str, object]:
+        return evidence_snapshot_identity_payload(
+            source_contract_version=self.source_contract_version,
+            assessment_id=self.assessment_id,
+            evaluation_run_id=self.evaluation_run_id,
+            report_id=self.report_id,
+            research_policy_version=self.research_policy_version,
+            research_policy_content_hash=self.research_policy_content_hash,
+            status=self.status,
+            cohort_identity_hash=self.cohort_identity_hash,
+            metric_payload_hash=self.metric_payload_hash,
+            condition_results_payload=self.condition_results_payload,
+            input_snapshot_version=self.input_snapshot_version,
+            input_snapshot_identity_hash=self.input_snapshot_identity_hash,
+        )
+
+    @property
+    def expected_evidence_snapshot_id(self) -> str:
+        return "research-evidence-" + digest(self.identity_payload)
+
+    def validate_intrinsic_integrity(self) -> None:
+        for value, label in (
+            (self.evidence_snapshot_id, "evidence_snapshot_id"),
+            (self.assessment_id, "assessment_id"),
+            (self.evaluation_run_id, "evaluation_run_id"),
+            (self.report_id, "report_id"),
+            (self.research_policy_version, "research_policy_version"),
+            (self.research_policy_content_hash, "research_policy_content_hash"),
+            (self.input_snapshot_identity_hash, "input_snapshot_identity_hash"),
+        ):
+            _require_text(value, label)
+        if self.source_contract_version != RESEARCH_EVIDENCE_CONTRACT_VERSION:
+            raise ValueError("Research evidence contract version is not supported")
+        if self.input_snapshot_version != SUPPORTED_EVALUATION_SNAPSHOT_VERSION:
+            raise ValueError("Research input snapshot version is not supported")
+        if not isinstance(self.status, ResearchValidationStatus):
+            raise ValueError("Research validation status is invalid")
+        for timestamp in (
+            self.assessment_created_at,
+            self.report_created_at,
+            self.run_created_at,
+            self.research_policy_created_at,
+            self.imported_at,
+        ):
+            require_utc(timestamp, "evidence snapshot timestamp")
+        if self.cohort_identity_hash != digest(self.cohort_identity_payload):
+            raise ValueError("Research evidence cohort content hash does not match")
+        if self.metric_payload_hash != digest(self.metric_payload):
+            raise ValueError("Research evidence metric content hash does not match")
+        if self.research_policy_content_hash != digest(
+            self.research_policy_payload
+        ):
+            raise ValueError("Research evidence policy content hash does not match")
+        if self.input_snapshot_identity_hash != digest(self.input_snapshot_payload):
+            raise ValueError("Research input snapshot content hash does not match")
+        if self.input_snapshot_payload.get("version") != self.input_snapshot_version:
+            raise ValueError("Research input snapshot payload version does not match")
+        if self.evidence_snapshot_id != self.expected_evidence_snapshot_id:
+            raise ValueError("Research evidence snapshot identity does not match")
 
     @classmethod
     def from_evidence(
@@ -288,20 +349,23 @@ class ResearchValidationEvidenceSnapshot:
         metric_payload = _frozen_mapping(evidence.metrics_payload)
         snapshot_payload = _frozen_mapping(evidence.input_snapshot_payload)
         policy_payload = _frozen_mapping(evidence.research_policy_payload)
-        identity = {
-            "source_contract_version": RESEARCH_EVIDENCE_CONTRACT_VERSION,
-            "assessment_id": evidence.assessment_id,
-            "evaluation_run_id": evidence.evaluation_run_id,
-            "report_id": evidence.report_id,
-            "research_policy_version": evidence.research_policy_version,
-            "research_policy_content_hash": evidence.research_policy_content_hash,
-            "status": evidence.status.value,
-            "cohort_identity_hash": digest(cohort_payload),
-            "metric_payload_hash": digest(metric_payload),
-            "condition_results_hash": digest(evidence.condition_results_payload),
-            "input_snapshot_version": evidence.input_snapshot_version,
-            "input_snapshot_identity_hash": evidence.input_snapshot_identity_hash,
-        }
+        condition_results_payload = _freeze_json(evidence.condition_results_payload)
+        cohort_identity_hash = digest(cohort_payload)
+        metric_payload_hash = digest(metric_payload)
+        identity = evidence_snapshot_identity_payload(
+            source_contract_version=RESEARCH_EVIDENCE_CONTRACT_VERSION,
+            assessment_id=evidence.assessment_id,
+            evaluation_run_id=evidence.evaluation_run_id,
+            report_id=evidence.report_id,
+            research_policy_version=evidence.research_policy_version,
+            research_policy_content_hash=evidence.research_policy_content_hash,
+            status=evidence.status,
+            cohort_identity_hash=cohort_identity_hash,
+            metric_payload_hash=metric_payload_hash,
+            condition_results_payload=condition_results_payload,
+            input_snapshot_version=evidence.input_snapshot_version,
+            input_snapshot_identity_hash=evidence.input_snapshot_identity_hash,
+        )
         return cls(
             evidence_snapshot_id="research-evidence-" + digest(identity),
             source_contract_version=RESEARCH_EVIDENCE_CONTRACT_VERSION,
@@ -312,10 +376,10 @@ class ResearchValidationEvidenceSnapshot:
             research_policy_content_hash=evidence.research_policy_content_hash,
             status=evidence.status,
             cohort_identity_payload=cohort_payload,
-            cohort_identity_hash=digest(cohort_payload),
+            cohort_identity_hash=cohort_identity_hash,
             metric_payload=metric_payload,
-            metric_payload_hash=digest(metric_payload),
-            condition_results_payload=_freeze_json(evidence.condition_results_payload),
+            metric_payload_hash=metric_payload_hash,
+            condition_results_payload=condition_results_payload,
             input_snapshot_version=evidence.input_snapshot_version,
             input_snapshot_identity_hash=evidence.input_snapshot_identity_hash,
             input_snapshot_payload=snapshot_payload,
@@ -326,6 +390,37 @@ class ResearchValidationEvidenceSnapshot:
             research_policy_created_at=evidence.research_policy_created_at,
             imported_at=imported_at,
         )
+
+
+def evidence_snapshot_identity_payload(
+    *,
+    source_contract_version: str,
+    assessment_id: str,
+    evaluation_run_id: str,
+    report_id: str,
+    research_policy_version: str,
+    research_policy_content_hash: str,
+    status: ResearchValidationStatus,
+    cohort_identity_hash: str,
+    metric_payload_hash: str,
+    condition_results_payload: object,
+    input_snapshot_version: str,
+    input_snapshot_identity_hash: str,
+) -> dict[str, object]:
+    return {
+        "source_contract_version": source_contract_version,
+        "assessment_id": assessment_id,
+        "evaluation_run_id": evaluation_run_id,
+        "report_id": report_id,
+        "research_policy_version": research_policy_version,
+        "research_policy_content_hash": research_policy_content_hash,
+        "status": status.value,
+        "cohort_identity_hash": cohort_identity_hash,
+        "metric_payload_hash": metric_payload_hash,
+        "condition_results_hash": digest(condition_results_payload),
+        "input_snapshot_version": input_snapshot_version,
+        "input_snapshot_identity_hash": input_snapshot_identity_hash,
+    }
 
 
 @dataclass(frozen=True, slots=True)
@@ -443,6 +538,23 @@ class StrategyAdoptionDecision:
             _require_text(self.approval_decision_id, "approval_decision_id")
         elif self.approval_decision_id is not None:
             raise ValueError("approval decision cannot reference another approval")
+
+    @property
+    def authority_payload(self) -> dict[str, object]:
+        return {
+            "decision_type": self.decision_type.value,
+            "evidence_snapshot_id": self.evidence_snapshot_id,
+            "adoption_policy_version": self.adoption_policy_version,
+            "adoption_policy_content_hash": self.adoption_policy_content_hash,
+            "strategy_id": self.strategy_id,
+            "strategy_version": self.strategy_version,
+            "strategy_config_identity": self.strategy_config_identity,
+            "approved_signal_specification": self.approved_signal_specification.payload,
+            "adoption_mode": self.adoption_mode.value,
+            "effective_from": self.effective_from.isoformat(),
+            "expires_at": self.expires_at.isoformat(),
+            "approval_decision_id": self.approval_decision_id,
+        }
 
 
 @dataclass(frozen=True, slots=True)

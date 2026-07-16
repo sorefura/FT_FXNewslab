@@ -1,5 +1,18 @@
 # Design Index
 
+## ExecPlan 0006 production Strategy and Paper operations
+
+- `exec-plans/0006-production-strategy-and-paper-trading-operations.md`
+  - Living plan for the initial production Strategy, separate Paper authority,
+    deterministic fill/ledger evidence, recovery, recurring operation, and burn-in.
+- `adr/0008-paper-execution-is-a-separate-authority-from-live-execution.md`
+  - Paper order/fill evidence is operational simulation and never grants real Broker
+    authority.
+
+ExecPlan 0006 is currently at the planning/architecture milestone. Its target modules
+are not yet implemented. ExecPlan 0007 is reserved for Controlled Live execution
+rollout.
+
 ## ExecPlan 0005 adoption boundary
 
 - `exec-plans/0005-validated-signal-live-adoption.md`
@@ -12,7 +25,7 @@
 ## Foundation
 
 - `PROGRAM.md`
-  - ExecPlan 0001〜0005のProgram roadmapと責務連鎖。
+  - ExecPlan 0001〜0007のProgram roadmapと責務連鎖。
 
 - `00_VISION.md`
   - なぜResearchとSwap Botを刷新するか。
@@ -54,6 +67,7 @@
 - `adr/0005-shared-sqlite-signal-store.md`
 - `adr/0006-gmo-fx-is-primary-forward-market-source.md`
 - `adr/0007-validated-research-evidence-requires-explicit-live-adoption.md`
+- `adr/0008-paper-execution-is-a-separate-authority-from-live-execution.md`
 
 ## Reading route by task
 
@@ -87,3 +101,7 @@
 - `docs/exec-plans/0003-forward-signal-evaluation.md`: Signal単位のforward observation計画。
 - `docs/exec-plans/0004-signal-validation-framework.md`: strict cohort評価とResearch
   validation計画。
+- `docs/exec-plans/0005-validated-signal-live-adoption.md`: exact Research evidence、
+  explicit Strategy adoption、authorization lineage、shadow proof。
+- `docs/exec-plans/0006-production-strategy-and-paper-trading-operations.md`:
+  production StrategyとPaper operationsのplanning/architecture milestone。実装は未着手。

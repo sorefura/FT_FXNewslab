@@ -1,5 +1,43 @@
 # Data and Versioning
 
+## Paper evidence target
+
+ExecPlan 0006 plans additive Paper persistence beginning with Live migration `0003`;
+the current numbered migrations end at `0002`. The following records are target
+contracts and are not implemented at the planning milestone:
+
+```text
+paper_cycle / paper_cycle_attempt
+paper_order / paper_order_event
+paper_fill
+paper_position_event or paper_position_snapshot
+paper_ledger_entry / paper_account_snapshot
+paper_swap_evidence / paper_swap_accrual
+paper_reconciliation_result
+paper_burn_in_report
+```
+
+These records are append-oriented. Semantic IDs commit to canonical content and
+version dimensions; audit attempt/time remains separate. Built-in `hash()` is not a
+persistent identity. Current projections must be rebuildable from exact ordered
+events and checked by reconciliation.
+
+Paper fill identity includes exact approved intent, Pair, side, Decimal quantity,
+market quote identity and provider/receipt/evaluation timestamps, fill model, spread,
+slippage, liquidity/partial-fill versions, and an explicit seed if randomness exists.
+Only market observations locally available at or after intent creation may be used.
+Research Forward Result is never Paper fill evidence.
+
+Paper swap evidence adds unit basis, settlement currency, source/source version,
+effective period, capture time, applicable rollover date, and content identity to the
+existing availability semantics. Accrual references exact position/evidence and an
+accrual formula version. Missing/stale swap is a diagnostic, not numeric zero.
+
+Paper account and PnL use `Decimal` for money, quantity, price, margin, and cash flow.
+Cash, realized/unrealized PnL, accrued swap, equity, used/available margin, gross
+exposure, open positions, and open orders carry exact input lineage and formula
+versions.
+
 ## Live adoption records
 
 The Live database adds numbered migrations and append-only tables for:

@@ -1,5 +1,31 @@
 # Repository Structure
 
+## ExecPlan 0006 target modules
+
+Current `swap_bot` is a flat package with adoption, boundary, and shadow modules. The
+following is a target responsibility map, not an implemented directory claim:
+
+```text
+swap_bot/
+  strategy/       NewsFilteredCarryStrategy and immutable config
+  signals/        operational Signal source/checkpoint adapter
+  swap/           versioned operational Swap evidence/adapters
+  paper/
+    domain/       order lifecycle, fill, ledger, account, PnL, reconciliation
+    application/  one-shot cycle, recovery, burn-in
+    infrastructure/ SQLite store and public market/swap adapters
+  operations/     scheduler, overlap lock, health and observability
+  live/           existing adoption/Portfolio/Risk/Execution boundaries
+```
+
+The actual migration remains incremental; files are moved only when the boundary is
+implemented. Paper infrastructure may depend on Live-owned approved-intent contracts
+but cannot import or construct the real Broker Private transport. It cannot import
+`fx_research`; public Paper market data is exposed through a Live-owned Port.
+
+The current numbered Live migrations are `0001` and `0002`. Paper persistence begins
+additively at `0003` and leaves the inline historical base schema unchanged.
+
 ## Current adoption modules
 
 ExecPlan 0005 keeps Research-specific validation types out of `fx_core`. The Live

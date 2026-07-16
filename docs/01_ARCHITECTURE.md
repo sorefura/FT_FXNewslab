@@ -1,5 +1,36 @@
 # Architecture
 
+## Production and Paper operations target
+
+The following is the ExecPlan 0006 target and is not implemented at the current
+planning milestone:
+
+```text
+Operational Signal Source
+    -> Live Adoption Gate
+    -> AuthorizedSignal
+    -> NewsFilteredCarryStrategy
+    -> TradeCandidate
+    -> Portfolio
+    -> Risk
+    -> ApprovedExecutionIntent
+    -> SHADOW_NOT_SUBMITTED or PaperExecutionGateway
+    -> Paper Order/Fill/Position/Account/PnL/Swap evidence
+```
+
+`SHADOW_NOT_SUBMITTED`, `PAPER`, and `LIVE` are explicit, separate execution
+authorities. ExecPlan 0006 can compose only the first two. The Paper adapter may share
+approved-intent vocabulary, but it may not import, construct, or call the real Broker
+Private transport. `LIVE` requires the separate ExecPlan 0007 authority.
+
+Paper market data is Live-owned public observation evidence. It separates provider
+timestamp, local receipt/availability, and evaluation time and must be available
+after the approved intent. Research `ForwardResult` is forbidden as fill input.
+
+Current implementation remains the ExecPlan 0005 authorized shadow path: it reaches
+an approved intent and records `NOT_SUBMITTED`. There is no production Strategy,
+Paper Gateway, Paper ledger, or operational daemon yet.
+
 ## Research-to-Live adoption boundary
 
 Research and Live remain sibling applications. The only adoption flow is:

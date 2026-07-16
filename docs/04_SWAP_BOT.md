@@ -1,5 +1,74 @@
 # Swap Bot
 
+## Current operational gap
+
+The current implementation has an authorization-aware Strategy Protocol, immutable
+Candidate/Portfolio/Risk/approved-intent contracts, swap availability semantics, and
+an authorized shadow cycle that records `NOT_SUBMITTED`. It has no production
+Strategy, production pair/settings registry, ordinary Strategy exit, Paper Gateway,
+fill engine, account/PnL ledger, scheduler, or daemon.
+
+`TradeCandidate` is entry-only. `ApprovedLiquidationIntent` is created only for the
+Risk margin kill switch and is not a normal Strategy close path. `AccountSnapshot`
+contains only margin ratio, while `SwapQuote` does not yet carry the unit/settlement/
+rollover/version identity needed for cash accrual. Test fixture values are not
+production defaults.
+
+## ExecPlan 0006 target: NewsFilteredCarryStrategy
+
+The initial production Strategy consumes exact `AuthorizedSignal` envelopes and
+versioned swap evidence. Its immutable config fixes Strategy/config identity,
+eligible Pairs, Pair transformation version, positive/negative thresholds, neutral
+band, and Signal/swap freshness. Initial Pair scope is exactly `USD_JPY` and
+`MXN_JPY`.
+
+Signal remains currency-first. The operational Pair Signal must be generated and
+persisted using `fx_core.CurrencyPairSignalTransformer`:
+
+```text
+PairScore(base/quote) = CurrencyScore(base) - CurrencyScore(quote)
+```
+
+The Strategy does not reimplement this formula or substitute zero for a missing
+currency. A score strictly above the positive threshold is BUY-eligible; a score
+strictly below the negative threshold is SELL-eligible; equality and the neutral band
+produce no entry. BUY additionally requires strictly positive fresh long received
+swap, while SELL requires strictly positive fresh short received swap. Missing,
+unknown, unavailable, stale, malformed, zero, or negative swap produces a structured
+skip.
+
+The current Candidate score type is a `Probability`, while Pair direction is a
+`PairScore` in `[-2, 2]`. ExecPlan 0006 must resolve that evidence contract explicitly
+and version it before implementation; it may not silently clamp or normalize Pair
+direction.
+
+The current Protocol returns one Candidate or `None`. The production contract
+evaluates one configured Pair at a time in deterministic Pair order and returns a
+typed Candidate-or-structured-skip result, so `None` does not hide operational causes
+and a second eligible Pair is not silently discarded.
+
+Strategy entry and ordinary exit remain separate typed paths. A dedicated
+reduce-only close Candidate/intent supports full or partial close with structured
+exit reason. Risk emergency liquidation remains a different authority. No action
+string is added to `TradeCandidate`.
+
+## ExecPlan 0006 target: Paper authority
+
+```text
+SHADOW_NOT_SUBMITTED != PAPER_EXECUTED != LIVE_EXECUTED
+```
+
+The operational mode is an explicit enum, never one dry-run boolean. Paper accepts
+only approved entry/close/liquidation intents, uses deterministic versioned market and
+swap evidence, and appends fictional order/fill/position/account/PnL records. It
+cannot import or construct the real Broker Private transport. `LIVE` is rejected
+until ExecPlan 0007.
+
+Order lifecycle includes accepted, rejected, open, partially filled, filled,
+cancelled, and expired states. Restart/retry must reconcile append-only state without
+duplicating an order, fill, ledger entry, or swap accrual. Paper burn-in is evidence,
+not Live authority.
+
 ## Validated Signal adoption
 
 Before Strategy, `LiveAdoptionGate` compares a Signal with one Live-owned approval.

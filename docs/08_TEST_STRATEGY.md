@@ -1,5 +1,40 @@
 # Test Strategy
 
+## Production Strategy and Paper target tests
+
+ExecPlan 0006 implementation tests will state the following guarantees:
+
+- exact Authorized Signals and immutable Strategy config produce deterministic
+  Candidates or structured skips;
+- deterministic per-Pair evaluation does not silently lose a second eligible Pair;
+- `USD_JPY`/`MXN_JPY` is the exact configured Pair set and expansion changes config
+  identity;
+- Pair direction uses the shared stored `currency-pair-v1` contract, not a duplicated
+  subtraction or an implicit zero for missing currency evidence;
+- threshold equality is neutral, and BUY/SELL requires matching strictly positive
+  fresh received swap;
+- stale, missing, malformed, zero, negative, wrong-Pair, or unavailable swap cannot
+  produce an entry Candidate;
+- Strategy cannot decide quantity or import AI, Research evaluation, Execution, or
+  Broker modules;
+- ordinary reduce-only close, partial close, and Risk emergency liquidation preserve
+  distinct typed lineage;
+- `SHADOW_NOT_SUBMITTED`, `PAPER`, and `LIVE` are distinct, and 0006 rejects `LIVE`
+  before a cycle starts;
+- only approved intents can create Paper orders;
+- deterministic fill replay uses exact post-intent available market evidence and
+  never Research Forward Results or future observations;
+- legal order lifecycle, Decimal ledger balance, PnL, swap accrual, and reconciliation
+  are preserved by append-only persistence;
+- crash injection at every intent/order/fill/ledger/cycle boundary converges without
+  duplicate semantic records;
+- a Paper composition-root tripwire observes zero real Broker transport construction
+  and submit calls; and
+- burn-in reporting cannot create Live authority or alter two-step arming.
+
+Paper results are asserted from observable events/ledger/probes. They are not proven
+by hardcoded `paper_executed` or Broker-call summary fields.
+
 ## Strategy adoption tests
 
 ExecPlan 0005 tests state What each authority boundary guarantees:

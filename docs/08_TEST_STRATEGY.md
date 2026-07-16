@@ -67,26 +67,82 @@ by hardcoded `paper_executed` or Broker-call summary fields.
   worker metadata.
 - Tests never depend on database natural order or an implicit latest-row selection.
 
-### Fill selection target tests
+### Fill cardinality and partial-fill target tests
 
+- One approved intent resolves exactly one `FillEvaluationPlan`, while one Plan may
+  own ordered contiguous Steps.
+- Original quantity 1000 and a Step 0 Fill of 400 produces `PARTIALLY_FILLED` with
+  remaining quantity 600.
+- Step 1 records `remaining_quantity_before == 600`, may select a different quote,
+  and a Fill of 600 produces final `FILLED` with total Fill exactly 1000.
+- The two Steps have ordinals exactly `0, 1`; a positive partial Fill is the only
+  fill result that can permit the next Step.
+- A resolved Step has exactly one terminal variant, while `PARTIALLY_FILLED` remains
+  nonterminal for the order.
+
+### Fill idempotency target tests
+
+- Retry after Step 0 Fill does not duplicate that Fill.
+- Restart after partial fill resumes/reuses Step 1 rather than recreating Step 0 or
+  inventing another ordinal.
+- `(plan_id, step_ordinal)` is unique; one Step cannot persist two market selections
+  or two cross-variant terminal resolutions.
+- One selection cannot persist two Paper Fills.
+- Retry cannot move Step due/window or expiry boundaries or change plan/Step seed,
+  quantity, or policy/model versions.
+- A conflicting second plan, Step, terminal resolution, selection, or Fill fails
+  closed without partial rows.
+
+### PENDING and terminal no-market target tests
+
+- No quote before due appends immutable
+  `PENDING_NO_ELIGIBLE_MARKET` attempt evidence.
+- PENDING is not a terminal Step resolution and does not consume its terminal claim.
+- After one or more PENDING attempts, a quote received before due can resolve the same
+  Step with a market selection.
+- Multiple PENDING attempts do not change Step identity and none is updated into a
+  selection or no-market row.
+- At/after due with no eligible pre-due receipt, the Step appends the versioned
+  terminal `REJECTED_NO_MARKET_EVIDENCE` or exact policy-defined no-market outcome.
+- Once terminal no-market evidence exists, no later or late-processed quote can turn
+  that Step into a selection or Fill.
+
+### Fill quantity target tests
+
+- Fill quantity cannot exceed `remaining_quantity_before` and zero quantity creates
+  no Paper Fill.
+- Sum of ordered Fill quantities never exceeds original approved quantity.
+- Remaining quantity is exactly reproducible from original quantity and persisted
+  ordered Fills, with Decimal exactness.
+- Mutable external current quantity cannot reinterpret a historical Step or Fill.
+
+### Fill terminal-state target tests
+
+- `FILLED`, `CANCELLED`, `EXPIRED`, and `REJECTED` prohibit creation of another Step.
+- Only `PARTIALLY_FILLED`, positive remaining quantity, and explicit policy
+  permission can lead to the next contiguous Step.
+- Maximum-Step and Plan-expiry boundaries lead to versioned terminal evidence and do
+  not create another Step.
+- Cancellation/expiry racing an unresolved Step follows the frozen precedence-policy
+  version and appends evidence without UPDATE-based transition.
+
+### Per-Step market selection target tests
+
+- Each Step may select distinct market evidence inside its own frozen window.
 - Multiple valid quotes select by `received_at ASC`, provider timestamp ASC, then
-  market-observation ID ASC.
+  market-observation ID ASC for that Step.
 - Identical receipt/provider timestamps use market-observation ID as the deterministic
   tie-breaker.
-- A quote received before intent creation is rejected.
-- A quote received after the frozen `fill_due_at` is rejected.
+- Retry never reselects an already resolved Step, and a newer quote cannot replace
+  that Step's persisted selection.
+- A later Step can select a new quote only when it satisfies that Step's window and
+  has not already been selected by an earlier Step.
+- A quote before intent/window start or after Step due is rejected.
 - A future provider timestamp, malformed observation, wrong Pair, or observation not
   locally available by evaluation is rejected.
 - A Research `ForwardResult` cannot satisfy the Paper fill input contract.
-- Market selection is persisted before fill evidence and reused after restart.
-- A newer quote appearing after selection does not replace the selected evidence.
-- No eligible quote remains `PENDING` before due and produces the versioned terminal
-  `REJECTED_NO_MARKET_EVIDENCE` outcome at/after due.
-- Once terminal no-market evidence exists, retry cannot turn it into a fill; a late-
-  retrieved quote is usable only if persisted local receipt proves availability by
-  due and no earlier selection/terminal record exists.
-- Retry does not move `fill_due_at`, change a seed, or change any fill/selection/
-  spread/slippage/liquidity/partial-fill policy version.
+- Market selection is persisted before its zero-or-one Paper Fill and reused after
+  restart.
 
 ## Strategy adoption tests
 

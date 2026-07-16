@@ -9,7 +9,9 @@ contracts and are not implemented at the planning milestone:
 ```text
 paper_cycle_slot / paper_cycle_input_snapshot / paper_cycle_attempt
 paper_order / paper_order_event
-paper_fill_evaluation_plan / paper_market_observation_selection
+paper_fill_evaluation_plan / paper_fill_evaluation_step
+paper_fill_evaluation_attempt / paper_market_observation_selection
+paper_step_terminal_outcome
 paper_fill
 paper_position_event or paper_position_snapshot
 paper_ledger_entry / paper_account_snapshot
@@ -40,36 +42,71 @@ with worker/process, resumed stage, outcome/failure, and audit timestamps; none 
 those fields changes the slot or input identity.
 
 Creating a Paper order first-writes exactly one `paper_fill_evaluation_plan` for its
-approved intent. The plan fixes fill/model policy, market-selection policy,
-spread/slippage/liquidity/partial-fill versions, due boundary or full boundary
-schedule, and seed. Its audit `created_at` is preserved but does not make a retry a
-new semantic plan. A unique approved-intent reference prevents a changed due time,
-seed, or version set from being inserted on retry.
+approved intent. A unique approved-intent reference freezes original Decimal
+quantity, Pair/side, fill and Step-schedule policies, market-selection policy,
+spread/slippage/liquidity/partial-fill/cancellation/expiry versions, initial and
+terminal boundaries, maximum Step count, and seed root. Audit `created_at` is
+preserved but excluded from semantic identity. Retry cannot insert a conflicting
+second plan.
 
-Before calculation, one immutable `paper_market_observation_selection` is written for
-the plan. Eligibility requires the exact Pair, valid UTC timestamps, local
-`intent.created_at <= received_at <= fill_due_at`, availability by evaluation, and
-the configured freshness contract. Provider timestamp cannot be after local receipt
-or the boundary. Research `ForwardResult` is a different evidence type and cannot be
-referenced. Selection is exactly:
+One plan owns one or more ordered `paper_fill_evaluation_step` rows. The future schema
+must enforce uniqueness of `(fill_evaluation_plan_id, step_ordinal)`. Each Step stores
+its contiguous ordinal, frozen market-window start/due boundary,
+`remaining_quantity_before`, exact Step selection/fill versions, derived seed, and
+first-write `created_at`. Step identity excludes audit time. Step 0 is initial; Step
+N can exist only after Step N-1 produced a positive partial Fill, left a positive
+remainder, and policy permits continuation. No ordinal skip or duplicate is allowed.
+
+`paper_fill_evaluation_attempt` is repeatable append-only audit. A pre-due evaluation
+with no eligible evidence writes `PENDING_NO_ELIGIBLE_MARKET`, eligible count,
+diagnostic, worker identity, and evaluation/audit times. It neither claims nor updates
+terminal Step state. Multiple PENDING attempts may exist for one Step, and a later
+pre-due attempt may resolve that same Step from eligible evidence.
+
+A Step has zero terminal resolutions while unresolved and exactly one after
+resolution. The terminal variant is selected market, no-market, cancelled, or
+expired. The physical schema may finalize table names in Milestone 3, but it must
+provide one cross-variant unique resolution claim for `fill_evaluation_step_id`;
+separate per-table unique constraints cannot permit both a selection and another
+terminal outcome. Conflicting second-write fails without partial rows.
+
+`paper_market_observation_selection` is at most one per Step and is written before
+its Fill. Eligibility requires exact Pair, valid UTC timestamps, receipt inside the
+frozen Step window and no later than `evaluation_due_at`, local availability by
+evaluation, configured freshness, and no provider timestamp after local receipt or
+the boundary. An observation selected by an earlier Step cannot be selected again.
+Research `ForwardResult` is a different evidence type and cannot be referenced.
+Selection is exactly:
 
 ```sql
 ORDER BY received_at ASC, provider_timestamp ASC, market_observation_id ASC
 LIMIT 1
 ```
 
-The row stores either that exact observation or the versioned no-market decision.
-`fill-no-market-v1` is `PENDING` before due and terminal
-`REJECTED_NO_MARKET_EVIDENCE` at/after due. Once either evidence is first-written, a
-newer or backfilled observation cannot replace it. A late-retrieved observation is
-eligible only before the first terminal write and only when its persisted local
-`received_at` proves it was available by the frozen due boundary.
+Retry reuses the persisted selection for that Step. A newer observation may be used
+only by a later Step when it satisfies that Step's frozen window; it cannot replace
+an earlier selection.
 
-Paper fill identity includes exact approved intent, Pair, side, Decimal quantity,
-fill plan and selected market-observation identity/timestamps, fill model, spread,
-slippage, liquidity/partial-fill versions, and an explicit seed if randomness exists.
-Outputs append after the frozen cycle input and never rewrite or become that slot's
-input. Research Forward Result is never Paper fill evidence.
+`paper_step_terminal_outcome` stores versioned no-market/cancelled/expired evidence.
+Under `fill-no-market-v1`, `evaluated_at < evaluation_due_at` can create only a PENDING
+attempt. At/after due, absence of an observation locally received within the Step
+window creates terminal `REJECTED_NO_MARKET_EVIDENCE` or the exact policy-defined
+terminal code. A late-processed observation may be selected only before terminal
+first-write and only when its persisted receipt proves pre-due availability. No
+PENDING attempt is updated into terminal evidence, and no terminal no-market outcome
+can later become a selection.
+
+One `paper_market_observation_selection` creates at most one `paper_fill`. Fill
+identity includes exact intent/plan/Step/selection, Decimal quantity and price,
+spread/slippage evidence, fill/model versions, and explicit Step seed. Quantity must
+satisfy `0 < fill_quantity <= remaining_quantity_before`; zero creates no Fill and
+the sum of ordered Fills cannot exceed plan original quantity. Remaining quantity is
+reconstructed exactly from original quantity minus persisted ordered Fills, never
+from external mutable state. A positive remainder after Fill permits only the next
+contiguous Step under policy. Terminal order state prevents any new Step.
+
+Fill outputs append after the frozen cycle input and never rewrite or become that
+slot's input. Research Forward Result is never Paper fill evidence.
 
 Paper cycle/order/fill lineage persists execution authority independently from
 Adoption authorization. `SHADOW_NOT_SUBMITTED` and `PAPER` both use existing

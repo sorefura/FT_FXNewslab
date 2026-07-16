@@ -43,21 +43,34 @@ CycleSlot(schedule/as-of/authority/Strategy/cycle-policy)
     -> one or more append-only CycleAttempts
     -> approved intent
     -> immutable FillEvaluationPlan
-    -> immutable MarketObservationSelection or terminal no-market evidence
-    -> deterministic Paper fill/ledger outputs
+    -> one or more ordered FillEvaluationSteps
+        -> zero or more append-only PENDING attempts
+        -> one terminal StepResolution
+            -> MarketObservationSelection -> zero or one PaperFill
+            -> NoMarket / Cancelled / Expired outcome
+    -> deterministic Paper ledger outputs
 ```
 
 Variable input IDs do not create a new cycle identity. The first claim atomically
 freezes Signal/authorization/swap/market/Position/Account/checkpoint and selection/
 freshness-policy lineage. Retry reads that snapshot; late or backfilled data applies
-only to a later slot. Paper order creation likewise freezes fill due time, policy
-versions, and seed. Market evidence is selected once by received time, provider time,
-then observation ID, and reused after restart.
+only to a later slot. Paper order creation likewise freezes one plan's original
+quantity, Step schedule/terminal boundary, policy versions, and seed root. Each Step
+freezes its own window/due boundary, remaining-before quantity, versions, and seed.
+Its market evidence is selected once by received time, provider time, then observation
+ID, and reused after restart.
+
+PENDING is an append-only evaluation attempt, not Step resolution. The same Step may
+accumulate PENDING attempts and later select a pre-due quote without rewriting them.
+A positive partial fill may create only the next contiguous Step with remaining
+quantity derived from persisted ordered Fills. Step terminal resolution and order
+terminal state are separate: `PARTIALLY_FILLED` may continue, while `FILLED`,
+`CANCELLED`, `EXPIRED`, and `REJECTED` cannot create another Step.
 
 Paper market data is Live-owned public observation evidence. It separates provider
 timestamp, local receipt/availability, and evaluation time and must be available
-after the approved intent and by the frozen due boundary. Research `ForwardResult` is
-forbidden as fill input.
+after the approved intent and inside the active Step's frozen market window/due
+boundary. Research `ForwardResult` is forbidden as fill input.
 
 Current implementation remains the ExecPlan 0005 authorized shadow path: it reaches
 an approved intent and records `NOT_SUBMITTED`. There is no production Strategy,

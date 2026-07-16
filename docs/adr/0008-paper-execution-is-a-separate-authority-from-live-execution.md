@@ -33,6 +33,12 @@ cycle identity allow a restarted schedule slot to become a second logical cycle.
 Likewise, recomputing a due boundary, seed, or quote selection can change Paper
 history even if each individual calculation is deterministic.
 
+One selection for an entire intent also cannot represent partial fill continuation:
+the remaining quantity must be evaluated later against a distinct Step and market
+window. Treating a pre-due PENDING check as immutable terminal no-market evidence
+would create the opposite problem by preventing that same Step from resolving when a
+quote arrives before its due boundary.
+
 ## Decision
 
 Live operations have three explicit modes:
@@ -87,19 +93,40 @@ Retry reads the stored snapshot and appends a separate `CycleAttempt`; it never
 reselects late, backfilled, or corrected inputs. A conflicting second snapshot fails
 closed.
 
-One approved intent first-writes one immutable `FillEvaluationPlan`, fixing its due
-boundary, fill/selection/spread/slippage/liquidity/partial-fill versions, and seed.
-Before fill calculation, one immutable `MarketObservationSelection` is stored. It may
-select only the exact Pair with local
-`intent.created_at <= received_at <= fill_due_at`, local availability by evaluation,
-valid timestamps, and configured freshness. Eligible observations are ordered by
-`received_at`, provider timestamp, then observation ID, all ascending. Research
-Forward Results and future observations are forbidden.
+One approved intent first-writes exactly one immutable `FillEvaluationPlan`, fixing
+original Decimal quantity, Pair/side, step-schedule and terminal boundaries, all
+fill/selection/spread/slippage/liquidity/partial-fill/cancellation/expiry versions,
+and seed root. The plan owns ordered `FillEvaluationStep` records with contiguous
+ordinals. Each Step freezes its market window/due boundary, remaining quantity before
+evaluation, relevant versions, and derived seed.
 
-Under `fill-no-market-v1`, absence of eligible evidence is `PENDING` before the due
-boundary and terminal `REJECTED_NO_MARKET_EVIDENCE` at or after it. Retry reuses the
-stored selection or terminal outcome, and cannot move the boundary, choose a new
-seed, or fill from a newer quote.
+A Step may append zero or more `FillEvaluationAttempt` audit records. A pre-due
+`PENDING_NO_ELIGIBLE_MARKET` attempt is not terminal and is never updated; the same
+Step may later resolve when eligible evidence arrives. A Step is eventually claimed
+by exactly one cross-variant terminal resolution: `MarketObservationSelection`,
+`NoMarketOutcome`, `CancelledOutcome`, or `ExpiredOutcome`. Once claimed, its
+resolution cannot be replaced.
+
+Each Step's market selection is stored before fill calculation. It may select only
+the exact Pair inside the frozen Step window, with local receipt no later than the
+Step due boundary, local availability by evaluation, valid timestamps, and configured
+freshness. Eligible observations are ordered by `received_at`, provider timestamp,
+then observation ID, all ascending. Research Forward Results and future observations
+are forbidden. Retry reuses that Step's selection; a later Step may select new
+evidence inside its own frozen window.
+
+One selection creates zero or one immutable `PaperFill`. A positive Fill cannot
+exceed `remaining_quantity_before`. Remaining quantity is reconstructed from original
+quantity and ordered persisted Fills. Only a positive partial fill with a positive
+remainder may create the next contiguous Step; total fills cannot exceed the approved
+quantity.
+
+Under `fill-no-market-v1`, no eligible evidence before due creates only append-only
+PENDING attempts. At/after due, absence of evidence locally received within the Step
+window first-writes terminal `NoMarketOutcome`. Evidence discovered after that
+terminal write cannot revise the Step, even if its receipt timestamp predates due.
+Order terminal state and Step terminal resolution are distinct: `PARTIALLY_FILLED`
+may continue, while `FILLED`, `CANCELLED`, `EXPIRED`, and `REJECTED` forbid new Steps.
 
 Swap accrual references exact versioned evidence including Pair, long/short values,
 unit basis, settlement currency, effective/rollover period, source identity, captured
@@ -123,6 +150,10 @@ does not rewrite historical records.
   a later input belongs to a later slot.
 - Deterministic fill replay also requires deterministic, frozen evidence selection;
   a deterministic formula over newly selected evidence is not historical identity.
+- Partial-fill replay requires ordered Step and Fill lineage; an intent-level single
+  selection cannot describe later evaluation of its remainder.
+- PENDING remains append-only operational audit without falsely consuming terminal
+  resolution authority for its Step.
 - Fill quality and PnL remain attributable to exact model/evidence versions rather
   than being mistaken for Broker truth.
 - A future Live rollout must create its own operator authority, limits, kill switch,

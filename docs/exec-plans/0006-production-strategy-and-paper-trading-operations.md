@@ -333,9 +333,10 @@ All application time comes from an injected Clock. Market evidence separates:
 - fill evaluation time.
 
 A Paper fill may use only a market observation whose local `received_at` is at or
-after `ApprovedExecutionIntent.created_at`, no later than its frozen `fill_due_at`,
-and locally available when evaluated. It must also satisfy the configured freshness
-rule. Research `ForwardResult`, future candle, or later-revised evidence is forbidden.
+after `ApprovedExecutionIntent.created_at`, inside its Step's frozen market window,
+no later than that Step's `evaluation_due_at`, and locally available when evaluated.
+It must also satisfy the configured freshness rule. Research `ForwardResult`, future
+candle, or later-revised evidence is forbidden.
 
 ### Paper execution and fill evidence
 
@@ -371,50 +372,157 @@ Append-oriented records include:
 Semantic identity is separated from audit time. Canonical SHA-256 content identity is
 used; Python's process-dependent built-in `hash()` is forbidden.
 
-Creating a Paper order first-writes one immutable `FillEvaluationPlan` for its exact
-approved intent. The plan freezes intent ID, fill-policy/model version, market
-selection policy version, spread/slippage/liquidity/partial-fill versions,
-`fill_due_at` or the full versioned evaluation-boundary schedule, an explicit seed if
-randomness exists, and first-write `created_at`. One intent has one plan. Retry does
-not move a due time, choose a new seed, or replace a policy version.
+Creating a Paper order first-writes exactly one immutable `FillEvaluationPlan` for
+its approved intent. The cardinality is:
 
-Market selection is itself frozen before fill calculation as one immutable
-`MarketObservationSelection`. Eligible evidence must:
+```text
+Approved Intent
+    -> exactly one FillEvaluationPlan
+        -> one or more ordered FillEvaluationSteps
+            -> zero or more append-only FillEvaluationAttempts
+            -> one terminal StepResolution when the Step resolves
+                |-- MarketObservationSelection -> zero or one PaperFill
+                |-- NoMarketOutcome
+                |-- CancelledOutcome
+                `-- ExpiredOutcome
+```
+
+An unresolved Step temporarily has no terminal resolution. Once resolved, it has
+exactly one and cannot change variant or content. Persistence must use one cross-
+variant terminal claim for the Step; independent uniqueness inside each outcome table
+is insufficient.
+
+#### Fill Evaluation Plan
+
+`FillEvaluationPlan` retains at least plan ID, approved-intent ID, original Decimal
+quantity, Pair, side, fill-policy/model version, step-schedule policy version,
+market-selection policy version, spread/slippage/liquidity/partial-fill versions,
+cancellation/expiry policy version, initial evaluation boundary, maximum step count
+or terminal boundary, explicit seed root when randomness exists, and first-write
+`created_at`. Plan semantic identity excludes `created_at`.
+
+Retry cannot change original quantity, any policy/model version, initial boundary,
+step schedule, maximum step count, expiry boundary, or seed root. One approved intent
+cannot acquire a second plan with different content.
+
+#### Ordered Fill Evaluation Steps
+
+One plan owns contiguous Steps with ordinals `0, 1, ...`. Each immutable
+`FillEvaluationStep` retains at least Step ID, plan ID, ordinal,
+`evaluation_window_start_at`, `evaluation_due_at`, `remaining_quantity_before`,
+Step selection-policy version, Step fill-model version, derived or explicit Step
+seed, and first-write `created_at`. The semantic identity includes plan ID, ordinal,
+window/boundary, remaining quantity, relevant versions, and seed; it excludes
+`created_at`.
+
+Step 0 is the initial evaluation. A later Step may be created only after the directly
+preceding Step selected market evidence, produced a positive partial fill, left a
+positive remainder, and the versioned partial-fill/schedule policy permits another
+Step. Ordinals cannot be skipped, duplicated, or created speculatively. Its
+`remaining_quantity_before` must exactly equal original quantity minus the ordered
+persisted fills of earlier Steps. It is never derived from a mutable external current-
+quantity field.
+
+Each Step has a versioned, non-overlapping market-selection window. Step 0 starts no
+earlier than intent creation; a later Step's lower bound is derived from the frozen
+step-schedule policy and the preceding resolved Step. An observation already selected
+by an earlier Step cannot be selected again. A terminal order (`FILLED`, `CANCELLED`,
+`EXPIRED`, or `REJECTED`) cannot acquire another Step. `PARTIALLY_FILLED` is not an
+order-terminal state; a resolved Step is terminal for that Step.
+
+#### Append-only evaluation attempts
+
+`PENDING` is not a terminal Step resolution. When no eligible market observation is
+available before a Step's due boundary, the evaluator may append an immutable
+`FillEvaluationAttempt` containing at least attempt ID, Step ID, `evaluated_at`,
+`PENDING_NO_ELIGIBLE_MARKET`, eligible-observation count, structured diagnostic,
+worker/process identity, and audit timestamp.
+
+One Step may have multiple PENDING attempts. They do not change Step identity or
+reserve its terminal resolution. A later pre-due attempt may therefore select an
+eligible quote for the same Step. No PENDING row is updated into a selection or no-
+market result, and no attempt may be appended after terminal resolution.
+
+#### Terminal Step resolution and market selection
+
+Each Step terminally resolves exactly once as `MarketObservationSelection`,
+`NoMarketOutcome`, `CancelledOutcome`, or `ExpiredOutcome`. Cancellation/expiry
+events and an unresolved Step use an explicit versioned precedence policy. Plan/order
+expiry and the Step due boundary remain distinct; retry never recomputes either from
+wall-clock time.
+
+`MarketObservationSelection` retains Step ID, exact market-observation ID, selection-
+policy version, window/boundary and exact eligibility inputs, deterministic selection
+identity, and first-write `selected_at`. It is appended before any `PaperFill`. A
+retry reuses it and never searches again for that Step. A newer observation may be
+eligible for a later Step but cannot replace an earlier Step's selection.
+
+Eligible evidence must:
 
 - have the exact Currency Pair and a well-formed UTC-aware timestamp set;
-- satisfy `intent.created_at <= received_at <= fill_due_at`;
-- have been locally available by evaluation time;
+- satisfy `intent.created_at <= received_at` and the Step's frozen lower-bound/cursor;
+- satisfy `received_at <= step.evaluation_due_at`;
+- have been locally available by the resolution attempt;
 - satisfy the versioned freshness policy and not claim a provider timestamp after
-  local receipt or after the evaluation boundary; and
+  local receipt or after the Step boundary; and
 - be Live-owned public market evidence, never a Research `ForwardResult`.
 
-The complete deterministic selection order is:
+The complete per-Step deterministic selection order remains:
 
 ```sql
 ORDER BY received_at ASC, provider_timestamp ASC, market_observation_id ASC
 LIMIT 1
 ```
 
-There is no implicit current/latest row or database natural order. The selected
-observation ID, eligibility/evaluation boundary, selection-policy version, and
-selection time are persisted before fill calculation and reused after restart. A
-later quote cannot replace that evidence.
+There is no implicit current/latest row or database natural order.
 
-The fill model is immutable, versioned, and deterministic. Its identity includes at
-least fill-model version, intent ID, Pair, side, Decimal quantity, exact market quote
-identity/timestamps, spread model version, slippage model version, liquidity or
-partial-fill model version, and an explicit seed if randomness is introduced. The
-same inputs, versions, and seed produce the same order/fill evidence. There is no
-implicit randomness.
+Under `fill-no-market-v1`, an evaluation with no eligible evidence and
+`evaluated_at < evaluation_due_at` may append only a PENDING attempt. At or after the
+boundary, if no eligible observation was locally received by that boundary, the Step
+first-writes terminal `NoMarketOutcome` with
+`REJECTED_NO_MARKET_EVIDENCE` or the exact versioned terminal code. Evidence processed
+late is usable only before terminal first-write and only when persisted local receipt
+proves it was available inside the frozen Step window. Once terminal no-market
+evidence exists, even such a quote cannot revise the historical Step.
 
-No-market behavior is fixed by `fill-no-market-v1`: before `fill_due_at`, the
-evaluation remains `PENDING`; at or after that boundary, absence of eligible evidence
-first-writes terminal `REJECTED_NO_MARKET_EVIDENCE`. A retry reuses either the frozen
-selection or terminal no-data record and cannot later fill from a newer quote. A
-late-retrieved quote is eligible only when persisted local evidence proves
-`received_at <= fill_due_at` and no selection/no-data record was already frozen;
-`received_at > fill_due_at` is always forbidden. Research outcome data is never
-borrowed and a price is never fabricated.
+#### Paper Fill and remaining quantity
+
+One `MarketObservationSelection` creates at most one immutable `PaperFill`. A Fill
+retains Fill ID, Step ID, selection ID, Decimal quantity/price, exact spread/slippage
+evidence, fill-model version, and first-write `created_at`. The fill model is
+versioned and deterministic; there is no implicit randomness.
+
+Quantity invariants are:
+
+```text
+0 < fill_quantity <= remaining_quantity_before
+remaining_quantity_after = remaining_quantity_before - fill_quantity
+sum(all ordered fills) <= original_quantity
+```
+
+A zero fill creates no `PaperFill`. Overfill and binary float are prohibited. Zero
+remaining quantity appends `FILLED`; positive remaining after a positive fill appends
+`PARTIALLY_FILLED`. Only the latter may lead to the next Step when policy permits.
+If zero fill, maximum Steps, cancellation, or expiry prevents continuation after a
+market-selected Step is already resolved, the versioned policy appends terminal order
+evidence without adding a second Step resolution. Cancellation/expiry resolves a Step
+with `CancelledOutcome`/`ExpiredOutcome` only when that Step is still unresolved.
+Neither case mutates the last Step or Fill.
+
+Future persistence must enforce at least:
+
+```text
+one approved_intent_id                    -> one FillEvaluationPlan
+one (fill_evaluation_plan_id, ordinal)    -> one FillEvaluationStep
+one fill_evaluation_step_id               -> at most one terminal resolution claim
+one fill_evaluation_step_id               -> at most one MarketObservationSelection
+one market_observation_selection_id       -> at most one PaperFill
+```
+
+PENDING attempts are many and independently immutable. Retry/restart reuses plan,
+Step, due/window, seeds, resolution, selection, and Fill already stored. A conflicting
+second write fails closed without partial records, and recovery reconstructs remaining
+quantity and the next permissible ordinal from persisted ordered Steps/Fills.
 
 ### Swap evidence and accrual
 
@@ -460,6 +568,10 @@ Restart and retry must:
 
 - resume or explicitly fail an incomplete cycle;
 - never create a second Paper order for one approved intent;
+- reconstruct remaining quantity and the current Step from persisted ordered Steps
+  and Fills, never from mutable external state;
+- reuse an unresolved Step and any terminal selection/fill already appended rather
+  than duplicate its ordinal or evidence;
 - never duplicate a fill, ledger entry, or swap accrual;
 - reconcile orders, fills, positions, account, and cycle state before new work;
 - preserve the first successful semantic records; and
@@ -488,8 +600,12 @@ cycle. A crashed lock cannot permanently block recovery.
   `RuntimeMode.LIVE` authorization or Live rollout authority.
 - One semantic Cycle Slot has one frozen input snapshot; retry adds attempts and does
   not reselect inputs.
-- One approved intent has one frozen fill plan and one immutable selected-market or
-  terminal no-market decision.
+- One approved intent has one frozen fill plan; its ordered Steps each have append-
+  only attempts and at most one cross-variant terminal resolution.
+- PENDING is attempt evidence, not terminal no-market evidence; only a positive
+  partial fill may authorize creation of the next Step.
+- Remaining quantity is exact Decimal lineage derived from original quantity and
+  ordered immutable Fills; it cannot be overwritten or overfilled.
 - Paper orders, fills, positions, account, PnL, swap, cycle, and reconciliation
   evidence are append-oriented and versioned.
 - Private POST automatic retry remains prohibited and Live two-step arming remains
@@ -512,8 +628,9 @@ Deliverables:
 - Specify explicit `SHADOW_NOT_SUBMITTED`/`PAPER`/`LIVE` authority and the fixed
   mapping to existing Adoption `RuntimeMode` without adding a Paper runtime mode.
 - Specify `CycleSlot`/first-write `CycleInputSnapshot`/`CycleAttempt` separation,
-  exact `FillEvaluationPlan`, deterministic market selection, and versioned terminal
-  no-market behavior.
+  exact `FillEvaluationPlan`/ordered Step cardinality, append-only PENDING attempts,
+  deterministic per-Step market selection, and versioned terminal no-market
+  behavior.
 - Specify Paper order/fill/ledger/swap/time/recovery evidence and the separate entry,
   close, and emergency-liquidation branches.
 - Update architecture, Swap Bot, data/versioning, repository, test strategy, and
@@ -582,13 +699,19 @@ Deliverables:
 - `PaperExecutionGateway` in an isolated Paper infrastructure module.
 - Immutable Paper order lifecycle, deterministic versioned fill model, exact market
   quote evidence, partial-fill/cancel/expiry behavior, and deterministic IDs.
-- One immutable `FillEvaluationPlan` per approved intent, with fixed due boundary,
-  model/policy versions, and seed; retry cannot move or replace them.
-- One immutable `MarketObservationSelection` before fill calculation, using exact
-  post-intent/pre-due eligibility and deterministic `received_at`, provider timestamp,
-  and observation-ID ordering.
-- Versioned `PENDING` then terminal `REJECTED_NO_MARKET_EVIDENCE` behavior that cannot
-  be revised into a later fill by retry.
+- Exactly one immutable `FillEvaluationPlan` per approved intent, with frozen original
+  quantity, Step schedule/terminal boundary, model/policy versions, and seed root.
+- Ordered `FillEvaluationStep` records with contiguous ordinals, immutable due/window,
+  exact remaining-before lineage, and at most one terminal resolution per Step.
+- Append-only `FillEvaluationAttempt` records; `PENDING_NO_ELIGIBLE_MARKET` is audit
+  evidence and never a terminal resolution or mutable status transition.
+- Exactly one cross-variant terminal Step claim for selected market, no-market,
+  cancellation, or expiry; one selection produces at most one Fill.
+- Remaining-quantity lineage from ordered Decimal Fills, no overfill, no duplicate
+  Fill, and next-Step creation only after a permitted positive partial fill.
+- Per-Step immutable `MarketObservationSelection` before fill calculation, using exact
+  window eligibility and deterministic `received_at`, provider timestamp, and
+  observation-ID ordering.
 - Entry, ordinary reduce-only close, partial close, and Risk liquidation handling.
 - Append-only Paper order/fill/position/account/ledger/PnL/swap/reconciliation schema,
   beginning with additive Live migration `0003`.
@@ -603,7 +726,9 @@ Observable behavior: exact intent and evidence replay produces exact Paper recor
 restart cannot duplicate them. Invalid or forged records leave no partial rows. No
 pre-intent, post-due, locally unavailable, future, or Research Forward Result can
 create a fill. Equal-timestamp evidence uses the explicit observation-ID tie-breaker,
-and restart reuses the persisted selection even if a newer quote exists.
+and restart reuses the persisted selection even if a newer quote exists. A 400-unit
+Fill from an original 1000-unit intent resolves Step 0 and permits Step 1 with exactly
+600 remaining; a later 600-unit Fill completes the order without overfill.
 
 Verification:
 
@@ -632,6 +757,11 @@ Deliverables:
   incomplete/failure state; retry adds an attempt but reuses the slot and snapshot.
 - Startup reconciliation and explicit recovery of crashes between intent/order,
   order/fill, fill/ledger, and ledger/cycle completion.
+- Recovery reuses an unresolved Step, permits a pre-due quote after any PENDING
+  attempts, resumes the next contiguous Step after partial fill, and derives remaining
+  quantity from persisted Steps/Fills.
+- Recovery never duplicates a Step ordinal, terminal resolution, selected quote, or
+  Fill and stops creating Steps after terminal order state.
 - Stable idempotency across process restart for orders, fills, ledger, and accrual.
 - `SHADOW_NOT_SUBMITTED` and `PAPER` composition roots; `LIVE` fails configuration.
 - Real Broker tripwire/probe proving zero construction and submit calls.
@@ -642,7 +772,9 @@ crash converges to one logical result with no duplicate order/fill. Stale or
 ambiguous input fails closed. Signals, authorizations, Swap evidence, market evidence,
 Positions, or Account state arriving after first claim cannot change the historical
 snapshot. A conflicting second snapshot is rejected atomically. Real Broker calls
-remain exactly zero by observation, not a hardcoded summary.
+remain exactly zero by observation, not a hardcoded summary. Retrying a PENDING Step,
+a resolved selection, a persisted partial Fill, or the next Step converges to the
+same ordered Fill lineage and exact remaining quantity.
 
 Verification:
 
@@ -738,9 +870,15 @@ ExecPlan 0006 is complete only when all of the following are true:
   Result or future observation.
 - One semantic Cycle Slot has one immutable first-write input snapshot; retry,
   restart, late data, and backfill cannot create a second cycle or alter its meaning.
-- One approved intent has one immutable fill plan and deterministic frozen market
-  selection or terminal no-market decision; due boundary, seed, and first-write audit
-  metadata remain stable across retry.
+- One approved intent has exactly one immutable fill plan and one or more ordered
+  Steps; each resolved Step has exactly one terminal resolution and at most one
+  selection/Fill.
+- PENDING evaluations are immutable attempts, never terminal no-market state; a
+  pre-due quote may resolve that same Step without updating prior attempts.
+- Partial fills carry exact remaining quantity into the next contiguous Step, total
+  Fill never exceeds original quantity, and terminal order state forbids new Steps.
+- Step due/window, seed, policy/model versions, selections, Fills, and first-write
+  audit metadata remain stable across retry.
 - Money/quantity/PnL uses Decimal and explicit formula versions.
 - Restart/retry/reconciliation converges without duplicate order, fill, ledger entry,
   or swap accrual.
@@ -769,6 +907,11 @@ ExecPlan 0006 is complete only when all of the following are true:
   Cycle/Input/Fill identity contract across ExecPlan 0006, ADR 0008, architecture,
   Swap Bot, data/versioning, and future-test documentation without runtime changes.
 - [x] (2026-07-17) Passed the final planning-contract diff through the full local
+  Python 3.11/3.14 test, Ruff, and strict mypy matrix.
+- [x] (2026-07-17) Finalized partial-fill Step cardinality and separated append-only
+  PENDING attempts from immutable terminal Step resolutions across the six planning
+  documents, without runtime implementation.
+- [x] (2026-07-17) Passed the partial-fill planning revision through the full local
   Python 3.11/3.14 test, Ruff, and strict mypy matrix.
 - [ ] Milestone 2 - Production Strategy Implementation.
 - [ ] Milestone 3 - Paper Broker and Ledger.
@@ -832,8 +975,16 @@ ExecPlan 0006 is complete only when all of the following are true:
   evidence.
 - Observation: a deterministic fill formula does not make replay deterministic when
   retry can move its due boundary or select a newer eligible quote.
-  Resolution: first-write one `FillEvaluationPlan` and persist the exact ordered
-  market selection or terminal no-market evidence before fill calculation.
+  Resolution: first-write one `FillEvaluationPlan`, then freeze exact per-Step
+  windows, selections, resolutions, and Fills before advancing the ordered lineage.
+- Observation: one market selection for an entire Plan cannot express a partial Fill
+  followed by evaluation of the remaining quantity against later evidence.
+  Resolution: one Plan owns contiguous Steps; only a positive partial Fill may create
+  the next Step, whose remaining-before quantity comes from persisted ordered Fills.
+- Observation: the previous no-market wording allowed PENDING to be read as immutable
+  terminal evidence even though a pre-due quote must still resolve the same Step.
+  Resolution: PENDING is repeatable append-only attempt audit, while a separate unique
+  Step resolution claim terminally selects market/no-market/cancelled/expired.
 - Observation: the sandboxed first validation attempt could not create its configured
   pytest base directory and therefore produced setup errors rather than test failures.
   Resolution: rerun both supported interpreters against distinct OS temporary roots;
@@ -866,10 +1017,16 @@ ExecPlan 0006 is complete only when all of the following are true:
 - 2026-07-17: Define one `CycleSlot` per schedule/as-of/authority/Strategy/policy
   tuple, one atomically first-written immutable `CycleInputSnapshot` per slot, and
   append-only `CycleAttempt` records for retry audit.
-- 2026-07-17: Freeze one `FillEvaluationPlan` per approved intent and one immutable
-  market selection or `fill-no-market-v1` terminal outcome; order evidence by local
-  receipt, provider timestamp, then observation ID and never reselect after first
-  write.
+- 2026-07-17: Freeze one `FillEvaluationPlan` per approved intent and immutable
+  market selection or `fill-no-market-v1` terminal outcome per resolved Step; order
+  evidence by local receipt, provider timestamp, then observation ID and never
+  reselect a resolved Step.
+- 2026-07-17: Model partial-fill continuation as ordered contiguous
+  `FillEvaluationStep` records. Each Step has many immutable PENDING attempts but one
+  cross-variant terminal resolution, one selection at most, and one Fill at most.
+- 2026-07-17: Derive exact remaining quantity from original approved quantity and
+  persisted Decimal Fills. Keep Step terminal resolution distinct from order terminal
+  state so only `PARTIALLY_FILLED` may continue under versioned policy.
 
 ## Validation
 
@@ -900,8 +1057,8 @@ Completed locally on 2026-07-16 with CI-equivalent commands:
 - The diff contains documentation and ADR files only. No Paper implementation,
   Broker adapter, Private POST, arming, Portfolio/Risk/Execution behavior, or 0007
   implementation changed.
-- GitHub-hosted matrix confirmation remains pending until this local planning commit
-  is pushed.
+- This historical entry was local at write time; the later pushed planning baseline
+  is independently confirmed below.
 
 Final planning-contract revision completed locally on 2026-07-17:
 
@@ -915,5 +1072,19 @@ Final planning-contract revision completed locally on 2026-07-17:
 - Ruff used `--no-cache` and mypy used `--no-incremental` for the final matrix.
 - `git diff --check` passed, and the diff remains limited to the six requested
   planning/architecture documents.
-- GitHub Actions has not been independently observed for this unpushed revision, so
-  no hosted-CI success is claimed here.
+- GitHub Actions run `29515327402` completed successfully for pushed baseline
+  `be97875be75804383b6091a91621a57b6e0644f9`.
+
+Partial-fill cardinality planning revision completed locally on 2026-07-17:
+
+- Python 3.11.9: `289 passed, 5 skipped`; Ruff passed; strict mypy passed for
+  63 source files.
+- Python 3.14.6: `289 passed, 5 skipped`; Ruff passed; strict mypy passed for
+  63 source files.
+- Pytest used isolated OS temporary roots with cache disabled; Ruff used `--no-cache`
+  and mypy used `--no-incremental`.
+- `git diff --check` passed and only the six requested planning/architecture documents
+  changed. No runtime type, migration, Strategy, Paper Gateway, fill engine, ledger,
+  scheduler, Broker, or ExecPlan 0007 implementation changed.
+- Hosted CI has not been run for this unpushed revision; only local validation is
+  claimed for it.

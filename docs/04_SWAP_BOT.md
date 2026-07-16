@@ -85,13 +85,30 @@ freshness-policy lineage. Inputs are not part of the slot ID. Retrying adds a se
 attempt record and reuses the frozen snapshot; a newly arrived or corrected input is
 for a later slot.
 
-One approved intent similarly freezes one `FillEvaluationPlan`, including the due
-boundary, exact model/policy versions, and seed. Paper selects market evidence once
-before fill calculation from the exact Pair with
-`intent.created_at <= received_at <= fill_due_at`, then orders eligible observations
-by received time, provider time, and observation ID. The immutable selection or
-terminal no-market record is reused after restart. A newer quote cannot revise the
-historical Paper result, and a Research Forward Result is never eligible.
+One approved intent similarly freezes exactly one `FillEvaluationPlan`, including
+original Decimal quantity, Step schedule/terminal boundaries, exact model/policy
+versions, and seed root. The plan owns contiguous ordered `FillEvaluationStep`
+records. Each Step freezes its market window/due boundary,
+`remaining_quantity_before`, relevant versions, and derived seed.
+
+Before due, absence of eligible evidence appends a
+`PENDING_NO_ELIGIBLE_MARKET` attempt; PENDING is not a terminal Step resolution and is
+never updated. The same Step may later select an eligible quote. Each resolved Step
+has exactly one cross-variant terminal resolution: selected market, no-market,
+cancelled, or expired. Selection uses the exact Pair inside that Step's window and
+orders eligible observations by received time, provider time, and observation ID.
+The immutable selection is stored before its zero-or-one Fill and reused after
+restart. A newer quote cannot revise that Step, although a later Step may select new
+evidence inside its own window. Research Forward Result is never eligible.
+
+A positive partial fill leaves
+`remaining_quantity_after = remaining_quantity_before - fill_quantity` and may create
+only the next contiguous Step when versioned policy permits. Remaining quantity is
+rebuilt from original quantity and immutable ordered Fills, not mutable current
+state. Zero fill creates no Fill, total fill cannot exceed original quantity, and an
+order in `FILLED`, `CANCELLED`, `EXPIRED`, or `REJECTED` cannot create another Step.
+`PARTIALLY_FILLED` is nonterminal for the order even though its producing Step is
+terminally resolved.
 
 ## Validated Signal adoption
 

@@ -4,13 +4,14 @@ from datetime import UTC, datetime, timedelta, timezone
 
 import pytest
 from fx_core import CurrencyPair
-from swap_bot.models import ApprovedLiquidationIntent, Side
+from swap_bot.models import ApprovedLiquidationIntent, PositionId, Side
 from swap_bot.strategy import (
     POSITION_CLOSE_CANDIDATE_CONTRACT_VERSION,
     PositionCloseCandidate,
     PositionCloseEvidenceLineage,
     PositionExitEvaluationOutcome,
     PositionExitKeepReason,
+    PositionExitPositionEvidence,
     PositionExitReason,
     ProductionPositionExitEvaluation,
     ProductionPositionExitEvaluationInput,
@@ -19,6 +20,7 @@ from swap_bot.strategy import (
 from tests.strategy_contracts.factories import (
     NOW,
     authorized_pair_signal,
+    position_evidence,
     position_exit_context,
     position_exit_input,
     swap_evidence,
@@ -53,18 +55,28 @@ def _evaluate(
 
 def _input_with_change(name: str) -> ProductionPositionExitEvaluationInput:
     if name == "existing_position_side":
-        return position_exit_input(existing_position_side=Side.SELL)
+        return position_exit_input(
+            position_changes={"existing_position_side": Side.SELL}
+        )
+    if name == "position_id":
+        return position_exit_input(
+            position_changes={"position_id": PositionId("position-2")}
+        )
     if name == "position_evidence_id":
         return position_exit_input(
-            context_changes={"position_evidence_id": "position-evidence-2"}
+            position_changes={"position_evidence_id": "position-evidence-2"}
+        )
+    if name == "pair":
+        return position_exit_input(
+            position_changes={"pair": CurrencyPair.parse("MXN_JPY")}
         )
     if name == "position_opened_at":
         return position_exit_input(
-            context_changes={"position_opened_at": NOW - timedelta(days=29)}
+            position_changes={"position_opened_at": NOW - timedelta(days=29)}
         )
     if name == "position_observed_at":
         return position_exit_input(
-            context_changes={
+            position_changes={
                 "position_observed_at": NOW + timedelta(milliseconds=500)
             }
         )
@@ -135,7 +147,9 @@ def test_identical_exit_input_and_result_have_deterministic_identity(outcome: st
     "semantic_change",
     [
         "existing_position_side",
+        "position_id",
         "position_evidence_id",
+        "pair",
         "position_opened_at",
         "position_observed_at",
         "signal_id",
@@ -172,6 +186,90 @@ def test_exit_outcome_and_reason_change_identity() -> None:
     ) == 3
 
 
+def test_position_evidence_self_describes_the_exact_position_pair_and_side() -> None:
+    evidence = position_evidence()
+    evaluation_input = position_exit_input()
+
+    assert isinstance(evidence, PositionExitPositionEvidence)
+    assert evidence.position_id == evaluation_input.position_id
+    assert evidence.pair == evaluation_input.pair
+    assert evidence.existing_position_side is evaluation_input.existing_position_side
+    assert evidence.identity_payload == {
+        "position_id": "position-1",
+        "position_evidence_id": "position-evidence-1",
+        "pair": "USD_JPY",
+        "existing_position_side": "BUY",
+        "position_opened_at": (NOW - timedelta(days=30)).isoformat(),
+        "position_observed_at": (NOW + timedelta(seconds=1)).isoformat(),
+    }
+
+
+@pytest.mark.parametrize(
+    ("change", "error_type", "message"),
+    [
+        ({"position_id": "position-1"}, TypeError, "PositionId"),
+        ({"position_evidence_id": " "}, ValueError, "must not be blank"),
+        ({"pair": "USD_JPY"}, TypeError, "CurrencyPair"),
+        ({"existing_position_side": "BUY"}, TypeError, "Side"),
+    ],
+)
+def test_position_evidence_requires_typed_subject_identity(
+    change: dict[str, object], error_type: type[Exception], message: str
+) -> None:
+    with pytest.raises(error_type, match=message):
+        position_evidence(**change)
+
+
+@pytest.mark.parametrize(
+    ("input_change", "message"),
+    [
+        ({"position_id": PositionId("position-2")}, "another Position"),
+        ({"pair": CurrencyPair.parse("MXN_JPY")}, "another Pair"),
+        ({"existing_position_side": Side.SELL}, "another existing side"),
+    ],
+)
+def test_exit_input_rejects_position_evidence_bound_to_another_subject(
+    input_change: dict[str, object], message: str
+) -> None:
+    with pytest.raises(ValueError, match=message):
+        position_exit_input(**input_change)
+
+
+@pytest.mark.parametrize("outcome", ["KEEP", "CLOSE_CANDIDATE"])
+@pytest.mark.parametrize(
+    ("field_name", "forged_value", "message"),
+    [
+        ("position_id", PositionId("position-2"), "another Position"),
+        ("pair", CurrencyPair.parse("MXN_JPY"), "another Pair"),
+        ("existing_position_side", Side.SELL, "another existing side"),
+    ],
+)
+def test_exit_result_rejects_forged_outer_position_binding(
+    outcome: str, field_name: str, forged_value: object, message: str
+) -> None:
+    evaluation = _evaluate(position_exit_input(), outcome)
+
+    with pytest.raises(ValueError, match=message):
+        replace(evaluation, **{field_name: forged_value})
+
+
+def test_keep_rejects_replacement_with_another_position_evidence() -> None:
+    evaluation = _keep(position_exit_input())
+    forged_lineage = replace(
+        evaluation.evidence_lineage,
+        context=replace(
+            evaluation.evidence_lineage.context,
+            position=replace(
+                evaluation.evidence_lineage.position,
+                position_id=PositionId("position-2"),
+            ),
+        ),
+    )
+
+    with pytest.raises(ValueError, match="another Position"):
+        replace(evaluation, evidence_lineage=forged_lineage)
+
+
 @pytest.mark.parametrize(
     ("context_change", "message"),
     [
@@ -194,7 +292,7 @@ def test_position_evidence_time_order_is_fail_closed(
     context_change: dict[str, object], message: str
 ) -> None:
     with pytest.raises(ValueError, match=message):
-        position_exit_context(**context_change)
+        position_exit_context(position_changes=context_change)
 
 
 def test_position_observation_cannot_postdate_evaluation() -> None:
@@ -231,7 +329,13 @@ def test_keep_and_close_retain_the_exact_typed_input_lineage() -> None:
     assert close.evidence_lineage == lineage
     assert close.close_candidate is not None
     assert close.close_candidate.evidence_lineage == lineage
+    assert lineage.position.position_id == evaluation_input.position_id
     assert lineage.position_evidence_id == "position-evidence-1"
+    assert lineage.position.pair == evaluation_input.pair
+    assert (
+        lineage.position.existing_position_side
+        is evaluation_input.existing_position_side
+    )
     assert lineage.signal_id == authorized_pair_signal().signal.signal_id
     assert lineage.authorization_id == "signal-authorization-1"
     assert lineage.current_adoption_decision_id == "adoption-approval-1"
@@ -262,6 +366,32 @@ def _candidate_with_lineage(
     )
 
 
+@pytest.mark.parametrize(
+    ("position_change", "message"),
+    [
+        ({"position_id": PositionId("position-2")}, "another Position"),
+        ({"pair": CurrencyPair.parse("MXN_JPY")}, "another Pair"),
+        ({"existing_position_side": Side.SELL}, "another existing side"),
+    ],
+)
+def test_close_candidate_rejects_lineage_bound_to_another_position_subject(
+    position_change: dict[str, object], message: str
+) -> None:
+    evaluation = _close(position_exit_input())
+    candidate = evaluation.close_candidate
+    assert candidate is not None
+    forged_lineage = replace(
+        candidate.evidence_lineage,
+        context=replace(
+            candidate.evidence_lineage.context,
+            position=replace(candidate.evidence_lineage.position, **position_change),
+        ),
+    )
+
+    with pytest.raises(ValueError, match=message):
+        _candidate_with_lineage(candidate, forged_lineage)
+
+
 @pytest.mark.parametrize("forgery", ["position", "signal", "swap"])
 def test_exit_evaluation_rejects_a_close_candidate_from_other_lineage(
     forgery: str,
@@ -274,7 +404,10 @@ def test_exit_evaluation_rejects_a_close_candidate_from_other_lineage(
             candidate.evidence_lineage,
             context=replace(
                 candidate.evidence_lineage.context,
-                position_evidence_id="position-evidence-forged",
+                position=replace(
+                    candidate.evidence_lineage.position,
+                    position_evidence_id="position-evidence-forged",
+                ),
             ),
         )
     elif forgery == "signal":
@@ -346,11 +479,13 @@ def test_holding_age_close_retains_opened_at_and_rejects_future_position_evidenc
     )
     with pytest.raises(ValueError):
         position_exit_input(
-            context_changes={
+            position_changes={
                 "position_opened_at": NOW + timedelta(seconds=3),
                 "position_observed_at": NOW + timedelta(seconds=3),
             }
         )
+    with pytest.raises(ValueError, match="must not be blank"):
+        position_exit_input(context_changes={"exit_input_policy_version": " "})
 
 
 def test_adoption_close_can_omit_current_market_authority_but_not_adoption_evidence() -> None:
@@ -373,6 +508,7 @@ def test_missing_signal_close_requires_the_expected_specification_checkpoint() -
     for field_name in (
         "signal_selection_checkpoint_id",
         "expected_signal_specification_identity",
+        "exit_input_policy_version",
     ):
         with pytest.raises(ValueError, match="must not be blank"):
             position_exit_input(context_changes={field_name: ""})
@@ -386,6 +522,13 @@ def test_missing_swap_close_requires_the_swap_selection_checkpoint() -> None:
     assert evaluation.close_candidate is not None
     with pytest.raises(ValueError, match="must not be blank"):
         position_exit_input(context_changes={"swap_selection_checkpoint_id": " "})
+    with pytest.raises(ValueError, match="must not be blank"):
+        position_exit_input(context_changes={"exit_input_policy_version": " "})
+
+
+def test_unknown_position_exit_reason_fails_closed() -> None:
+    with pytest.raises(ValueError, match="unsupported Position exit reason"):
+        _close(position_exit_input(), "UNKNOWN")  # type: ignore[arg-type]
 
 
 def test_close_candidate_remains_quantity_free_reduce_only_strategy_output() -> None:

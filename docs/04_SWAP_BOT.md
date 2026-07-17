@@ -58,14 +58,16 @@ no quantity or action string. Portfolio quantity, partial-close validation, appr
 close intent, and Risk no-overclose checks remain M2-D. Risk emergency liquidation
 remains a different authority.
 
-Exit input lineage distinguishes the business `PositionId` from the exact immutable
-Position snapshot/event evidence. It also commits to position opened/observed time,
-current Signal/Authorization/Adoption lineage when present, exact operational Swap
-evidence when present, Signal and Swap selection checkpoints, expected Signal
-specification, Adoption-state evidence, config identity, and exit-policy version.
-Both KEEP and close results preserve that evidence. Close factories derive
-`PositionCloseEvidenceLineage` from the typed evaluation input and enforce
-reason-specific evidence; no caller-controlled generic evidence tuple is accepted.
+`PositionExitPositionEvidence` distinguishes the business `PositionId` from the exact
+immutable Position snapshot/event evidence while self-describing Pair, existing Side,
+and opened/observed time. Exit input, KEEP, and close must match all three typed
+subject dimensions; cross-Position, cross-Pair, and cross-Side evidence fails before
+decision identity creation. Lineage also commits to current Signal/Authorization/
+Adoption and operational Swap evidence when present, selection checkpoints, expected
+Signal specification, Adoption-state evidence, config identity, and exit-policy
+version. Close factories derive `PositionCloseEvidenceLineage` from typed evaluation
+input and explicitly validate the evidence required by every exit reason. Additional
+frozen context supports reproducibility but does not replace reason-specific checks.
 
 The v1 config accepts only `production-trade-candidate-v1`, `currency-pair-v1`, and
 `pair_fundamental`. Unsupported downstream contracts fail when config is built.

@@ -663,11 +663,12 @@ all four are complete:
 - **2-A Strategy Domain Contract Foundation (complete):** immutable config and
   identity, execution-authority mapping/guard, versioned operational Swap evidence,
   typed entry/exit evaluations with exact Position/Signal/Authorization/Adoption/
-  Swap/checkpoint/policy lineage, lossless production Candidate, typed-evidence
-  ordinary close Candidate, and production Strategy Ports. Monetary evidence is
-  finite Decimal and v1 config accepts only supported downstream contracts. It adds
-  no concrete Strategy, store, or migration and preserves the accepted 0005
-  contracts.
+  Swap/checkpoint/policy lineage, self-describing immutable Position evidence bound
+  to exact PositionId/Pair/existing Side, lossless production Candidate,
+  typed-evidence ordinary close Candidate, and production Strategy Ports. Every exit
+  reason explicitly validates its required evidence. Monetary evidence is finite
+  Decimal and v1 config accepts only supported downstream contracts. It adds no
+  concrete Strategy, store, or migration and preserves the accepted 0005 contracts.
 - **2-B Pair Signal Materialization (pending):** exact base/quote Signal derivation,
   deterministic selection/checkpoint, atomic Pair Signal plus derivation persistence,
   and exact idempotency.
@@ -695,7 +696,8 @@ Deliverables:
 - Explicit resolution of Candidate PairScore evidence without clamping. (2-A
   complete)
 - Separate ordinary close Candidate, structured exit reasons, exact typed input
-  evidence, and lineage-preserving KEEP. Caller-provided arbitrary evidence IDs are
+  evidence bound to PositionId/Pair/existing Side, explicit reason-specific evidence
+  validation, and lineage-preserving KEEP. Caller-provided arbitrary evidence IDs are
   not part of the API. (2-A complete)
   Approved close intent, quantity allocation, partial-close, and Portfolio/Risk
   enforcement remain 2-D; retain `ApprovedLiquidationIntent` for Risk emergency only.
@@ -957,6 +959,13 @@ ExecPlan 0006 is complete only when all of the following are true:
 - [x] (2026-07-17) Passed the Milestone 2-A review correction through the full local
   Python 3.11/3.14 test, Ruff, strict mypy, import-smoke, and diff-check matrix with
   no migration, concrete Strategy, or Broker/Execution/Portfolio/Risk change.
+- [x] (2026-07-17) Milestone 2-A final review correction - bound immutable Position
+  evidence to exact `PositionId`, Pair, and existing Side; rejected cross-Position,
+  cross-Pair, and cross-Side input/result/Candidate lineage; and made every
+  `PositionExitReason` evidence requirement an explicit fail-closed branch.
+- [x] (2026-07-17) Passed the Milestone 2-A final correction through the full local
+  Python 3.11/3.14 test, Ruff, strict mypy, import-smoke, and diff-check matrix with
+  no migration, concrete Strategy, or Broker/Execution/Portfolio/Risk change.
 - [ ] Milestone 2-B - exact Pair Signal materialization and selection.
 - [ ] Milestone 2-C - concrete entry Strategy and persistence.
 - [ ] Milestone 2-D - ordinary close Portfolio/Risk path.
@@ -1081,6 +1090,25 @@ ExecPlan 0006 is complete only when all of the following are true:
   deterministic configuration error until Candidate production.
   Resolution: v1 config accepts only `production-trade-candidate-v1`,
   `currency-pair-v1`, and `pair_fundamental` at construction.
+- Observation: an immutable Position evidence ID alone does not prove which business
+  Position, Pair, or Side the referenced snapshot describes.
+  Resolution: `PositionExitPositionEvidence` self-describes `PositionId`, Pair,
+  existing Side, immutable evidence ID, and opened/observed time.
+- Observation: storing mismatched outer input and evidence values in the same
+  evaluation identity makes the mismatch reproducible but does not make it authentic.
+  Resolution: compare typed Position/Pair/Side values and fail before decision
+  identity creation.
+- Observation: Position snapshots must carry their subject dimensions so Input and
+  Candidate can validate the evidence without parsing an evidence-ID naming scheme.
+  Resolution: bind Input, Candidate, KEEP, and close evaluation to the same typed
+  Position evidence reference.
+- Observation: KEEP needs the same Position binding as close because it is a decision
+  over a specific observed position, not an evidence-free no-op.
+  Resolution: validate and retain the same typed Position lineage for both outcomes.
+- Observation: the presence of globally frozen context fields does not demonstrate
+  which evidence an individual exit reason requires.
+  Resolution: keep additional context for reproducibility, but use an explicit
+  fail-closed branch for every `PositionExitReason`.
 
 ## Decision log
 
@@ -1150,6 +1178,19 @@ ExecPlan 0006 is complete only when all of the following are true:
   Decimal while retaining Decimal text in content identity.
 - 2026-07-17: Restrict v1 Strategy config to explicitly supported Candidate contract,
   Pair transformation, and Pair Signal type values at construction.
+- 2026-07-17: Make immutable Position exit evidence self-describe exact `PositionId`,
+  Pair, existing Side, immutable evidence ID, and opened/observed timestamps.
+- 2026-07-17: Require Evaluation Input to exactly match the typed Position evidence
+  reference; cross-Position, cross-Pair, and cross-Side binding fails before decision
+  identity creation.
+- 2026-07-17: Use the same typed Position evidence binding for KEEP and close,
+  including Candidate/Evaluation lineage checks.
+- 2026-07-17: Give every `PositionExitReason` an explicit evidence-validation branch;
+  unknown reason values fail closed.
+- 2026-07-17: Additional frozen context may remain for reproducibility, but its
+  presence does not replace reason-specific evidence validation.
+- 2026-07-17: Keep ordinary close quantity allocation and reduce-only/no-overclose
+  enforcement in the future typed Portfolio/Risk path, not Strategy evidence types.
 
 ## Validation
 
@@ -1253,4 +1294,25 @@ Milestone 2-A review correction completed locally on 2026-07-17:
   Broker, Execution, Portfolio, Risk, scheduler, or ExecPlan 0007 implementation was
   added or changed.
 - Hosted CI has not been run for this unpushed review correction; only local
+  validation is claimed.
+
+Milestone 2-A final Position-binding correction completed locally on 2026-07-17:
+
+- Python 3.11.9: `437 passed, 5 skipped`; Ruff passed; strict mypy passed for
+  69 source files.
+- Python 3.14.6: `437 passed, 5 skipped`; Ruff passed; strict mypy passed for
+  69 source files.
+- The five skips remain opt-in external provider smoke tests. Final pytest runs used
+  distinct workspace `--basetemp` roots with cache disabled; Ruff used `--no-cache`
+  and mypy used `--no-incremental`.
+- Import smoke for the existing Strategy exports and the new
+  `PositionExitPositionEvidence` passed on both supported Python versions.
+  `git diff --check` passed.
+- The nine-file change is limited to M2-A Strategy contracts and exports, Position
+  exit contract factories/tests, and the five requested living design documents.
+- Existing migrations remain exactly `0001` and `0002`; no migration was added or
+  edited. No concrete Strategy, Pair materialization/selection, persistence, Paper,
+  Broker, Execution, Portfolio, Risk, scheduler, CLI, or ExecPlan 0007 implementation
+  was added or changed.
+- Hosted CI has not been run for this unpushed final correction; only local
   validation is claimed.

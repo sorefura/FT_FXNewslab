@@ -10,13 +10,15 @@ numbers in implementation order. Paper persistence begins at the next available
 additive Live migration only after Milestone 2 production Strategy persistence is
 complete; `0003` is not reserved.
 
-Position exit semantic identity includes the business Position ID and a distinct
-immutable Position evidence ID, opened/observed timestamps, side, exact current
-Signal/Authorization/Adoption and Swap identities or explicit absence, selection
-checkpoints, expected Signal specification, Adoption-state evidence, config/policy
-versions, evaluation time, and outcome/reason. KEEP is decision evidence and retains
-this full lineage. Ordinary close Candidate identity embeds the same typed lineage;
-it is not assembled from caller-supplied evidence strings.
+Position exit semantic identity embeds one `PositionExitPositionEvidence` payload
+containing the business Position ID, distinct immutable Position evidence ID, Pair,
+existing Side, and opened/observed timestamps. Evaluation input must exactly match
+that self-described Position/Pair/Side before identity creation. The lineage also
+includes exact current Signal/Authorization/Adoption and Swap identities or explicit
+absence, selection checkpoints, expected Signal specification, Adoption-state
+evidence, config/policy versions, evaluation time, and outcome/reason. KEEP is
+decision evidence and retains this full lineage. Ordinary close Candidate identity
+embeds the same typed lineage; it is not assembled from caller-supplied strings.
 
 `OperationalSwapEvidence` content identity continues to serialize Decimal amounts
 as exact text. Only finite Decimal amounts are valid for AVAILABLE or numeric STALE

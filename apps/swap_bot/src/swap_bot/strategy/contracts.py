@@ -386,10 +386,42 @@ class ProductionEntryEvaluation:
 
 
 @dataclass(frozen=True, slots=True)
-class PositionExitEvidenceContext:
+class PositionExitPositionEvidence:
+    position_id: PositionId
     position_evidence_id: str
+    pair: CurrencyPair
+    existing_position_side: Side
     position_opened_at: datetime
     position_observed_at: datetime
+
+    def __post_init__(self) -> None:
+        if not isinstance(self.position_id, PositionId):
+            raise TypeError("position_id must be PositionId")
+        _require_text(self.position_evidence_id, "position_evidence_id")
+        if not isinstance(self.pair, CurrencyPair):
+            raise TypeError("pair must be CurrencyPair")
+        if not isinstance(self.existing_position_side, Side):
+            raise TypeError("existing_position_side must be Side")
+        require_utc(self.position_opened_at, "position opened_at")
+        require_utc(self.position_observed_at, "position observed_at")
+        if self.position_opened_at > self.position_observed_at:
+            raise ValueError("position_opened_at cannot be after position_observed_at")
+
+    @property
+    def identity_payload(self) -> dict[str, object]:
+        return {
+            "position_id": self.position_id.value,
+            "position_evidence_id": self.position_evidence_id,
+            "pair": self.pair.symbol,
+            "existing_position_side": self.existing_position_side.value,
+            "position_opened_at": self.position_opened_at.isoformat(),
+            "position_observed_at": self.position_observed_at.isoformat(),
+        }
+
+
+@dataclass(frozen=True, slots=True)
+class PositionExitEvidenceContext:
+    position: PositionExitPositionEvidence
     signal_selection_checkpoint_id: str
     swap_selection_checkpoint_id: str
     expected_signal_specification_identity: str
@@ -398,8 +430,9 @@ class PositionExitEvidenceContext:
     exit_input_policy_version: str
 
     def __post_init__(self) -> None:
+        if not isinstance(self.position, PositionExitPositionEvidence):
+            raise TypeError("position must be PositionExitPositionEvidence")
         for value, label in (
-            (self.position_evidence_id, "position_evidence_id"),
             (self.signal_selection_checkpoint_id, "signal_selection_checkpoint_id"),
             (self.swap_selection_checkpoint_id, "swap_selection_checkpoint_id"),
             (
@@ -411,17 +444,23 @@ class PositionExitEvidenceContext:
             (self.exit_input_policy_version, "exit_input_policy_version"),
         ):
             _require_text(value, label)
-        require_utc(self.position_opened_at, "position opened_at")
-        require_utc(self.position_observed_at, "position observed_at")
-        if self.position_opened_at > self.position_observed_at:
-            raise ValueError("position_opened_at cannot be after position_observed_at")
+
+    @property
+    def position_evidence_id(self) -> str:
+        return self.position.position_evidence_id
+
+    @property
+    def position_opened_at(self) -> datetime:
+        return self.position.position_opened_at
+
+    @property
+    def position_observed_at(self) -> datetime:
+        return self.position.position_observed_at
 
     @property
     def identity_payload(self) -> dict[str, object]:
         return {
-            "position_evidence_id": self.position_evidence_id,
-            "position_opened_at": self.position_opened_at.isoformat(),
-            "position_observed_at": self.position_observed_at.isoformat(),
+            "position": self.position.identity_payload,
             "signal_selection_checkpoint_id": self.signal_selection_checkpoint_id,
             "swap_selection_checkpoint_id": self.swap_selection_checkpoint_id,
             "expected_signal_specification_identity": (
@@ -456,9 +495,17 @@ class PositionCloseEvidenceLineage:
         strategy_version: str,
         position_id: PositionId,
         pair: CurrencyPair,
+        existing_position_side: Side,
         evaluated_at: datetime,
     ) -> None:
         require_utc(evaluated_at, "position exit evaluated_at")
+        position = self.context.position
+        if position.position_id != position_id:
+            raise ValueError("Position evidence belongs to another Position")
+        if position.pair != pair:
+            raise ValueError("Position evidence belongs to another Pair")
+        if position.existing_position_side is not existing_position_side:
+            raise ValueError("Position evidence has another existing side")
         if self.context.position_observed_at > evaluated_at:
             raise ValueError("position_observed_at cannot be after evaluated_at")
         if self.authorized_pair_signal is not None:
@@ -512,6 +559,10 @@ class PositionCloseEvidenceLineage:
         return self.context.position_evidence_id
 
     @property
+    def position(self) -> PositionExitPositionEvidence:
+        return self.context.position
+
+    @property
     def signal_id(self) -> SignalId | None:
         if self.authorized_pair_signal is None:
             return None
@@ -561,6 +612,7 @@ class ProductionPositionExitEvaluationInput:
             strategy_version=self.strategy_version,
             position_id=self.position_id,
             pair=self.pair,
+            existing_position_side=self.existing_position_side,
             evaluated_at=self.evaluated_at,
         )
 
@@ -606,9 +658,17 @@ class PositionCloseCandidate:
             strategy_version=self.strategy_version,
             position_id=self.position_id,
             pair=self.pair,
+            existing_position_side=self.existing_position_side,
             evaluated_at=self.created_at,
         )
-        _require_exit_reason_evidence(self.evidence_lineage, self.exit_reason)
+        _require_exit_reason_evidence(
+            self.evidence_lineage,
+            self.exit_reason,
+            strategy_id=self.strategy_id,
+            strategy_version=self.strategy_version,
+            strategy_config_identity=self.strategy_config_identity,
+            evaluated_at=self.created_at,
+        )
         if self.close_candidate_id != self.expected_close_candidate_id:
             raise ValueError("close_candidate_id does not match intrinsic candidate")
 
@@ -716,6 +776,7 @@ class ProductionPositionExitEvaluation:
             strategy_version=self.strategy_version,
             position_id=self.position_id,
             pair=self.pair,
+            existing_position_side=self.existing_position_side,
             evaluated_at=self.evaluated_at,
         )
         if self.outcome is PositionExitEvaluationOutcome.CLOSE_CANDIDATE:
@@ -749,7 +810,16 @@ class ProductionPositionExitEvaluation:
         exit_reason: PositionExitReason,
     ) -> "ProductionPositionExitEvaluation":
         lineage = evaluation_input.evidence_lineage
-        _require_exit_reason_evidence(lineage, exit_reason)
+        _require_exit_reason_evidence(
+            lineage,
+            exit_reason,
+            strategy_id=evaluation_input.strategy_id,
+            strategy_version=evaluation_input.strategy_version,
+            strategy_config_identity=(
+                evaluation_input.approved_strategy_config_identity
+            ),
+            evaluated_at=evaluation_input.evaluated_at,
+        )
         result: dict[str, object] = {
             "close_candidate_contract_version": close_candidate_contract_version,
             "exit_reason": exit_reason.value,
@@ -1022,21 +1092,79 @@ def _authorized_signal_identity(authorized: AuthorizedSignal) -> dict[str, objec
 def _require_exit_reason_evidence(
     lineage: PositionCloseEvidenceLineage,
     reason: PositionExitReason,
+    *,
+    strategy_id: str,
+    strategy_version: str,
+    strategy_config_identity: str,
+    evaluated_at: datetime,
 ) -> None:
     if not isinstance(reason, PositionExitReason):
-        raise TypeError("exit_reason must be PositionExitReason")
-    if (
-        reason is PositionExitReason.SIGNAL_REVERSED
-        and lineage.authorized_pair_signal is None
-    ):
-        raise ValueError("SIGNAL_REVERSED requires current AuthorizedSignal evidence")
-    if (
-        reason is PositionExitReason.CARRY_NO_LONGER_POSITIVE
-        and lineage.swap_evidence is None
-    ):
-        raise ValueError(
-            "CARRY_NO_LONGER_POSITIVE requires current OperationalSwapEvidence"
-        )
+        raise ValueError("unsupported Position exit reason")
+    position = lineage.position
+    context = lineage.context
+    match reason:
+        case PositionExitReason.SIGNAL_REVERSED:
+            authorized = lineage.authorized_pair_signal
+            if authorized is None:
+                raise ValueError(
+                    "SIGNAL_REVERSED requires current AuthorizedSignal evidence"
+                )
+            signal = authorized.signal
+            authorization = authorized.authorization
+            if not isinstance(signal.target, PairTarget) or not isinstance(
+                signal.direction, PairScore
+            ):
+                raise ValueError("SIGNAL_REVERSED requires an authorized Pair Signal")
+            if signal.target.pair != position.pair:
+                raise ValueError("SIGNAL_REVERSED Signal belongs to another Pair")
+            if (
+                authorization.strategy_id != strategy_id
+                or authorization.strategy_version != strategy_version
+            ):
+                raise ValueError("SIGNAL_REVERSED authorization belongs to another Strategy")
+        case PositionExitReason.CARRY_NO_LONGER_POSITIVE:
+            swap = lineage.swap_evidence
+            if swap is None:
+                raise ValueError(
+                    "CARRY_NO_LONGER_POSITIVE requires current OperationalSwapEvidence"
+                )
+            if swap.pair != position.pair:
+                raise ValueError(
+                    "CARRY_NO_LONGER_POSITIVE Swap belongs to another Pair"
+                )
+        case PositionExitReason.MAXIMUM_HOLDING_AGE:
+            require_utc(evaluated_at, "position exit evaluated_at")
+            _require_text(strategy_config_identity, "strategy_config_identity")
+            _require_text(context.exit_input_policy_version, "exit_input_policy_version")
+            if position.position_opened_at > evaluated_at:
+                raise ValueError("position_opened_at cannot be after evaluated_at")
+        case PositionExitReason.ADOPTION_NO_LONGER_ACTIVE:
+            _require_text(
+                context.prior_adoption_decision_id,
+                "prior_adoption_decision_id",
+            )
+            _require_text(
+                context.adoption_state_evidence_id,
+                "adoption_state_evidence_id",
+            )
+        case PositionExitReason.REQUIRED_SIGNAL_MISSING_OR_STALE:
+            _require_text(
+                context.signal_selection_checkpoint_id,
+                "signal_selection_checkpoint_id",
+            )
+            _require_text(
+                context.expected_signal_specification_identity,
+                "expected_signal_specification_identity",
+            )
+            _require_text(context.exit_input_policy_version, "exit_input_policy_version")
+        case PositionExitReason.REQUIRED_SWAP_MISSING_OR_STALE:
+            _require_text(
+                context.swap_selection_checkpoint_id,
+                "swap_selection_checkpoint_id",
+            )
+            _require_text(context.exit_input_policy_version, "exit_input_policy_version")
+        case _:
+            raise ValueError("unsupported Position exit reason")
 
 
 def _require_text(value: str, label: str) -> None:

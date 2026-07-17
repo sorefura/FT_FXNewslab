@@ -24,10 +24,14 @@ Milestone 2-A tests already state:
   Authorization, Adoption, Swap, checkpoint, policy, time, and result input; KEEP and
   close retain the same exact typed lineage and arbitrary caller evidence IDs are not
   accepted;
+- immutable Position evidence self-describes exact `PositionId`, Pair, existing Side,
+  and opened/observed time; Input, KEEP, and close reject cross-Position, cross-Pair,
+  cross-Side, and forged Candidate/Evaluation lineage before identity creation;
 - reason-specific exit tests require current authorized Pair Signal for reversal,
   current exact Swap evidence for carry loss, opened-at evidence for holding age,
   Adoption-state evidence for inactive adoption, and selection checkpoints for
-  missing/stale Signal or Swap;
+  missing/stale Signal or Swap; every reason has an explicit branch and unknown
+  reasons fail closed;
 - v1 config rejects unsupported Candidate contract, Pair transformation, and Pair
   Signal type at construction; and
 - the strategy package imports no Research, AI/LLM, Execution, Portfolio, Risk, or

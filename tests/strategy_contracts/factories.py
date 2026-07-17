@@ -27,6 +27,7 @@ from swap_bot.strategy import (
     NewsFilteredCarryStrategyConfig,
     OperationalSwapEvidence,
     PositionExitEvidenceContext,
+    PositionExitPositionEvidence,
     ProductionEntryEvaluationInput,
     ProductionPositionExitEvaluationInput,
 )
@@ -141,11 +142,26 @@ def entry_input(**changes: object) -> ProductionEntryEvaluationInput:
     return ProductionEntryEvaluationInput(**values)  # type: ignore[arg-type]
 
 
-def position_exit_context(**changes: object) -> PositionExitEvidenceContext:
+def position_evidence(**changes: object) -> PositionExitPositionEvidence:
     values: dict[str, object] = {
+        "position_id": PositionId("position-1"),
         "position_evidence_id": "position-evidence-1",
+        "pair": PAIR,
+        "existing_position_side": Side.BUY,
         "position_opened_at": NOW - timedelta(days=30),
         "position_observed_at": NOW + timedelta(seconds=1),
+    }
+    values.update(changes)
+    return PositionExitPositionEvidence(**values)  # type: ignore[arg-type]
+
+
+def position_exit_context(
+    *,
+    position_changes: dict[str, object] | None = None,
+    **changes: object,
+) -> PositionExitEvidenceContext:
+    values: dict[str, object] = {
+        "position": position_evidence(**(position_changes or {})),
         "signal_selection_checkpoint_id": "signal-selection-checkpoint-1",
         "swap_selection_checkpoint_id": "swap-selection-checkpoint-1",
         "expected_signal_specification_identity": "signal-specification-1",
@@ -159,19 +175,25 @@ def position_exit_context(**changes: object) -> PositionExitEvidenceContext:
 
 def position_exit_input(
     *,
+    position_changes: dict[str, object] | None = None,
     context_changes: dict[str, object] | None = None,
     **changes: object,
 ) -> ProductionPositionExitEvaluationInput:
+    evidence_context = position_exit_context(
+        position_changes=position_changes,
+        **(context_changes or {}),
+    )
+    position = evidence_context.position
     values: dict[str, object] = {
         "strategy_id": "news-filtered-carry",
         "strategy_version": "strategy-v1",
         "approved_strategy_config_identity": strategy_config().strategy_config_identity,
-        "position_id": PositionId("position-1"),
-        "pair": PAIR,
-        "existing_position_side": Side.BUY,
-        "evidence_context": position_exit_context(**(context_changes or {})),
-        "authorized_pair_signal": authorized_pair_signal(),
-        "swap_evidence": swap_evidence(),
+        "position_id": position.position_id,
+        "pair": position.pair,
+        "existing_position_side": position.existing_position_side,
+        "evidence_context": evidence_context,
+        "authorized_pair_signal": authorized_pair_signal(pair=position.pair),
+        "swap_evidence": swap_evidence(pair=position.pair),
         "evaluated_at": NOW + timedelta(seconds=2),
     }
     values.update(changes)

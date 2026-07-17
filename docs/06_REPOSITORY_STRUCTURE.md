@@ -20,6 +20,24 @@ swap_bot/
   live/           existing adoption/Portfolio/Risk/Execution boundaries
 ```
 
+Milestone 2-B1 adds two shared-package modules without changing that Live module
+map:
+
+```text
+packages/fx_core/src/fx_core/identity.py
+    package-neutral canonical JSON and SHA-256 identity
+
+packages/fx_signal_store/src/fx_signal_store/pair_materialization.py
+    Pair/as-of Specification and Request, exact Signal/Observation snapshots,
+    BASE/QUOTE candidate inventory, terminal selection snapshot,
+    deterministic Pair Signal ID, and PairSignalDerivation
+```
+
+`swap_bot.adoption` keeps compatibility wrappers for its existing public digest API.
+`fx_signal_store` imports neither `swap_bot` nor `fx_research`. M2-B1 adds no
+migration or Store behavior; checkpoint schema/query and atomic materialization stay
+in M2-B2/M2-B3.
+
 The actual migration remains incremental; files are moved only when the boundary is
 implemented. Paper infrastructure may depend on Live-owned approved-intent contracts
 but cannot import or construct the real Broker Private transport. It cannot import

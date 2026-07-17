@@ -88,6 +88,8 @@ Planning started from clean, synchronized `main` at
 `513e2632421062b6fefdb59f78ceab3979844dac`.
 Milestone 2-A implementation started from clean, synchronized `main` at
 `93edaf27c04f94e0a38f5b5ee9d70f4dc128d681`.
+Milestone 2-B1 implementation started from clean, synchronized `main` at
+`a81102e3a08286ab03ba792d37abb229d8de28f7`.
 
 | Area | Current implementation | Gap carried into this plan |
 |---|---|---|
@@ -99,9 +101,9 @@ Milestone 2-A implementation started from clean, synchronized `main` at
 | Broker boundary | `BrokerGateway.submit(ApprovedExecutionIntent) -> OrderResult`. `GmoPrivatePostTransport.post_once` requires configuration plus `LIVE_TRADING_ARMED=YES` and does not retry. | No Paper Gateway exists. The low-level Private transport is not a complete Broker adapter and must remain outside paper composition. |
 | Execution | `ExecutionService` accepts only `ApprovedExecutionIntent`, persistently claims its key, and always returns `NOT_SUBMITTED`; it never calls its injected Broker Gateway. | A boolean dry-run cannot represent fictional execution. Paper needs a distinct adapter, domain, result status, and authority. |
 | Idempotency | Execution intent carries a caller-supplied string. SQLite has a unique intent key and a separate claimed-key table. | There is no canonical operational cycle identity or deterministic Paper order/fill identity. |
-| Persistence | Live base tables are initialized inline. Numbered additive migrations `0001` and `0002` add adoption and Candidate-authorization state. Milestone 2-A adds no migration. | Strategy evaluation/Candidate/close persistence is designed before Paper tables. Paper begins at the next available additive migration after that work, not a reserved `0003`. |
+| Persistence | Live base tables are initialized inline. Numbered additive migrations `0001` and `0002` add adoption and Candidate-authorization state. Milestone 2-A and 2-B1 add no migration. Shared Signal Store still has only `0001_signal_lineage.sql`; its query/append behavior is unchanged. | M2-B2/B3 add checkpoint and exact atomic Pair materialization persistence before Strategy evaluation/Candidate/close persistence. Paper begins at the next available additive migration after that work, not a reserved `0003`. |
 | Signal source | `fx_signal_store` can read immutable Signals by ID or list by target/horizon/scorer version. Adoption runtime consumes a supplied Signal and never reads Research evaluation state. | There is no Live-owned operational Signal-source Port, checkpoint, ambiguity rule, or recurring selection cycle. |
-| Pair transformation | `fx_core.CurrencyPairSignalTransformer` persists `currency-pair-v1` semantics: base direction minus quote direction. | The offline fixture uses it, but no operational producer selects matching base/quote currency Signals and stores the derived Pair Signal before Live authorization. |
+| Pair transformation | `fx_core.CurrencyPairSignalTransformer` persists `currency-pair-v1` semantics: base direction minus quote direction. M2-B1 now fixes stable Pair/as-of/specification request identity, exact Signal/Observation candidate inventory, terminal selection snapshot, deterministic Pair Signal ID, and ordered BASE/QUOTE derivation contracts. | M2-B2/B3 still need checkpoint/query, ranking/ambiguity processing, transformer invocation, and atomic exact persistence before Live authorization. |
 | Modes | Adoption keeps `RuntimeMode.SHADOW/LIVE`. Milestone 2-A adds distinct `ExecutionAuthorityMode`, maps Shadow/Paper to Adoption Shadow and Live to Adoption Live, and makes the 0006 authority guard reject Live. | No operational composition persists or exercises Paper authority yet. |
 | Operations | CLI supports one offline fixture cycle and one-shot approve/revoke commands. | No production one-shot cycle, scheduler/daemon, overlap lock, checkpoint, health signal, restart recovery, reconciliation, or burn-in report exists. |
 | Pair/config values | M2-A config contract enforces the ordered exact Pair scope `USD_JPY`, `MXN_JPY` and requires every threshold, duration, version, and exit flag explicitly. Test values remain fixtures. | No reviewed production config instance or runtime settings source exists. Fixture and Research defaults are never promoted implicitly. |
@@ -112,9 +114,11 @@ production defaults.
 
 ## Target architecture
 
-This is the target for ExecPlan 0006. Milestone 2-A implements only the authority,
-config, Swap evidence, evaluation, Candidate, close, and Strategy Port contracts.
-The concrete Strategy and every Paper component shown below remain unimplemented.
+This is the target for ExecPlan 0006. Milestone 2-A implements the authority, config,
+Swap evidence, evaluation, Candidate, close, and Strategy Port contracts. Milestone
+2-B1 implements only Pair materialization domain/identity contracts. SQLite
+checkpoint/query, actual Pair transformation/persistence, the concrete Strategy, and
+every Paper component shown below remain unimplemented.
 
 ```text
 Operational Signal Source (shared immutable Signal store)
@@ -277,6 +281,95 @@ Probability merely to satisfy the accepted 0005 Candidate.
 Strategy does not decide quantity, leverage, margin, Portfolio acceptance, Risk
 approval, Execution intent, or Broker parameters. It never reads raw news text or
 calls an AI provider.
+
+### Pair Signal materialization identity foundation
+
+Milestone 2-B is split into three reviewable stages:
+
+- **2-B1 (complete):** package-neutral canonical identity and immutable
+  Specification, Request, Signal content, Observation group, candidate inventory,
+  selection snapshot, Pair Signal identity, and derivation contracts;
+- **2-B2 (pending):** monotonic Signal Store sequence/checkpoint schema and exact
+  append/compare persistence; and
+- **2-B3 (pending):** deterministic candidate query/group ranking, terminal
+  selection, shared transformer invocation, and one-transaction materialization.
+
+The implemented `PairSignalMaterializationSpecification` explicitly fixes Pair,
+source/output Signal types, Horizon, producer/model/prompt/scorer/source and output
+transformation versions, source freshness, exact Observation group policy, and
+selection policy. Its content ID includes every semantic field and integer
+microseconds for the freshness duration. It has no current-time or Pair/config
+default. M2-C composition must later require its Pair to equal the Strategy config's
+eligible Pair being evaluated; neither contract copies or silently supplies the
+other's whitelist.
+
+One `PairSignalMaterializationRequest` is exactly one Pair/as-of/Specification. Its
+stable ID deliberately excludes selected base/quote Signal IDs, Observation IDs,
+candidate IDs/count, Store/checkpoint sequence, capture/materialization time,
+worker/process/attempt identity, outcome, and derived Pair Signal ID. A retry that
+discovers different inputs therefore remains the same semantic request.
+
+`SignalContentSnapshot` commits to every immutable Signal field and version plus
+exact Feature and Observation lineage. Both ID collections are set-like and sorted
+by typed ID value before identity; source tuple/insertion order is not semantic.
+Forged hashes, duplicate lineage, invalid target/direction pairing, invalid numeric
+values, or non-UTC time fail as intrinsic corruption rather than becoming an
+ineligible candidate.
+
+An Observation group is the exact non-empty canonical Observation ID set under
+`exact-observation-set-v1`. Partial overlap is not equality. Each immutable
+`PairSignalSelectionCandidate` retains the stable Request, explicit ordered BASE or
+QUOTE role, exact Signal content hash, future positive `store_sequence`, intrinsic
+group, structured eligibility/rejection reason, and content ID. Candidate mismatch
+dominance is fixed in this order:
+
+```text
+target type -> target currency -> Signal type -> Horizon
+-> producer -> model -> prompt -> scorer -> source transformation
+-> direction type -> created after as-of -> observed after as-of -> stale at as-of
+```
+
+`PairSignalSelectionSnapshot` canonicalizes the complete inventory, commits to its
+candidate-set hash and checkpoint, and enforces exact selected BASE/QUOTE candidate,
+Signal, role, eligibility, Horizon, and Observation-set lineage. `SELECTED`,
+`NO_MATCH`, and `AMBIGUOUS` have disjoint structured reasons and are terminal for one
+Request. First-write audit `captured_at` must be UTC and no earlier than `as_of`, but
+is excluded from selection semantic identity.
+
+The deterministic Pair Signal ID is fixed after Request/selection and frozen
+`materialized_at`, before transformer invocation. It commits to Pair/output type,
+exact BASE/QUOTE Signal IDs and content hashes, Observation group, transformation
+version, and time. It neither calls a Clock nor calculates `base - quote`.
+`PairSignalDerivation` separately retains the exact ordered source Candidates,
+Signals/content hashes, Observation group/IDs, Specification, Request, selection,
+Horizon, transformation, and source/request/materialization times. Shared
+`fx_core.Signal` gains no `source_signal_ids` or Live-specific lineage.
+
+M2-B2 must add a monotonic `store_sequence`. The first Request claim freezes:
+
+```text
+checkpoint_sequence = MAX(store_sequence)
+```
+
+Candidate eligibility then requires both `store_sequence <= checkpoint_sequence`
+and `signal.created_at <= request.as_of`. Retry reads the original checkpoint and
+terminal selection snapshot and never reruns selection. Because `Signal.created_at`
+is producer time rather than local insertion time, an old-dated backfill inserted
+after the checkpoint cannot enter a historical Request.
+
+M2-B3 groups only exact Observation sets. More than one eligible BASE or QUOTE in a
+group is ambiguous. Complete groups rank first by greatest
+`max(base.observed_at, quote.observed_at)`, then greatest
+`max(base.created_at, quote.created_at)`. A remaining semantic tie is
+`AMBIGUOUS_SOURCE_GROUP`; Signal or group ID may order diagnostics but may not choose
+a winner.
+
+M2-B2/B3 must atomically persist selection snapshot, complete candidate inventory,
+derived Pair Signal, Feature links, Pair Signal Store sequence, and derivation.
+Existing `append_signal_if_absent()` is insufficient because an existing Signal ID
+does not prove equal content or lineage. Idempotent reuse requires full Signal,
+Feature/Observation lineage, selection, and derivation equality; any mismatch rolls
+back without partial records.
 
 ### Operational inputs and time
 
@@ -669,9 +762,23 @@ all four are complete:
   reason explicitly validates its required evidence. Monetary evidence is finite
   Decimal and v1 config accepts only supported downstream contracts. It adds no
   concrete Strategy, store, or migration and preserves the accepted 0005 contracts.
-- **2-B Pair Signal Materialization (pending):** exact base/quote Signal derivation,
-  deterministic selection/checkpoint, atomic Pair Signal plus derivation persistence,
-  and exact idempotency.
+- **2-B Pair Signal Materialization (in progress):** exact base/quote Signal
+  derivation, deterministic selection/checkpoint, atomic Pair Signal plus derivation
+  persistence, and exact idempotency.
+  - **2-B1 Pair Signal Materialization Contracts and Identity Foundation
+    (complete):** package-neutral canonical identity; immutable versioned
+    Specification and stable Pair/as-of Request; exact Signal content and Observation
+    group identity; typed BASE/QUOTE candidate inventory; immutable terminal
+    selection snapshot; deterministic pre-transform Pair Signal ID; and exact
+    PairSignalDerivation. No migration, Store query, Pair Signal generation, or
+    materializer was added.
+  - **2-B2 Signal Store Checkpoint and Exact Persistence (pending):** monotonic Store
+    sequence, first-claim checkpoint, saved terminal selection/candidate inventory,
+    and full-content/lineage append-or-compare operations.
+  - **2-B3 Operational Pair Signal Materializer (pending):** deterministic as-of
+    candidate query, exact-group ranking and ambiguity handling,
+    `CurrencyPairSignalTransformer` invocation, and atomic Signal-plus-derivation
+    persistence.
 - **2-C Entry Strategy (pending):** concrete `NewsFilteredCarryStrategy`, operational
   Swap adapter, evaluation/Candidate persistence, and persistence-boundary recheck of
   the approval's exact `strategy_config_identity`.
@@ -966,6 +1073,15 @@ ExecPlan 0006 is complete only when all of the following are true:
 - [x] (2026-07-17) Passed the Milestone 2-A final correction through the full local
   Python 3.11/3.14 test, Ruff, strict mypy, import-smoke, and diff-check matrix with
   no migration, concrete Strategy, or Broker/Execution/Portfolio/Risk change.
+- [x] (2026-07-17) Milestone 2-B1 - added stable Pair/as-of/specification request
+  identity; exact Signal content, Observation-group, candidate-inventory,
+  selection-snapshot, deterministic Pair Signal identity, and derivation contracts;
+  and extracted package-neutral canonical digest without changing accepted IDs.
+- [x] (2026-07-17) Left checkpoint persistence, SQLite selection, Pair
+  transformation, and materializer execution pending for M2-B2/M2-B3; no migration
+  or existing Store behavior changed.
+- [ ] Milestone 2-B2 - Signal Store checkpoint and exact persistence.
+- [ ] Milestone 2-B3 - operational Pair Signal selection/materialization.
 - [ ] Milestone 2-B - exact Pair Signal materialization and selection.
 - [ ] Milestone 2-C - concrete entry Strategy and persistence.
 - [ ] Milestone 2-D - ordinary close Portfolio/Risk path.
@@ -1061,6 +1177,36 @@ ExecPlan 0006 is complete only when all of the following are true:
   that a reused deterministic ID has identical content and lineage.
   Resolution: Milestone 2-B adds an exact persistence operation that compares the
   complete existing Signal and derivation before treating a retry as idempotent.
+- Observation: `Signal.created_at` is producer availability time, not local Signal
+  Store insertion time, so it cannot exclude an old-dated backfill by itself.
+  Resolution: M2-B2 combines request `as_of` with a frozen monotonic Store checkpoint.
+- Observation: putting discovered Signal, Observation, or checkpoint IDs into the
+  Request ID makes one retry become a different semantic Request.
+  Resolution: one Pair/as-of/Specification alone defines the stable Request; input
+  discovery belongs to its immutable selection snapshot.
+- Observation: a transformed Pair Signal's Feature lineage cannot identify which
+  exact base and quote Signals, content revisions, or ordered roles produced it.
+  Resolution: keep full BASE/QUOTE source identity in `PairSignalDerivation` instead
+  of changing shared `Signal`.
+- Observation: Signal Feature and Observation lineage is set-like, and Store reads
+  reconstruct it in typed-ID order rather than caller insertion order.
+  Resolution: canonicalize both collections before content identity and comparison.
+- Observation: partial Observation overlap does not prove that base and quote Signals
+  describe the same source event set.
+  Resolution: v1 group equality requires the complete canonical Observation ID sets
+  to be identical.
+- Observation: importing `swap_bot.adoption.digest` from `fx_signal_store` would
+  reverse the package dependency direction.
+  Resolution: move the byte-compatible canonical helper to `fx_core.identity` and
+  retain the `swap_bot.adoption` functions as compatibility wrappers.
+- Observation: deriving a Pair Signal ID from the completed Pair Signal creates a
+  circular dependency because the transformer itself requires the output Signal ID.
+  Resolution: derive the ID first from exact request/selection/source lineage and
+  frozen materialization time; do not duplicate the transformer formula in identity.
+- Observation: `captured_at` records the first successful write but does not change
+  which Request, checkpoint, candidate set, or outcome was selected.
+  Resolution: validate and preserve it as audit metadata while excluding it from the
+  selection semantic ID.
 - Observation: existing entry Portfolio exposure and maximum-position rules cannot be
   applied blindly to an ordinary Strategy close.
   Resolution: Milestone 2-D adds a distinct typed close Portfolio/Risk path where
@@ -1158,6 +1304,30 @@ ExecPlan 0006 is complete only when all of the following are true:
   the typed Milestone 2-D Portfolio/Risk boundary.
 - 2026-07-17: Defer operational Pair selection/materialization until Milestone 2-B can
   preserve exact base/quote Signal lineage and exact persistence idempotency.
+- 2026-07-17: Split Pair materialization into M2-B1 identity/domain contracts,
+  M2-B2 checkpoint/exact persistence, and M2-B3 operational selection/transformation.
+- 2026-07-17: Define one stable materialization Request by exact
+  Pair/as-of/Specification and exclude selected Signal IDs, checkpoint, capture time,
+  materialization time, and retry metadata from Request identity.
+- 2026-07-17: Define the v1 source group as exact canonical Observation ID set
+  equality; partial overlap is not equality.
+- 2026-07-17: Include canonical Feature and Observation lineage in exact Signal
+  content identity and reject duplicate lineage as corruption.
+- 2026-07-17: Retain BASE and QUOTE as explicit ordered roles throughout candidate,
+  selection, Pair Signal identity, and derivation contracts.
+- 2026-07-17: Make selection snapshot identity commit to the complete canonical
+  candidate inventory hash and terminal `SELECTED`/`NO_MATCH`/`AMBIGUOUS` result.
+- 2026-07-17: Exclude first-write `captured_at` from selection semantic identity;
+  M2-B2 must preserve the originally stored audit value on retry.
+- 2026-07-17: Derive Pair Signal ID before transformation from exact source lineage
+  and frozen `materialized_at`; the identity helper neither calls Clock nor computes
+  `base - quote`.
+- 2026-07-17: Keep exact source Signal lineage in `PairSignalDerivation` rather than
+  adding source Signal IDs to shared `fx_core.Signal`.
+- 2026-07-17: Place canonical JSON/SHA-256 in package-neutral `fx_core.identity` and
+  retain existing `swap_bot.adoption` wrappers byte-for-byte compatible.
+- 2026-07-17: Keep Store sequence/checkpoint schema, exact append/compare, candidate
+  query/ranking, transformer invocation, and atomic materializer in M2-B2/M2-B3.
 - 2026-07-17: Paper persistence begins at the next available additive Live migration
   after Milestone 2 Strategy persistence; `0003` is neither reserved nor created by
   Milestone 2-A.
@@ -1316,3 +1486,33 @@ Milestone 2-A final Position-binding correction completed locally on 2026-07-17:
   was added or changed.
 - Hosted CI has not been run for this unpushed final correction; only local
   validation is claimed.
+
+Milestone 2-B1 Pair materialization identity foundation completed locally on
+2026-07-17:
+
+- Python 3.11.9: `521 passed, 5 skipped`; Ruff passed; strict mypy passed for
+  71 source files.
+- Python 3.14.6: `521 passed, 5 skipped`; Ruff passed; strict mypy passed for
+  71 source files.
+- The five skips remain opt-in external provider smoke tests. Final pytest runs used
+  distinct OS temporary roots with cache disabled; Ruff used `--no-cache` and mypy
+  used `--no-incremental`.
+- Import smoke for `fx_core.identity`, all requested `fx_signal_store` Pair
+  materialization contracts, and the existing `swap_bot.adoption` digest API passed
+  on both supported Python versions.
+- Fixed pre-extraction canonical JSON/digest characterization passed on both Python
+  versions, including nested Mapping, key order, tuple/list, `MappingProxyType`,
+  scalar values, Adoption-shaped identity, and the accepted M2-A Strategy config ID.
+- `git diff --check` passed. The 20-file change contains package-neutral identity,
+  M2-B1 contracts/exports, focused contract/identity/architecture tests, the
+  Adoption compatibility wrapper, and the requested living documents.
+- Shared Signal Store migrations remain exactly `0001_signal_lineage.sql`; Live
+  migrations remain exactly `0001`/`0002`. No migration was added or edited, and
+  `SQLiteSignalStore`, `append_signal_if_absent`, and all query/persistence behavior
+  are unchanged.
+- `CurrencyPairSignalTransformer` and shared `Signal` are unchanged. No concrete
+  materializer, candidate query/ranking, checkpoint, Pair Signal generation,
+  `NewsFilteredCarryStrategy`, Adoption-gate call, Portfolio, Risk, Execution,
+  Broker, Paper, scheduler, CLI, or ExecPlan 0007 implementation was added.
+- Hosted CI has not been run for this unpushed M2-B1 commit; only local validation is
+  claimed.

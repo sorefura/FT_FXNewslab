@@ -8,6 +8,32 @@ production Strategy Ports, and the separate execution-authority mapping/guard. I
 does not implement a concrete Strategy, Signal selection/materialization,
 Portfolio/Risk integration, persistence, or Paper runtime.
 
+Milestone 2-B1 now implements the package-neutral identity and immutable contract
+foundation that precedes operational Pair Signal generation:
+
+```text
+PairSignalMaterializationSpecification
+    -> stable Pair/as-of Request
+    -> exact BASE/QUOTE candidate inventory
+    -> immutable SELECTED / NO_MATCH / AMBIGUOUS snapshot
+    -> deterministic Pair Signal ID
+    -> PairSignalDerivation
+```
+
+The Request excludes discovered Signal IDs, checkpoint, capture/materialization time,
+worker, and retry metadata. `SignalContentSnapshot` commits to the full immutable
+Signal plus canonical Feature/Observation lineage, and exact Observation ID set
+equality defines a v1 source group. BASE and QUOTE remain ordered roles. Selection
+snapshot semantic identity includes the complete candidate-set hash but excludes
+first-write `captured_at`. Exact source Signal lineage belongs to
+`PairSignalDerivation`, not to the shared `Signal` model.
+
+These contracts live in `fx_signal_store` and depend only on `fx_core`. They neither
+query SQLite nor call the shared transformer. Milestone 2-B2 will freeze a monotonic
+Store checkpoint; Milestone 2-B3 will select and atomically persist the derived Pair
+Signal using `CurrencyPairSignalTransformer`. No Live application dependency is
+admitted into the shared package direction.
+
 Position exit evaluation is content-addressed from exact typed evidence rather than
 only a business Position ID. `PositionExitPositionEvidence` self-describes the exact
 business `PositionId`, immutable evidence ID, Pair, existing Side, and opened/observed

@@ -60,9 +60,11 @@ rollback, and Live operational acceptance. Paper burn-in evidence may inform tha
 separate review but cannot grant Live authority.
 
 Current executable behavior is complete through ExecPlan 0005. ExecPlan 0006
-Milestone 2-A has implemented only the production Strategy domain contract
-foundation: immutable config/identity, authority mapping, operational Swap evidence,
-typed entry/exit evaluations and Candidates, and production Strategy Ports. Exact
-Pair Signal materialization (2-B), the concrete entry Strategy (2-C), the ordinary
-close Portfolio/Risk path (2-D), every Paper component, and ExecPlan 0007 Live
-rollout remain targets rather than current runtime behavior.
+Milestone 2-A has implemented the production Strategy domain contract foundation:
+immutable config/identity, authority mapping, operational Swap evidence, typed
+entry/exit evaluations and Candidates, and production Strategy Ports. Milestone
+2-B1 has fixed Pair materialization identity and immutable selection/derivation
+contracts without querying or changing the Signal Store. Checkpoint persistence and
+operational Pair Signal generation (2-B2/B3), the concrete entry Strategy (2-C), the
+ordinary close Portfolio/Risk path (2-D), every Paper component, and ExecPlan 0007
+Live rollout remain targets rather than current runtime behavior.

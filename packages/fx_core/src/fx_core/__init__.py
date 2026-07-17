@@ -4,6 +4,7 @@ from .feature import (
     FactorScore,
     FundamentalFactor,
 )
+from .identity import canonical_json, digest
 from .ids import FeatureId, ObservationId, SignalId
 from .observation import NewsObservation
 from .ports import LlmFeatureExtractor
@@ -19,6 +20,8 @@ __all__ = [
     "CurrencyPair",
     "CurrencyPairSignalTransformer",
     "CurrencyTarget",
+    "canonical_json",
+    "digest",
     "DirectionScore",
     "FactorScore",
     "FeatureId",
@@ -35,4 +38,3 @@ __all__ = [
     "SignalId",
     "VersionMetadata",
 ]
-

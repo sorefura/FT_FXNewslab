@@ -1,4 +1,3 @@
-import hashlib
 import json
 from collections.abc import Mapping
 from dataclasses import dataclass
@@ -8,6 +7,8 @@ from types import MappingProxyType
 from typing import Any
 
 from fx_core import CurrencyTarget, Horizon, PairTarget, Signal
+from fx_core.identity import canonical_json as _canonical_json
+from fx_core.identity import digest as _digest
 from fx_core.time import require_utc
 
 RESEARCH_EVIDENCE_CONTRACT_VERSION = "research-validation-evidence-v1"
@@ -669,16 +670,11 @@ def revocation_decision(
 
 
 def canonical_json(payload: object) -> str:
-    return json.dumps(
-        _json_plain(payload),
-        ensure_ascii=True,
-        sort_keys=True,
-        separators=(",", ":"),
-    )
+    return _canonical_json(payload)
 
 
 def digest(payload: object) -> str:
-    return hashlib.sha256(canonical_json(payload).encode()).hexdigest()
+    return _digest(payload)
 
 
 def _require_text(value: str | None, label: str) -> None:
@@ -730,12 +726,4 @@ def _immutable_json(value: object) -> object:
         )
     if isinstance(value, list):
         return tuple(_immutable_json(item) for item in value)
-    return value
-
-
-def _json_plain(value: object) -> object:
-    if isinstance(value, Mapping):
-        return {str(key): _json_plain(item) for key, item in value.items()}
-    if isinstance(value, (list, tuple)):
-        return [_json_plain(item) for item in value]
     return value

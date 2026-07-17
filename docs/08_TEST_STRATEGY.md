@@ -1,6 +1,6 @@
 # Test Strategy
 
-## Production Strategy M2-A contract tests and Paper target tests
+## Production Strategy M2-A and Pair materialization M2-B1 contract tests
 
 Milestone 2-A tests already state:
 
@@ -36,6 +36,27 @@ Milestone 2-A tests already state:
   Signal type at construction; and
 - the strategy package imports no Research, AI/LLM, Execution, Portfolio, Risk, or
   Broker module, while no concrete production Strategy or migration exists yet.
+
+Milestone 2-B1 tests additionally state:
+
+- package-neutral canonical JSON/digest stays byte-compatible with existing Adoption
+  and M2-A semantic IDs on Python 3.11 and 3.14;
+- one explicit Pair/as-of/specification creates one stable Request independent of
+  discovered Signal IDs, checkpoint, audit time, worker, or retry attempt;
+- Signal content identity includes exact canonical Feature and Observation lineage,
+  while tuple input order is not semantic;
+- exact Observation ID set equality defines the v1 source group and partial overlap
+  does not;
+- BASE/QUOTE candidate roles are typed, eligibility mismatches have a fixed dominant
+  reason order, and intrinsic corrupt records fail closed;
+- selection snapshots commit to canonical complete candidate inventory and enforce
+  exact selected BASE/QUOTE lineage; `captured_at` is not semantic identity;
+- deterministic Pair Signal ID commits to request, selection, exact source content,
+  group, transformation, and frozen materialization time without calculating
+  `base - quote`; and
+- `PairSignalDerivation` preserves ordered source IDs/content hashes separately from
+  shared `Signal`, while no migration, Store query, materializer, concrete Strategy,
+  or Paper code exists.
 
 Later ExecPlan 0006 implementation tests will state the following guarantees:
 

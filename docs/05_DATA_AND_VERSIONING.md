@@ -10,6 +10,60 @@ numbers in implementation order. Paper persistence begins at the next available
 additive Live migration only after Milestone 2 production Strategy persistence is
 complete; `0003` is not reserved.
 
+Milestone 2-B1 adds no migration and changes no SQLite behavior. It defines the
+content-addressed evidence that M2-B2/B3 must persist:
+
+```text
+PairSignalMaterializationSpecification
+PairSignalMaterializationRequest
+SignalContentSnapshot
+PairSignalSelectionCandidate inventory
+PairSignalSelectionSnapshot
+Pair Signal deterministic identity
+PairSignalDerivation
+```
+
+The Specification includes every source/output Signal, Pair, Horizon, version,
+freshness, exact-Observation-group, and selection-policy dimension. Duration identity
+uses integer microseconds. One Request is exactly Pair/as-of/Specification; selected
+Signal IDs, checkpoint, candidate count, audit capture/materialization time, worker,
+and retry attempt are excluded so retry cannot create another semantic request.
+
+Signal content identity includes canonical Feature IDs and Observation IDs. Both
+lineages are set-like and sorted by typed ID value; tuple input order is not semantic.
+The v1 Observation group is the complete canonical Observation ID set. Partial
+overlap is a different group. Candidate inventory retains positive Store sequence,
+exact Signal content hash, BASE/QUOTE role, group, eligibility, and one versioned
+dominant rejection reason. The selection snapshot commits to the canonical complete
+candidate-set hash, checkpoint, outcome, reason, and selected lineage while excluding
+first-write audit `captured_at` from semantic identity.
+
+M2-B2 will add a monotonic `store_sequence` and first-claim checkpoint equal to the
+current maximum sequence. Eligibility will require both
+`store_sequence <= checkpoint_sequence` and `signal.created_at <= request.as_of`.
+Retry reuses the original checkpoint and saved terminal selection snapshot. A
+backfilled Signal inserted after that checkpoint cannot enter the historical Request
+even when its `created_at` is old.
+
+M2-B3 selection will group eligible BASE/QUOTE candidates only by exact Observation
+set. Multiple eligible BASE or QUOTE records inside one group fail closed. Complete
+groups rank by greatest `max(base.observed_at, quote.observed_at)`, then greatest
+`max(base.created_at, quote.created_at)`. If those semantic values still tie, IDs are
+diagnostic ordering only and the result is `AMBIGUOUS_SOURCE_GROUP`.
+
+`SELECTED`, `NO_MATCH`, and `AMBIGUOUS` are immutable terminal outcomes for one
+Request. M2-B2/B3 must save candidate inventory, selection snapshot, derived Pair
+Signal and Feature links, its Store sequence, and `PairSignalDerivation` in one
+transaction. Existing `append_signal_if_absent()` is not exact persistence: reuse of
+one Signal ID requires full Signal, Feature/Observation lineage, selection, and
+derivation equality. Any conflict fails without partial records.
+
+Deterministic Pair Signal identity is fixed before transformation from exact request,
+selection, BASE/QUOTE Signal IDs and content hashes, Observation group,
+`currency-pair-v1`, and frozen `materialized_at`. It contains no Pair score and does
+not call the transformer. `PairSignalDerivation` owns exact ordered source Signal
+lineage; shared `Signal` remains unchanged.
+
 Position exit semantic identity embeds one `PositionExitPositionEvidence` payload
 containing the business Position ID, distinct immutable Position evidence ID, Pair,
 existing Side, and opened/observed timestamps. Evaluation input must exactly match

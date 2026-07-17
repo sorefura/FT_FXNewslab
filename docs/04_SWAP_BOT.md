@@ -12,6 +12,18 @@ It has no concrete production Strategy, operational Signal/Swap adapter, product
 Candidate persistence, ordinary close Portfolio/Risk path, Paper Gateway, fill
 engine, account/PnL ledger, scheduler, or daemon.
 
+Milestone 2-B1 now provides the upstream Pair materialization contracts in
+`fx_signal_store`, not in `swap_bot`. One Pair/as-of/specification creates one stable
+request. Exact source Signal content and Feature/Observation lineage are frozen as
+BASE/QUOTE candidates; the immutable selection outcome is `SELECTED`, `NO_MATCH`, or
+`AMBIGUOUS`. Deterministic Pair Signal identity and `PairSignalDerivation` retain the
+exact ordered source roles without adding Live semantics to `fx_core.Signal`.
+
+No operational Signal query, checkpoint, Pair transformation, materializer, or
+Adoption-gate call is implemented yet. M2-C composition must prove that the Strategy
+config eligible Pair exactly matches the materialization Specification Pair; neither
+contract silently supplies a Pair whitelist for the other.
+
 Accepted 0005 `TradeCandidate` remains entry-only and unchanged.
 `ApprovedLiquidationIntent` is created only for the
 Risk margin kill switch and is not a normal Strategy close path. `AccountSnapshot`

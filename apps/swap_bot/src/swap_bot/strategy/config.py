@@ -4,8 +4,13 @@ from datetime import timedelta
 from fx_core import CurrencyPair, PairScore
 
 from ..adoption import digest
+from .versions import (
+    NEWS_FILTERED_CARRY_CONFIG_VERSION,
+    PRODUCTION_CANDIDATE_CONTRACT_VERSION,
+    SUPPORTED_PAIR_SIGNAL_TYPE,
+    SUPPORTED_PAIR_TRANSFORMATION_VERSION,
+)
 
-NEWS_FILTERED_CARRY_CONFIG_VERSION = "news-filtered-carry-config-v1"
 INITIAL_ELIGIBLE_PAIRS = (
     CurrencyPair.parse("USD_JPY"),
     CurrencyPair.parse("MXN_JPY"),
@@ -49,6 +54,12 @@ class NewsFilteredCarryStrategyConfig:
                 raise ValueError(f"{label} must not be blank")
         if self.eligible_pairs != INITIAL_ELIGIBLE_PAIRS:
             raise ValueError("v1 eligible_pairs must be ordered USD_JPY, MXN_JPY")
+        if self.pair_transformation_version != SUPPORTED_PAIR_TRANSFORMATION_VERSION:
+            raise ValueError("unsupported Pair transformation version")
+        if self.expected_pair_signal_type != SUPPORTED_PAIR_SIGNAL_TYPE:
+            raise ValueError("unsupported Pair Signal type")
+        if self.candidate_contract_version != PRODUCTION_CANDIDATE_CONTRACT_VERSION:
+            raise ValueError("unsupported production Candidate contract version")
         if self.positive_entry_threshold.value <= 0:
             raise ValueError("positive_entry_threshold must be positive")
         if self.negative_entry_threshold.value >= 0:

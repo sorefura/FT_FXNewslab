@@ -3,17 +3,24 @@ from datetime import datetime
 from enum import StrEnum
 from typing import Protocol
 
-from fx_core import CurrencyPair, PairScore, PairTarget, Probability, SignalId
+from fx_core import (
+    CurrencyPair,
+    PairScore,
+    PairTarget,
+    Probability,
+    SignalId,
+)
 from fx_core.time import require_utc
 
 from ..adoption import AuthorizedSignal, digest
 from ..models import PositionId, Side
 from .swap_evidence import OperationalSwapEvidence
-
-PRODUCTION_CANDIDATE_CONTRACT_VERSION = "production-trade-candidate-v1"
-ENTRY_EVALUATION_CONTRACT_VERSION = "production-entry-evaluation-v1"
-POSITION_CLOSE_CANDIDATE_CONTRACT_VERSION = "position-close-candidate-v1"
-POSITION_EXIT_EVALUATION_CONTRACT_VERSION = "production-position-exit-evaluation-v1"
+from .versions import (
+    ENTRY_EVALUATION_CONTRACT_VERSION,
+    POSITION_CLOSE_CANDIDATE_CONTRACT_VERSION,
+    POSITION_EXIT_EVALUATION_CONTRACT_VERSION,
+    PRODUCTION_CANDIDATE_CONTRACT_VERSION,
+)
 
 
 class EntryEvaluationOutcome(StrEnum):
@@ -379,6 +386,194 @@ class ProductionEntryEvaluation:
 
 
 @dataclass(frozen=True, slots=True)
+class PositionExitEvidenceContext:
+    position_evidence_id: str
+    position_opened_at: datetime
+    position_observed_at: datetime
+    signal_selection_checkpoint_id: str
+    swap_selection_checkpoint_id: str
+    expected_signal_specification_identity: str
+    prior_adoption_decision_id: str
+    adoption_state_evidence_id: str
+    exit_input_policy_version: str
+
+    def __post_init__(self) -> None:
+        for value, label in (
+            (self.position_evidence_id, "position_evidence_id"),
+            (self.signal_selection_checkpoint_id, "signal_selection_checkpoint_id"),
+            (self.swap_selection_checkpoint_id, "swap_selection_checkpoint_id"),
+            (
+                self.expected_signal_specification_identity,
+                "expected_signal_specification_identity",
+            ),
+            (self.prior_adoption_decision_id, "prior_adoption_decision_id"),
+            (self.adoption_state_evidence_id, "adoption_state_evidence_id"),
+            (self.exit_input_policy_version, "exit_input_policy_version"),
+        ):
+            _require_text(value, label)
+        require_utc(self.position_opened_at, "position opened_at")
+        require_utc(self.position_observed_at, "position observed_at")
+        if self.position_opened_at > self.position_observed_at:
+            raise ValueError("position_opened_at cannot be after position_observed_at")
+
+    @property
+    def identity_payload(self) -> dict[str, object]:
+        return {
+            "position_evidence_id": self.position_evidence_id,
+            "position_opened_at": self.position_opened_at.isoformat(),
+            "position_observed_at": self.position_observed_at.isoformat(),
+            "signal_selection_checkpoint_id": self.signal_selection_checkpoint_id,
+            "swap_selection_checkpoint_id": self.swap_selection_checkpoint_id,
+            "expected_signal_specification_identity": (
+                self.expected_signal_specification_identity
+            ),
+            "prior_adoption_decision_id": self.prior_adoption_decision_id,
+            "adoption_state_evidence_id": self.adoption_state_evidence_id,
+            "exit_input_policy_version": self.exit_input_policy_version,
+        }
+
+
+@dataclass(frozen=True, slots=True)
+class PositionCloseEvidenceLineage:
+    context: PositionExitEvidenceContext
+    authorized_pair_signal: AuthorizedSignal | None
+    swap_evidence: OperationalSwapEvidence | None
+
+    def __post_init__(self) -> None:
+        if not isinstance(self.context, PositionExitEvidenceContext):
+            raise TypeError("context must be PositionExitEvidenceContext")
+        if self.authorized_pair_signal is not None and not isinstance(
+            self.authorized_pair_signal, AuthorizedSignal
+        ):
+            raise TypeError("authorized_pair_signal must be AuthorizedSignal when present")
+        if self.swap_evidence is not None:
+            self.swap_evidence.validate_intrinsic_integrity()
+
+    def validate_for(
+        self,
+        *,
+        strategy_id: str,
+        strategy_version: str,
+        position_id: PositionId,
+        pair: CurrencyPair,
+        evaluated_at: datetime,
+    ) -> None:
+        require_utc(evaluated_at, "position exit evaluated_at")
+        if self.context.position_observed_at > evaluated_at:
+            raise ValueError("position_observed_at cannot be after evaluated_at")
+        if self.authorized_pair_signal is not None:
+            signal = self.authorized_pair_signal.signal
+            authorization = self.authorized_pair_signal.authorization
+            if authorization.signal_id != signal.signal_id.value:
+                raise ValueError("authorization does not belong to current Signal")
+            if (
+                authorization.strategy_id != strategy_id
+                or authorization.strategy_version != strategy_version
+            ):
+                raise ValueError("Signal authorization belongs to another Strategy")
+            if not isinstance(signal.target, PairTarget) or not isinstance(
+                signal.direction, PairScore
+            ):
+                raise TypeError("position exit requires an authorized Pair Signal")
+            if signal.target.pair != pair:
+                raise ValueError("authorized Pair Signal belongs to another Pair")
+            if signal.created_at > evaluated_at:
+                raise ValueError("Signal created_at cannot be after evaluated_at")
+            if authorization.authorized_at > evaluated_at:
+                raise ValueError("Signal authorized_at cannot be after evaluated_at")
+        if self.swap_evidence is not None:
+            self.swap_evidence.validate_intrinsic_integrity()
+            if self.swap_evidence.pair != pair:
+                raise ValueError("swap evidence belongs to another Pair")
+            if self.swap_evidence.received_at > evaluated_at:
+                raise ValueError("swap received_at cannot be after evaluated_at")
+
+    @property
+    def identity_payload(self) -> dict[str, object]:
+        return {
+            "context": self.context.identity_payload,
+            "authorized_signal_identity": (
+                None
+                if self.authorized_pair_signal is None
+                else _authorized_signal_identity(self.authorized_pair_signal)
+            ),
+            "swap_evidence_identity": (
+                None
+                if self.swap_evidence is None
+                else {
+                    "swap_evidence_id": self.swap_evidence.swap_evidence_id,
+                    "intrinsic_identity": self.swap_evidence.identity_payload,
+                }
+            ),
+        }
+
+    @property
+    def position_evidence_id(self) -> str:
+        return self.context.position_evidence_id
+
+    @property
+    def signal_id(self) -> SignalId | None:
+        if self.authorized_pair_signal is None:
+            return None
+        return self.authorized_pair_signal.signal.signal_id
+
+    @property
+    def authorization_id(self) -> str | None:
+        if self.authorized_pair_signal is None:
+            return None
+        return self.authorized_pair_signal.authorization.authorization_id
+
+    @property
+    def current_adoption_decision_id(self) -> str | None:
+        if self.authorized_pair_signal is None:
+            return None
+        return self.authorized_pair_signal.authorization.adoption_decision_id
+
+    @property
+    def swap_evidence_id(self) -> str | None:
+        if self.swap_evidence is None:
+            return None
+        return self.swap_evidence.swap_evidence_id
+
+
+@dataclass(frozen=True, slots=True)
+class ProductionPositionExitEvaluationInput:
+    strategy_id: str
+    strategy_version: str
+    approved_strategy_config_identity: str
+    position_id: PositionId
+    pair: CurrencyPair
+    existing_position_side: Side
+    evidence_context: PositionExitEvidenceContext
+    authorized_pair_signal: AuthorizedSignal | None
+    swap_evidence: OperationalSwapEvidence | None
+    evaluated_at: datetime
+
+    def __post_init__(self) -> None:
+        for value, label in (
+            (self.strategy_id, "strategy_id"),
+            (self.strategy_version, "strategy_version"),
+            (self.approved_strategy_config_identity, "approved_strategy_config_identity"),
+        ):
+            _require_text(value, label)
+        self.evidence_lineage.validate_for(
+            strategy_id=self.strategy_id,
+            strategy_version=self.strategy_version,
+            position_id=self.position_id,
+            pair=self.pair,
+            evaluated_at=self.evaluated_at,
+        )
+
+    @property
+    def evidence_lineage(self) -> PositionCloseEvidenceLineage:
+        return PositionCloseEvidenceLineage(
+            context=self.evidence_context,
+            authorized_pair_signal=self.authorized_pair_signal,
+            swap_evidence=self.swap_evidence,
+        )
+
+
+@dataclass(frozen=True, slots=True)
 class PositionCloseCandidate:
     close_candidate_id: str
     close_candidate_contract_version: str
@@ -390,7 +585,7 @@ class PositionCloseCandidate:
     pair: CurrencyPair
     existing_position_side: Side
     exit_reason: PositionExitReason
-    evidence_ids: tuple[str, ...]
+    evidence_lineage: PositionCloseEvidenceLineage
     created_at: datetime
 
     def __post_init__(self) -> None:
@@ -406,11 +601,14 @@ class PositionCloseCandidate:
             _require_text(value, label)
         if not isinstance(self.exit_reason, PositionExitReason):
             raise TypeError("exit_reason must be PositionExitReason")
-        if any(not value.strip() for value in self.evidence_ids):
-            raise ValueError("evidence IDs must not be blank")
-        if len(set(self.evidence_ids)) != len(self.evidence_ids):
-            raise ValueError("evidence IDs must not contain duplicates")
-        require_utc(self.created_at, "close candidate created_at")
+        self.evidence_lineage.validate_for(
+            strategy_id=self.strategy_id,
+            strategy_version=self.strategy_version,
+            position_id=self.position_id,
+            pair=self.pair,
+            evaluated_at=self.created_at,
+        )
+        _require_exit_reason_evidence(self.evidence_lineage, self.exit_reason)
         if self.close_candidate_id != self.expected_close_candidate_id:
             raise ValueError("close_candidate_id does not match intrinsic candidate")
 
@@ -427,7 +625,7 @@ class PositionCloseCandidate:
         pair: CurrencyPair,
         existing_position_side: Side,
         exit_reason: PositionExitReason,
-        evidence_ids: tuple[str, ...],
+        evidence_lineage: PositionCloseEvidenceLineage,
         created_at: datetime,
     ) -> "PositionCloseCandidate":
         payload = _close_candidate_payload(
@@ -440,7 +638,7 @@ class PositionCloseCandidate:
             pair=pair,
             existing_position_side=existing_position_side,
             exit_reason=exit_reason,
-            evidence_ids=evidence_ids,
+            evidence_lineage=evidence_lineage,
             created_at=created_at,
         )
         return cls(
@@ -454,7 +652,7 @@ class PositionCloseCandidate:
             pair=pair,
             existing_position_side=existing_position_side,
             exit_reason=exit_reason,
-            evidence_ids=evidence_ids,
+            evidence_lineage=evidence_lineage,
             created_at=created_at,
         )
 
@@ -478,41 +676,13 @@ class PositionCloseCandidate:
             pair=self.pair,
             existing_position_side=self.existing_position_side,
             exit_reason=self.exit_reason,
-            evidence_ids=self.evidence_ids,
+            evidence_lineage=self.evidence_lineage,
             created_at=self.created_at,
         )
 
     @property
     def expected_close_candidate_id(self) -> str:
         return "position-close-candidate-" + digest(self.identity_payload)
-
-
-@dataclass(frozen=True, slots=True)
-class ProductionPositionExitEvaluationInput:
-    strategy_id: str
-    strategy_version: str
-    approved_strategy_config_identity: str
-    position_id: PositionId
-    pair: CurrencyPair
-    existing_position_side: Side
-    authorized_pair_signal: AuthorizedSignal | None
-    swap_evidence: OperationalSwapEvidence | None
-    evaluated_at: datetime
-
-    def __post_init__(self) -> None:
-        for value, label in (
-            (self.strategy_id, "strategy_id"),
-            (self.strategy_version, "strategy_version"),
-            (self.approved_strategy_config_identity, "approved_strategy_config_identity"),
-        ):
-            _require_text(value, label)
-        if self.authorized_pair_signal is not None and not isinstance(
-            self.authorized_pair_signal, AuthorizedSignal
-        ):
-            raise TypeError("authorized_pair_signal must be AuthorizedSignal when present")
-        if self.swap_evidence is not None:
-            self.swap_evidence.validate_intrinsic_integrity()
-        require_utc(self.evaluated_at, "position exit evaluated_at")
 
 
 @dataclass(frozen=True, slots=True)
@@ -524,6 +694,8 @@ class ProductionPositionExitEvaluation:
     strategy_config_identity: str
     position_id: PositionId
     pair: CurrencyPair
+    existing_position_side: Side
+    evidence_lineage: PositionCloseEvidenceLineage
     evaluated_at: datetime
     outcome: PositionExitEvaluationOutcome
     close_candidate: PositionCloseCandidate | None
@@ -539,7 +711,13 @@ class ProductionPositionExitEvaluation:
             (self.strategy_config_identity, "strategy_config_identity"),
         ):
             _require_text(value, label)
-        require_utc(self.evaluated_at, "position exit evaluation evaluated_at")
+        self.evidence_lineage.validate_for(
+            strategy_id=self.strategy_id,
+            strategy_version=self.strategy_version,
+            position_id=self.position_id,
+            pair=self.pair,
+            evaluated_at=self.evaluated_at,
+        )
         if self.outcome is PositionExitEvaluationOutcome.CLOSE_CANDIDATE:
             if self.close_candidate is None or self.keep_reason is not None:
                 raise ValueError("CLOSE_CANDIDATE requires only close_candidate")
@@ -551,6 +729,9 @@ class ProductionPositionExitEvaluation:
                 != self.strategy_config_identity
                 or self.close_candidate.position_id != self.position_id
                 or self.close_candidate.pair != self.pair
+                or self.close_candidate.existing_position_side
+                is not self.existing_position_side
+                or self.close_candidate.evidence_lineage != self.evidence_lineage
                 or self.close_candidate.created_at != self.evaluated_at
             ):
                 raise ValueError("close candidate lineage does not match exit evaluation")
@@ -566,13 +747,12 @@ class ProductionPositionExitEvaluation:
         *,
         close_candidate_contract_version: str,
         exit_reason: PositionExitReason,
-        evidence_ids: tuple[str, ...],
     ) -> "ProductionPositionExitEvaluation":
+        lineage = evaluation_input.evidence_lineage
+        _require_exit_reason_evidence(lineage, exit_reason)
         result: dict[str, object] = {
             "close_candidate_contract_version": close_candidate_contract_version,
-            "existing_position_side": evaluation_input.existing_position_side.value,
             "exit_reason": exit_reason.value,
-            "evidence_ids": list(evidence_ids),
             "created_at": evaluation_input.evaluated_at.isoformat(),
         }
         common = _position_exit_common_payload(evaluation_input)
@@ -591,7 +771,7 @@ class ProductionPositionExitEvaluation:
             pair=evaluation_input.pair,
             existing_position_side=evaluation_input.existing_position_side,
             exit_reason=exit_reason,
-            evidence_ids=evidence_ids,
+            evidence_lineage=lineage,
             created_at=evaluation_input.evaluated_at,
         )
         return cls(
@@ -602,6 +782,8 @@ class ProductionPositionExitEvaluation:
             strategy_config_identity=evaluation_input.approved_strategy_config_identity,
             position_id=evaluation_input.position_id,
             pair=evaluation_input.pair,
+            existing_position_side=evaluation_input.existing_position_side,
+            evidence_lineage=lineage,
             evaluated_at=evaluation_input.evaluated_at,
             outcome=PositionExitEvaluationOutcome.CLOSE_CANDIDATE,
             close_candidate=candidate,
@@ -615,6 +797,7 @@ class ProductionPositionExitEvaluation:
         *,
         reason: PositionExitKeepReason,
     ) -> "ProductionPositionExitEvaluation":
+        lineage = evaluation_input.evidence_lineage
         common = _position_exit_common_payload(evaluation_input)
         evaluation_id = _position_exit_evaluation_id(
             common,
@@ -629,6 +812,8 @@ class ProductionPositionExitEvaluation:
             strategy_config_identity=evaluation_input.approved_strategy_config_identity,
             position_id=evaluation_input.position_id,
             pair=evaluation_input.pair,
+            existing_position_side=evaluation_input.existing_position_side,
+            evidence_lineage=lineage,
             evaluated_at=evaluation_input.evaluated_at,
             outcome=PositionExitEvaluationOutcome.KEEP,
             close_candidate=None,
@@ -646,19 +831,21 @@ class ProductionPositionExitEvaluation:
                 "close_candidate_contract_version": (
                     self.close_candidate.close_candidate_contract_version
                 ),
-                "existing_position_side": self.close_candidate.existing_position_side.value,
                 "exit_reason": self.close_candidate.exit_reason.value,
-                "evidence_ids": list(self.close_candidate.evidence_ids),
                 "created_at": self.close_candidate.created_at.isoformat(),
             }
         return {
-            "evaluation_contract_version": self.evaluation_contract_version,
-            "strategy_id": self.strategy_id,
-            "strategy_version": self.strategy_version,
-            "strategy_config_identity": self.strategy_config_identity,
-            "position_id": self.position_id.value,
-            "pair": self.pair.symbol,
-            "evaluated_at": self.evaluated_at.isoformat(),
+            **_position_exit_common_fields_payload(
+                evaluation_contract_version=self.evaluation_contract_version,
+                strategy_id=self.strategy_id,
+                strategy_version=self.strategy_version,
+                strategy_config_identity=self.strategy_config_identity,
+                position_id=self.position_id,
+                pair=self.pair,
+                existing_position_side=self.existing_position_side,
+                evidence_lineage=self.evidence_lineage,
+                evaluated_at=self.evaluated_at,
+            ),
             "outcome": self.outcome.value,
             "result": result,
         }
@@ -721,7 +908,7 @@ def _close_candidate_payload(
     pair: CurrencyPair,
     existing_position_side: Side,
     exit_reason: PositionExitReason,
-    evidence_ids: tuple[str, ...],
+    evidence_lineage: PositionCloseEvidenceLineage,
     created_at: datetime,
 ) -> dict[str, object]:
     return {
@@ -734,7 +921,7 @@ def _close_candidate_payload(
         "pair": pair.symbol,
         "existing_position_side": existing_position_side.value,
         "exit_reason": exit_reason.value,
-        "evidence_ids": list(evidence_ids),
+        "evidence_lineage": evidence_lineage.identity_payload,
         "created_at": created_at.isoformat(),
     }
 
@@ -742,14 +929,41 @@ def _close_candidate_payload(
 def _position_exit_common_payload(
     evaluation_input: ProductionPositionExitEvaluationInput,
 ) -> dict[str, object]:
+    return _position_exit_common_fields_payload(
+        evaluation_contract_version=POSITION_EXIT_EVALUATION_CONTRACT_VERSION,
+        strategy_id=evaluation_input.strategy_id,
+        strategy_version=evaluation_input.strategy_version,
+        strategy_config_identity=evaluation_input.approved_strategy_config_identity,
+        position_id=evaluation_input.position_id,
+        pair=evaluation_input.pair,
+        existing_position_side=evaluation_input.existing_position_side,
+        evidence_lineage=evaluation_input.evidence_lineage,
+        evaluated_at=evaluation_input.evaluated_at,
+    )
+
+
+def _position_exit_common_fields_payload(
+    *,
+    evaluation_contract_version: str,
+    strategy_id: str,
+    strategy_version: str,
+    strategy_config_identity: str,
+    position_id: PositionId,
+    pair: CurrencyPair,
+    existing_position_side: Side,
+    evidence_lineage: PositionCloseEvidenceLineage,
+    evaluated_at: datetime,
+) -> dict[str, object]:
     return {
-        "evaluation_contract_version": POSITION_EXIT_EVALUATION_CONTRACT_VERSION,
-        "strategy_id": evaluation_input.strategy_id,
-        "strategy_version": evaluation_input.strategy_version,
-        "strategy_config_identity": evaluation_input.approved_strategy_config_identity,
-        "position_id": evaluation_input.position_id.value,
-        "pair": evaluation_input.pair.symbol,
-        "evaluated_at": evaluation_input.evaluated_at.isoformat(),
+        "evaluation_contract_version": evaluation_contract_version,
+        "strategy_id": strategy_id,
+        "strategy_version": strategy_version,
+        "strategy_config_identity": strategy_config_identity,
+        "position_id": position_id.value,
+        "pair": pair.symbol,
+        "existing_position_side": existing_position_side.value,
+        "evidence_lineage": evidence_lineage.identity_payload,
+        "evaluated_at": evaluated_at.isoformat(),
     }
 
 
@@ -762,6 +976,67 @@ def _position_exit_evaluation_id(
     return "strategy-position-exit-evaluation-" + digest(
         {**common, "outcome": outcome.value, "result": result}
     )
+
+
+def _authorized_signal_identity(authorized: AuthorizedSignal) -> dict[str, object]:
+    signal = authorized.signal
+    authorization = authorized.authorization
+    if not isinstance(signal.target, PairTarget) or not isinstance(
+        signal.direction, PairScore
+    ):
+        raise TypeError("position exit requires an authorized Pair Signal")
+    return {
+        "signal_id": signal.signal_id.value,
+        "authorization_id": authorization.authorization_id,
+        "adoption_decision_id": authorization.adoption_decision_id,
+        "evidence_snapshot_id": authorization.evidence_snapshot_id,
+        "adoption_policy_version": authorization.adoption_policy_version,
+        "strategy_id": authorization.strategy_id,
+        "strategy_version": authorization.strategy_version,
+        "adoption_mode": authorization.adoption_mode.value,
+        "runtime_mode": authorization.runtime_mode.value,
+        "authorized_at": authorization.authorized_at.isoformat(),
+        "signal": {
+            "target_pair": signal.target.pair.symbol,
+            "signal_type": signal.signal_type,
+            "direction": signal.direction.value,
+            "strength": signal.strength.value,
+            "confidence": signal.confidence.value,
+            "horizon": signal.horizon.value,
+            "observed_at": signal.observed_at.isoformat(),
+            "created_at": signal.created_at.isoformat(),
+            "source_feature_ids": [
+                feature_id.value for feature_id in signal.source_feature_ids
+            ],
+            "versions": {
+                "producer_version": signal.versions.producer_version,
+                "model_version": signal.versions.model_version,
+                "prompt_version": signal.versions.prompt_version,
+                "scorer_version": signal.versions.scorer_version,
+                "transformation_version": signal.versions.transformation_version,
+            },
+        },
+    }
+
+
+def _require_exit_reason_evidence(
+    lineage: PositionCloseEvidenceLineage,
+    reason: PositionExitReason,
+) -> None:
+    if not isinstance(reason, PositionExitReason):
+        raise TypeError("exit_reason must be PositionExitReason")
+    if (
+        reason is PositionExitReason.SIGNAL_REVERSED
+        and lineage.authorized_pair_signal is None
+    ):
+        raise ValueError("SIGNAL_REVERSED requires current AuthorizedSignal evidence")
+    if (
+        reason is PositionExitReason.CARRY_NO_LONGER_POSITIVE
+        and lineage.swap_evidence is None
+    ):
+        raise ValueError(
+            "CARRY_NO_LONGER_POSITIVE requires current OperationalSwapEvidence"
+        )
 
 
 def _require_text(value: str, label: str) -> None:

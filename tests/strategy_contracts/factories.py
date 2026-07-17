@@ -19,13 +19,16 @@ from swap_bot.adoption import (
     RuntimeMode,
     SignalAuthorization,
 )
+from swap_bot.models import PositionId, Side
 from swap_bot.strategy import (
     NEWS_FILTERED_CARRY_CONFIG_VERSION,
     OPERATIONAL_SWAP_EVIDENCE_VERSION,
     PRODUCTION_CANDIDATE_CONTRACT_VERSION,
     NewsFilteredCarryStrategyConfig,
     OperationalSwapEvidence,
+    PositionExitEvidenceContext,
     ProductionEntryEvaluationInput,
+    ProductionPositionExitEvaluationInput,
 )
 from swap_bot.swap import SwapAvailability
 
@@ -61,17 +64,28 @@ def strategy_config(**changes: object) -> NewsFilteredCarryStrategyConfig:
     return NewsFilteredCarryStrategyConfig(**values)  # type: ignore[arg-type]
 
 
-def authorized_pair_signal() -> AuthorizedSignal:
+def authorized_pair_signal(
+    *,
+    signal_id: str = "signal-pair-1",
+    authorization_id: str = "signal-authorization-1",
+    adoption_decision_id: str = "adoption-approval-1",
+    evidence_snapshot_id: str = "research-evidence-1",
+    pair: CurrencyPair = PAIR,
+    strategy_id: str = "news-filtered-carry",
+    strategy_version: str = "strategy-v1",
+    signal_created_at: datetime = NOW - timedelta(minutes=1),
+    authorized_at: datetime = NOW,
+) -> AuthorizedSignal:
     signal = Signal(
-        signal_id=SignalId("signal-pair-1"),
-        target=PairTarget(PAIR),
+        signal_id=SignalId(signal_id),
+        target=PairTarget(pair),
         signal_type="pair_fundamental",
         direction=PairScore(1.75),
         strength=Probability(0.9),
         confidence=Probability(0.8),
         horizon=Horizon.DAYS_3,
         observed_at=NOW - timedelta(minutes=2),
-        created_at=NOW - timedelta(minutes=1),
+        created_at=signal_created_at,
         source_feature_ids=(FeatureId("feature-1"), FeatureId("feature-2")),
         versions=VersionMetadata(
             producer_version="producer-v1",
@@ -82,16 +96,16 @@ def authorized_pair_signal() -> AuthorizedSignal:
         ),
     )
     authorization = SignalAuthorization(
-        authorization_id="signal-authorization-1",
+        authorization_id=authorization_id,
         signal_id=signal.signal_id.value,
-        adoption_decision_id="adoption-approval-1",
-        evidence_snapshot_id="research-evidence-1",
+        adoption_decision_id=adoption_decision_id,
+        evidence_snapshot_id=evidence_snapshot_id,
         adoption_policy_version="adoption-policy-v1",
-        strategy_id="news-filtered-carry",
-        strategy_version="strategy-v1",
+        strategy_id=strategy_id,
+        strategy_version=strategy_version,
         adoption_mode=AdoptionMode.SHADOW_ONLY,
         runtime_mode=RuntimeMode.SHADOW,
-        authorized_at=NOW,
+        authorized_at=authorized_at,
     )
     return AuthorizedSignal(signal, authorization)
 
@@ -125,3 +139,40 @@ def entry_input(**changes: object) -> ProductionEntryEvaluationInput:
     }
     values.update(changes)
     return ProductionEntryEvaluationInput(**values)  # type: ignore[arg-type]
+
+
+def position_exit_context(**changes: object) -> PositionExitEvidenceContext:
+    values: dict[str, object] = {
+        "position_evidence_id": "position-evidence-1",
+        "position_opened_at": NOW - timedelta(days=30),
+        "position_observed_at": NOW + timedelta(seconds=1),
+        "signal_selection_checkpoint_id": "signal-selection-checkpoint-1",
+        "swap_selection_checkpoint_id": "swap-selection-checkpoint-1",
+        "expected_signal_specification_identity": "signal-specification-1",
+        "prior_adoption_decision_id": "adoption-approval-previous",
+        "adoption_state_evidence_id": "adoption-state-evidence-1",
+        "exit_input_policy_version": "exit-input-policy-v1",
+    }
+    values.update(changes)
+    return PositionExitEvidenceContext(**values)  # type: ignore[arg-type]
+
+
+def position_exit_input(
+    *,
+    context_changes: dict[str, object] | None = None,
+    **changes: object,
+) -> ProductionPositionExitEvaluationInput:
+    values: dict[str, object] = {
+        "strategy_id": "news-filtered-carry",
+        "strategy_version": "strategy-v1",
+        "approved_strategy_config_identity": strategy_config().strategy_config_identity,
+        "position_id": PositionId("position-1"),
+        "pair": PAIR,
+        "existing_position_side": Side.BUY,
+        "evidence_context": position_exit_context(**(context_changes or {})),
+        "authorized_pair_signal": authorized_pair_signal(),
+        "swap_evidence": swap_evidence(),
+        "evaluated_at": NOW + timedelta(seconds=2),
+    }
+    values.update(changes)
+    return ProductionPositionExitEvaluationInput(**values)  # type: ignore[arg-type]

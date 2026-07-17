@@ -88,6 +88,65 @@ def test_stale_evidence_can_preserve_original_signed_amounts() -> None:
     assert stale.short_received_amount == Decimal("-15.25")
 
 
+@pytest.mark.parametrize("field", ["long_received_amount", "short_received_amount"])
+@pytest.mark.parametrize(
+    "non_finite",
+    [
+        Decimal("NaN"),
+        Decimal("sNaN"),
+        Decimal("Infinity"),
+        Decimal("-Infinity"),
+    ],
+)
+def test_available_swap_rejects_each_non_finite_decimal_amount(
+    field: str, non_finite: Decimal
+) -> None:
+    with pytest.raises(ValueError, match="finite Decimal"):
+        swap_evidence(**{field: non_finite})
+
+
+@pytest.mark.parametrize(
+    "changes",
+    [
+        {"long_received_amount": Decimal("NaN")},
+        {"short_received_amount": Decimal("Infinity")},
+        {
+            "long_received_amount": Decimal("sNaN"),
+            "short_received_amount": Decimal("-Infinity"),
+        },
+    ],
+)
+def test_numeric_stale_swap_rejects_non_finite_decimal_amounts(
+    changes: dict[str, object],
+) -> None:
+    with pytest.raises(ValueError, match="finite Decimal"):
+        swap_evidence(availability=SwapAvailability.STALE, **changes)
+
+
+@pytest.mark.parametrize(
+    ("long_amount", "short_amount"),
+    [
+        (Decimal("1.25"), Decimal("2.50")),
+        (Decimal("-1.25"), Decimal("-2.50")),
+        (Decimal("0"), Decimal("0")),
+        (Decimal("-0"), Decimal("-0")),
+    ],
+)
+def test_finite_positive_negative_and_signed_zero_remain_exact_evidence(
+    long_amount: Decimal, short_amount: Decimal
+) -> None:
+    evidence = swap_evidence(
+        long_received_amount=long_amount,
+        short_received_amount=short_amount,
+    )
+
+    assert evidence.long_received_amount == long_amount
+    assert evidence.short_received_amount == short_amount
+    assert evidence.identity_payload["long_received_amount"] == str(long_amount)
+    assert evidence.identity_payload["short_received_amount"] == str(short_amount)
+    assert evidence.swap_evidence_id == evidence.expected_swap_evidence_id
+
+
 def test_swap_received_sign_semantics_are_preserved_without_provider_reversal() -> None:
     evidence = swap_evidence(
         long_received_amount=Decimal("3.25"),

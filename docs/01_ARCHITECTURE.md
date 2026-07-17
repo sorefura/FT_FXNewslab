@@ -8,6 +8,15 @@ production Strategy Ports, and the separate execution-authority mapping/guard. I
 does not implement a concrete Strategy, Signal selection/materialization,
 Portfolio/Risk integration, persistence, or Paper runtime.
 
+Position exit evaluation is content-addressed from exact typed evidence rather than
+only a business Position ID. `PositionExitEvidenceContext` separates immutable
+Position evidence from `PositionId` and freezes opened/observed time, Signal/Swap
+selection checkpoints, expected Signal specification, prior Adoption decision,
+Adoption-state evidence, and exit-input policy. Current authorized Pair Signal and
+operational Swap evidence contribute their complete intrinsic lineage. KEEP retains
+the same lineage as a close result, and a close Candidate derives its typed evidence
+from the evaluation input; callers cannot inject arbitrary evidence IDs.
+
 The remaining ExecPlan 0006 target is:
 
 ```text

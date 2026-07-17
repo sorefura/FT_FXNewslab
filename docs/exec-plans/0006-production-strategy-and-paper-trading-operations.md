@@ -662,9 +662,12 @@ all four are complete:
 
 - **2-A Strategy Domain Contract Foundation (complete):** immutable config and
   identity, execution-authority mapping/guard, versioned operational Swap evidence,
-  typed entry/exit evaluations, lossless production Candidate, ordinary close
-  Candidate, and production Strategy Ports. It adds no concrete Strategy, store, or
-  migration and preserves the accepted 0005 contracts.
+  typed entry/exit evaluations with exact Position/Signal/Authorization/Adoption/
+  Swap/checkpoint/policy lineage, lossless production Candidate, typed-evidence
+  ordinary close Candidate, and production Strategy Ports. Monetary evidence is
+  finite Decimal and v1 config accepts only supported downstream contracts. It adds
+  no concrete Strategy, store, or migration and preserves the accepted 0005
+  contracts.
 - **2-B Pair Signal Materialization (pending):** exact base/quote Signal derivation,
   deterministic selection/checkpoint, atomic Pair Signal plus derivation persistence,
   and exact idempotency.
@@ -691,7 +694,9 @@ Deliverables:
   (2-A evidence contract complete; 2-C gate pending)
 - Explicit resolution of Candidate PairScore evidence without clamping. (2-A
   complete)
-- Separate ordinary close Candidate and structured exit reasons. (2-A complete)
+- Separate ordinary close Candidate, structured exit reasons, exact typed input
+  evidence, and lineage-preserving KEEP. Caller-provided arbitrary evidence IDs are
+  not part of the API. (2-A complete)
   Approved close intent, quantity allocation, partial-close, and Portfolio/Risk
   enforcement remain 2-D; retain `ApprovedLiquidationIntent` for Risk emergency only.
 - Architecture and behavior tests proving no AI, Research evaluator, Execution, or
@@ -944,6 +949,14 @@ ExecPlan 0006 is complete only when all of the following are true:
   Candidate, and production Strategy Ports without changing accepted 0005 behavior.
 - [x] (2026-07-17) Passed Milestone 2-A through the full local Python 3.11/3.14
   test, Ruff, strict mypy, and diff-check matrix; no migration or Broker path changed.
+- [x] (2026-07-17) Milestone 2-A review correction - bound every Position exit
+  result, including KEEP, to exact immutable Position, Signal authorization,
+  Adoption, Swap, selection-checkpoint, config, and policy evidence; derived close
+  evidence from typed input instead of caller-supplied IDs; rejected non-finite
+  Decimal Swap evidence; and fixed the supported v1 Strategy contract values.
+- [x] (2026-07-17) Passed the Milestone 2-A review correction through the full local
+  Python 3.11/3.14 test, Ruff, strict mypy, import-smoke, and diff-check matrix with
+  no migration, concrete Strategy, or Broker/Execution/Portfolio/Risk change.
 - [ ] Milestone 2-B - exact Pair Signal materialization and selection.
 - [ ] Milestone 2-C - concrete entry Strategy and persistence.
 - [ ] Milestone 2-D - ordinary close Portfolio/Risk path.
@@ -1044,6 +1057,30 @@ ExecPlan 0006 is complete only when all of the following are true:
   Resolution: Milestone 2-D adds a distinct typed close Portfolio/Risk path where
   Portfolio chooses quantity and Risk proves reduce-only/no-overclose. Risk emergency
   liquidation remains a separate authority.
+- Observation: a business Position ID identifies the position but cannot reproduce
+  the immutable position observation or its holding age.
+  Resolution: keep `PositionId` and `position_evidence_id` as separate identity
+  dimensions and retain opened/observed timestamps in every exit result.
+- Observation: KEEP is itself a decision over exact evidence, not an absence of a
+  decision record.
+  Resolution: KEEP retains the same typed Position, Signal authorization, Adoption,
+  Swap, checkpoint, config, and policy lineage as a close result.
+- Observation: `None` for current Signal or Swap does not prove what selection was
+  attempted or when missing/stale was determined.
+  Resolution: require exact Signal and Swap selection checkpoints plus expected
+  Signal specification and exit-input policy evidence.
+- Observation: generic caller-supplied evidence IDs can name unrelated records and
+  therefore do not establish close-decision authenticity.
+  Resolution: derive `PositionCloseEvidenceLineage` only from the validated typed
+  evaluation input and enforce reason-specific evidence.
+- Observation: Decimal is an exact numeric type but can still represent NaN and
+  signed infinities.
+  Resolution: require `Decimal.is_finite()` for every present operational Swap amount
+  while preserving exact Decimal text and signed zero.
+- Observation: accepting an unsupported downstream contract in config postpones a
+  deterministic configuration error until Candidate production.
+  Resolution: v1 config accepts only `production-trade-candidate-v1`,
+  `currency-pair-v1`, and `pair_fundamental` at construction.
 
 ## Decision log
 
@@ -1096,6 +1133,23 @@ ExecPlan 0006 is complete only when all of the following are true:
 - 2026-07-17: Paper persistence begins at the next available additive Live migration
   after Milestone 2 Strategy persistence; `0003` is neither reserved nor created by
   Milestone 2-A.
+- 2026-07-17: Make Position exit evaluation identity commit to every semantic input,
+  including side, exact Position evidence and times, current Signal authorization and
+  Adoption lineage or absence, exact Swap evidence or absence, checkpoints, expected
+  specification, config/policy versions, evaluation time, and outcome/reason.
+- 2026-07-17: Treat business `PositionId` and immutable Position snapshot/event
+  evidence identity as separate concepts and identity dimensions.
+- 2026-07-17: Retain exact input evidence on KEEP; a no-close result remains a
+  reproducible decision.
+- 2026-07-17: Derive ordinary close evidence from typed validated Evaluation Input,
+  never from arbitrary caller-provided evidence IDs, and require evidence appropriate
+  to each exit reason.
+- 2026-07-17: Require holding-age close lineage to include position opened time and
+  exact Strategy config/exit-policy identity; quantity remains deferred to 2-D.
+- 2026-07-17: Require every present operational monetary amount to be a finite
+  Decimal while retaining Decimal text in content identity.
+- 2026-07-17: Restrict v1 Strategy config to explicitly supported Candidate contract,
+  Pair transformation, and Pair Signal type values at construction.
 
 ## Validation
 
@@ -1178,4 +1232,25 @@ Milestone 2-A contract foundation completed locally on 2026-07-17:
   persistence adapter, Paper component, scheduler, CLI, real Broker behavior, or
   ExecPlan 0007 implementation was added.
 - Hosted CI has not been run for this unpushed Milestone 2-A revision; only local
+  validation is claimed.
+
+Milestone 2-A review correction completed locally on 2026-07-17:
+
+- Python 3.11.9: `414 passed, 5 skipped`; Ruff passed; strict mypy passed for
+  69 source files.
+- Python 3.14.6: `414 passed, 5 skipped`; Ruff passed; strict mypy passed for
+  69 source files.
+- The five skips remain opt-in external provider smoke tests. Final pytest runs used
+  distinct workspace `--basetemp` roots with cache disabled; Ruff used `--no-cache`
+  and mypy used `--no-incremental`.
+- Import smoke for `NewsFilteredCarryStrategyConfig`,
+  `ProductionPositionExitEvaluation`, and `OperationalSwapEvidence` passed on both
+  supported Python versions. `git diff --check` passed.
+- The 15-file change is limited to M2-A Strategy contracts, focused contract tests,
+  the shared versions module, and the five requested living design documents.
+- Existing migrations remain exactly `0001` and `0002`; no migration was added or
+  edited. No concrete Strategy, Pair materialization/selection, persistence, Paper,
+  Broker, Execution, Portfolio, Risk, scheduler, or ExecPlan 0007 implementation was
+  added or changed.
+- Hosted CI has not been run for this unpushed review correction; only local
   validation is claimed.

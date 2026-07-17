@@ -8,7 +8,23 @@ code without adding persistence. Existing Live migrations remain `0001` and `000
 Milestone 2-B/C/D may add Strategy persistence using the next available additive
 numbers in implementation order. Paper persistence begins at the next available
 additive Live migration only after Milestone 2 production Strategy persistence is
-complete; `0003` is not reserved. The following Paper records remain target contracts:
+complete; `0003` is not reserved.
+
+Position exit semantic identity includes the business Position ID and a distinct
+immutable Position evidence ID, opened/observed timestamps, side, exact current
+Signal/Authorization/Adoption and Swap identities or explicit absence, selection
+checkpoints, expected Signal specification, Adoption-state evidence, config/policy
+versions, evaluation time, and outcome/reason. KEEP is decision evidence and retains
+this full lineage. Ordinary close Candidate identity embeds the same typed lineage;
+it is not assembled from caller-supplied evidence strings.
+
+`OperationalSwapEvidence` content identity continues to serialize Decimal amounts
+as exact text. Only finite Decimal amounts are valid for AVAILABLE or numeric STALE
+evidence; no float conversion participates in validation or identity. The supported
+v1 Candidate contract, Pair transformation, and Pair Signal type are explicit config
+identity dimensions and unsupported values cannot enter a valid config.
+
+The following Paper records remain target contracts:
 
 ```text
 paper_cycle_slot / paper_cycle_input_snapshot / paper_cycle_attempt

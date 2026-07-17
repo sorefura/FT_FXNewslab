@@ -113,3 +113,43 @@ def test_config_contract_and_versions_reject_blank_or_forged_values() -> None:
         replace(strategy_config(), config_contract_version="config-v2")
     with pytest.raises(ValueError, match="must not be blank"):
         replace(strategy_config(), entry_policy_version=" ")
+
+
+@pytest.mark.parametrize(
+    ("field", "value", "message"),
+    [
+        (
+            "candidate_contract_version",
+            "production-trade-candidate-v2",
+            "unsupported production Candidate contract version",
+        ),
+        (
+            "pair_transformation_version",
+            "currency-pair-v2",
+            "unsupported Pair transformation version",
+        ),
+        (
+            "expected_pair_signal_type",
+            "pair_technical",
+            "unsupported Pair Signal type",
+        ),
+    ],
+)
+def test_v1_rejects_unsupported_downstream_contract_values(
+    field: str, value: str, message: str
+) -> None:
+    with pytest.raises(ValueError, match=message):
+        strategy_config(**{field: value})
+
+
+def test_supported_v1_contract_values_are_explicit_identity_inputs() -> None:
+    config = strategy_config()
+
+    assert config.candidate_contract_version == "production-trade-candidate-v1"
+    assert config.pair_transformation_version == "currency-pair-v1"
+    assert config.expected_pair_signal_type == "pair_fundamental"
+    assert config.identity_payload["candidate_contract_version"] == (
+        "production-trade-candidate-v1"
+    )
+    assert config.identity_payload["pair_transformation_version"] == "currency-pair-v1"
+    assert config.identity_payload["expected_pair_signal_type"] == "pair_fundamental"

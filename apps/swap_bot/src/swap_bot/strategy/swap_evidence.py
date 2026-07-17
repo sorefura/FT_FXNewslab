@@ -7,8 +7,7 @@ from fx_core.time import require_utc
 
 from ..adoption import digest
 from ..swap import SwapAvailability
-
-OPERATIONAL_SWAP_EVIDENCE_VERSION = "operational-swap-evidence-v1"
+from .versions import OPERATIONAL_SWAP_EVIDENCE_VERSION
 
 
 @dataclass(frozen=True, slots=True)
@@ -118,6 +117,8 @@ class OperationalSwapEvidence:
         if self.effective_until is not None and self.effective_until <= self.effective_from:
             raise ValueError("effective_until must be after effective_from")
         amounts = (self.long_received_amount, self.short_received_amount)
+        if any(amount is not None and not amount.is_finite() for amount in amounts):
+            raise ValueError("swap amounts must be finite Decimal values")
         if self.availability is SwapAvailability.AVAILABLE:
             if any(amount is None for amount in amounts):
                 raise ValueError("available swap evidence requires long and short amounts")

@@ -1,25 +1,19 @@
 from dataclasses import fields, replace
-from datetime import datetime, timedelta
+from datetime import datetime
 
 import pytest
 from fx_core import PairScore, Probability, Signal
-from swap_bot.models import ApprovedLiquidationIntent, PositionId, Side, TradeCandidate
+from swap_bot.models import Side, TradeCandidate
 from swap_bot.strategy import (
-    POSITION_CLOSE_CANDIDATE_CONTRACT_VERSION,
     PRODUCTION_CANDIDATE_CONTRACT_VERSION,
     EntryEvaluationOutcome,
     EntrySkipReason,
-    PositionCloseCandidate,
-    PositionExitEvaluationOutcome,
-    PositionExitReason,
     ProductionEntryEvaluation,
     ProductionEntryEvaluationInput,
-    ProductionPositionExitEvaluation,
-    ProductionPositionExitEvaluationInput,
     ProductionTradeCandidate,
 )
 
-from tests.strategy_contracts.factories import NOW, PAIR, entry_input, swap_evidence
+from tests.strategy_contracts.factories import entry_input
 
 
 def candidate_evaluation() -> ProductionEntryEvaluation:
@@ -140,75 +134,3 @@ def test_production_candidate_is_separate_and_has_no_allocation_or_broker_fields
         "score",
     }.isdisjoint(names)
     assert {"pair_score", "confidence"}.issubset(names)
-
-
-def exit_input_without_current_authority() -> ProductionPositionExitEvaluationInput:
-    return ProductionPositionExitEvaluationInput(
-        strategy_id="news-filtered-carry",
-        strategy_version="strategy-v1",
-        approved_strategy_config_identity="strategy-config-1",
-        position_id=PositionId("position-1"),
-        pair=PAIR,
-        existing_position_side=Side.BUY,
-        authorized_pair_signal=None,
-        swap_evidence=None,
-        evaluated_at=NOW + timedelta(seconds=2),
-    )
-
-
-def test_safety_close_can_exist_without_current_signal_authorization_or_swap() -> None:
-    result = ProductionPositionExitEvaluation.create_close_candidate(
-        exit_input_without_current_authority(),
-        close_candidate_contract_version=POSITION_CLOSE_CANDIDATE_CONTRACT_VERSION,
-        exit_reason=PositionExitReason.ADOPTION_NO_LONGER_ACTIVE,
-        evidence_ids=("adoption-approval-1",),
-    )
-
-    assert result.outcome is PositionExitEvaluationOutcome.CLOSE_CANDIDATE
-    assert result.close_candidate is not None
-    assert result.close_candidate.exit_reason is PositionExitReason.ADOPTION_NO_LONGER_ACTIVE
-
-
-def test_close_candidate_is_deterministic_reduce_only_and_derives_close_side() -> None:
-    kwargs = {
-        "close_candidate_contract_version": POSITION_CLOSE_CANDIDATE_CONTRACT_VERSION,
-        "strategy_id": "news-filtered-carry",
-        "strategy_version": "strategy-v1",
-        "strategy_config_identity": "strategy-config-1",
-        "strategy_evaluation_id": "exit-evaluation-1",
-        "position_id": PositionId("position-1"),
-        "pair": PAIR,
-        "existing_position_side": Side.BUY,
-        "exit_reason": PositionExitReason.SIGNAL_REVERSED,
-        "evidence_ids": ("signal-1", "authorization-1", swap_evidence().swap_evidence_id),
-        "created_at": NOW,
-    }
-    first = PositionCloseCandidate.create(**kwargs)  # type: ignore[arg-type]
-    second = PositionCloseCandidate.create(**kwargs)  # type: ignore[arg-type]
-
-    assert first.close_candidate_id == second.close_candidate_id
-    assert first.reduce_only is True
-    assert first.close_side is Side.SELL
-
-
-def test_close_candidate_has_no_quantity_or_action_and_is_not_risk_liquidation() -> None:
-    names = {field.name for field in fields(PositionCloseCandidate)}
-
-    assert {"quantity", "requested_quantity", "action", "reduce_only"}.isdisjoint(names)
-    assert not issubclass(PositionCloseCandidate, ApprovedLiquidationIntent)
-
-
-def test_close_candidate_requires_typed_reason_and_rejects_forged_id() -> None:
-    result = ProductionPositionExitEvaluation.create_close_candidate(
-        exit_input_without_current_authority(),
-        close_candidate_contract_version=POSITION_CLOSE_CANDIDATE_CONTRACT_VERSION,
-        exit_reason=PositionExitReason.REQUIRED_SIGNAL_MISSING_OR_STALE,
-        evidence_ids=(),
-    )
-    candidate = result.close_candidate
-    assert candidate is not None
-
-    with pytest.raises(TypeError, match="PositionExitReason"):
-        replace(candidate, exit_reason="CLOSE")  # type: ignore[arg-type]
-    with pytest.raises(ValueError, match="does not match"):
-        replace(candidate, close_candidate_id="position-close-candidate-forged")

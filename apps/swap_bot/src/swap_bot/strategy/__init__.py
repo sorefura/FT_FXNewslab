@@ -1,17 +1,14 @@
 from .config import (
     INITIAL_ELIGIBLE_PAIRS,
-    NEWS_FILTERED_CARRY_CONFIG_VERSION,
     NewsFilteredCarryStrategyConfig,
 )
 from .contracts import (
-    ENTRY_EVALUATION_CONTRACT_VERSION,
-    POSITION_CLOSE_CANDIDATE_CONTRACT_VERSION,
-    POSITION_EXIT_EVALUATION_CONTRACT_VERSION,
-    PRODUCTION_CANDIDATE_CONTRACT_VERSION,
     EntryEvaluationOutcome,
     EntrySkipReason,
     PositionCloseCandidate,
+    PositionCloseEvidenceLineage,
     PositionExitEvaluationOutcome,
+    PositionExitEvidenceContext,
     PositionExitKeepReason,
     PositionExitReason,
     ProductionEntryEvaluation,
@@ -22,9 +19,14 @@ from .contracts import (
     ProductionPositionExitStrategy,
     ProductionTradeCandidate,
 )
-from .swap_evidence import (
+from .swap_evidence import OperationalSwapEvidence
+from .versions import (
+    ENTRY_EVALUATION_CONTRACT_VERSION,
+    NEWS_FILTERED_CARRY_CONFIG_VERSION,
     OPERATIONAL_SWAP_EVIDENCE_VERSION,
-    OperationalSwapEvidence,
+    POSITION_CLOSE_CANDIDATE_CONTRACT_VERSION,
+    POSITION_EXIT_EVALUATION_CONTRACT_VERSION,
+    PRODUCTION_CANDIDATE_CONTRACT_VERSION,
 )
 
 __all__ = [
@@ -40,6 +42,8 @@ __all__ = [
     "NewsFilteredCarryStrategyConfig",
     "OperationalSwapEvidence",
     "PositionCloseCandidate",
+    "PositionCloseEvidenceLineage",
+    "PositionExitEvidenceContext",
     "PositionExitEvaluationOutcome",
     "PositionExitKeepReason",
     "PositionExitReason",

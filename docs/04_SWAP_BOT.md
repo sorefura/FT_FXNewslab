@@ -58,6 +58,21 @@ no quantity or action string. Portfolio quantity, partial-close validation, appr
 close intent, and Risk no-overclose checks remain M2-D. Risk emergency liquidation
 remains a different authority.
 
+Exit input lineage distinguishes the business `PositionId` from the exact immutable
+Position snapshot/event evidence. It also commits to position opened/observed time,
+current Signal/Authorization/Adoption lineage when present, exact operational Swap
+evidence when present, Signal and Swap selection checkpoints, expected Signal
+specification, Adoption-state evidence, config identity, and exit-policy version.
+Both KEEP and close results preserve that evidence. Close factories derive
+`PositionCloseEvidenceLineage` from the typed evaluation input and enforce
+reason-specific evidence; no caller-controlled generic evidence tuple is accepted.
+
+The v1 config accepts only `production-trade-candidate-v1`, `currency-pair-v1`, and
+`pair_fundamental`. Unsupported downstream contracts fail when config is built.
+Operational Swap amounts remain Decimal text in content identity, but AVAILABLE and
+numeric STALE evidence require finite values; NaN and infinities are rejected while
+positive, negative, zero, and signed zero remain representable.
+
 ## ExecPlan 0006 target: Paper authority
 
 ```text

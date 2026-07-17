@@ -10,15 +10,26 @@ Milestone 2-A tests already state:
 - exact `USD_JPY`/`MXN_JPY` config is immutable, has no hidden defaults, and has a
   deterministic canonical identity with exact integer-microsecond durations;
 - versioned `OperationalSwapEvidence` validates its intrinsic content ID, UTC
-  availability/effective time, availability/value rules, and received sign without
-  modifying accepted `SwapQuote`;
+  availability/effective time, availability/value rules, received sign, and finite
+  Decimal amounts without modifying accepted `SwapQuote`; AVAILABLE and numeric
+  STALE reject NaN/infinities while signed zero remains exact evidence;
 - production entry accepts `AuthorizedSignal`, not raw Signal, and produces a
   deterministic Candidate-or-structured-skip result with exact authorization,
   adoption, Swap, and config lineage;
 - `ProductionTradeCandidate` stores lossless `PairScore` separately from confidence
   and has no quantity, Portfolio, Risk, or Broker fields;
 - `PositionCloseCandidate` is a distinct, quantity-free, always-reduce-only ordinary
-  close request and is not Risk emergency liquidation; and
+  close request and is not Risk emergency liquidation;
+- Position exit identity changes with every semantic Position, side, Signal,
+  Authorization, Adoption, Swap, checkpoint, policy, time, and result input; KEEP and
+  close retain the same exact typed lineage and arbitrary caller evidence IDs are not
+  accepted;
+- reason-specific exit tests require current authorized Pair Signal for reversal,
+  current exact Swap evidence for carry loss, opened-at evidence for holding age,
+  Adoption-state evidence for inactive adoption, and selection checkpoints for
+  missing/stale Signal or Swap;
+- v1 config rejects unsupported Candidate contract, Pair transformation, and Pair
+  Signal type at construction; and
 - the strategy package imports no Research, AI/LLM, Execution, Portfolio, Risk, or
   Broker module, while no concrete production Strategy or migration exists yet.
 

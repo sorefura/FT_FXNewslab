@@ -1320,6 +1320,7 @@ def _resolve_selection_decision(
     candidate_ids: set[str] = set()
     candidate_keys: set[tuple[SourceSignalRole, SignalId, int]] = set()
     group_observations: dict[str, tuple[ObservationId, ...]] = {}
+    signal_contents: dict[SignalId, str] = {}
     for candidate in inventory:
         if not isinstance(candidate, PairSignalSelectionCandidate):
             raise TypeError("selection inventory accepts only Pair Signal candidates")
@@ -1335,6 +1336,13 @@ def _resolve_selection_decision(
         if key in candidate_keys:
             raise ValueError("selection candidate inventory contains duplicates")
         candidate_keys.add(key)
+        signal_id = candidate.signal_snapshot.signal_id
+        content_hash = candidate.signal_snapshot.signal_content_hash
+        existing_content_hash = signal_contents.get(signal_id)
+        if existing_content_hash is None:
+            signal_contents[signal_id] = content_hash
+        elif existing_content_hash != content_hash:
+            raise ValueError("one Signal ID maps to conflicting Signal content")
         existing_observations = group_observations.setdefault(
             candidate.observation_group_identity,
             candidate.observation_ids,
@@ -1420,6 +1428,8 @@ def _resolve_selection_decision(
             PairSignalSelectionReason.AMBIGUOUS_SOURCE_GROUP,
         )
     _, base, quote = best[0]
+    if base.signal_snapshot.signal_id == quote.signal_snapshot.signal_id:
+        raise ValueError("BASE and QUOTE must reference different source Signals")
     return _PairSignalSelectionDecision(
         PairSignalSelectionOutcome.SELECTED,
         PairSignalSelectionReason.SELECTED_EXACT_GROUP,

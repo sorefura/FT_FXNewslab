@@ -341,6 +341,13 @@ rank by observed then available time, and a semantic tie is
 `captured_at` must be UTC and no earlier than `as_of`, but is excluded from selection
 semantic identity.
 
+Before terminal resolution, the resolver requires every `SignalId` in the complete
+inventory to map to one exact `signal_content_hash`, regardless of role, eligibility,
+or Store sequence. Conflicting content for one ID is intrinsic inventory corruption,
+not `NO_MATCH` or `AMBIGUOUS`. A terminal `SELECTED` also requires distinct BASE and
+QUOTE source Signal IDs so an unmaterializable source pair cannot become immutable
+selection evidence.
+
 The deterministic Pair Signal ID is fixed after Request/selection and frozen
 `materialized_at`, before transformer invocation. It commits to Pair/output type,
 exact BASE/QUOTE Signal IDs and content hashes, Observation group, transformation
@@ -1095,6 +1102,9 @@ ExecPlan 0006 is complete only when all of the following are true:
   snapshots; verified full Pair Signal content through the unchanged shared
   transformer; and separated derivation intrinsic identity from relational
   source/transformation authenticity.
+- [x] (2026-07-17) Milestone 2-B1 final review correction - required one `SignalId`
+  to resolve to one exact Signal content across the complete inventory and rejected
+  BASE/QUOTE reuse of the same source Signal ID before terminal selection creation.
 - [x] (2026-07-17) Left checkpoint persistence, SQLite selection, Pair
   query/materializer composition, and atomic persistence pending for M2-B2/M2-B3; no
   migration or existing Store behavior changed.
@@ -1199,6 +1209,16 @@ ExecPlan 0006 is complete only when all of the following are true:
   observation the dominant temporal diagnosis when both timestamps are future.
   Resolution: remove the unreachable direction rejection enum and evaluate observed-
   future before created-future, retaining created-future for later-created evidence.
+- Observation: role and Store sequence are candidate-occurrence dimensions, so their
+  presence in a duplicate key does not make two different contents under one
+  `SignalId` authentic.
+  Resolution: validate `SignalId`-to-content-hash uniqueness across the complete
+  inventory before eligibility, grouping, ambiguity, or terminal resolution.
+- Observation: rejecting identical BASE/QUOTE source IDs only in
+  `PairSignalDerivation` is too late because an immutable terminal `SELECTED` has
+  already been created by then.
+  Resolution: require distinct source IDs immediately before returning `SELECTED`,
+  and rerun the same invariant when a selection snapshot is hydrated.
 - Observation: `CurrencyPairSignalTransformer` combines exact Feature lineage but the
   resulting Pair Signal does not retain the exact base and quote Signal IDs or roles.
   Resolution: Milestone 2-B introduces `PairSignalDerivation` with base/quote Signal
@@ -1378,6 +1398,12 @@ ExecPlan 0006 is complete only when all of the following are true:
   and after hydration.
 - 2026-07-17: Treat target/direction mismatch as intrinsic snapshot corruption and
   diagnose observed-future before created-future in candidate rejection precedence.
+- 2026-07-17: Validate `SignalId`-to-content uniqueness across the complete candidate
+  inventory; role, eligibility, and Store sequence do not scope Signal identity.
+- 2026-07-17: Require selected BASE and QUOTE source Signal IDs to differ at the
+  selection boundary rather than waiting for derivation.
+- 2026-07-17: Treat conflicting source identity as intrinsic inventory corruption
+  that fails before any terminal selection snapshot is created.
 - 2026-07-17: Paper persistence begins at the next available additive Live migration
   after Milestone 2 Strategy persistence; `0003` is neither reserved nor created by
   Milestone 2-A.
@@ -1595,4 +1621,24 @@ completed locally on 2026-07-17:
   Strategy, Adoption-gate call, Portfolio, Risk, Execution, Broker, Paper, scheduler,
   CLI, or ExecPlan 0007 implementation was added or changed.
 - Hosted CI has not been run for this unpushed review-correction commit; only local
+  validation is claimed.
+
+Milestone 2-B1 source-Signal identity final review correction completed locally on
+2026-07-17:
+
+- Python 3.11.9: `566 passed, 5 skipped`; Ruff passed; strict mypy passed for
+  71 source files.
+- Python 3.14.6: `566 passed, 5 skipped`; Ruff passed; strict mypy passed for
+  71 source files.
+- The five skips remain opt-in external provider smoke tests. Pytest used distinct OS
+  temporary roots with cache disabled; Ruff used `--no-cache` and mypy used
+  `--no-incremental`.
+- `git diff --check` passed. The three-file change is limited to the M2-B1 resolver,
+  its focused selection tests, and this living ExecPlan.
+- Shared Signal Store migrations remain exactly `0001_signal_lineage.sql`; Live
+  migrations remain exactly `0001`/`0002`. No migration, SQLite Store, checkpoint,
+  query, or persistence behavior changed.
+- No operational materializer, concrete Strategy, Portfolio, Risk, Broker,
+  Execution, Paper, or ExecPlan 0007 implementation was added or changed.
+- Hosted CI has not been run for this unpushed final-review commit; only local
   validation is claimed.

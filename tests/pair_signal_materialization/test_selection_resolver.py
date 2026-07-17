@@ -29,6 +29,7 @@ def _candidate(
     observed_at: datetime = NOW - timedelta(hours=1),
     created_at: datetime = NOW - timedelta(minutes=30),
     stale: bool = False,
+    **signal_changes: object,
 ):
     materialization_request = request()
     if stale:
@@ -43,6 +44,7 @@ def _candidate(
             observation_ids=(ObservationId(group),),
             observed_at=observed_at,
             created_at=created_at,
+            **signal_changes,
         ),
         store_sequence=sequence,
     )
@@ -448,6 +450,175 @@ def test_resolver_retains_ineligible_candidates_in_inventory_identity() -> None:
     assert with_stale.selection_snapshot_id != without_stale.selection_snapshot_id
 
 
+def test_same_signal_id_and_content_still_obeys_existing_duplicate_rule() -> None:
+    duplicate = _candidate(
+        SourceSignalRole.BASE,
+        identifier="signal-duplicate",
+        group="observation-a",
+        sequence=1,
+    )
+
+    with pytest.raises(ValueError, match="candidate IDs must be unique"):
+        _resolve(duplicate, duplicate)
+
+
+def test_same_signal_id_and_content_at_different_sequences_is_not_selected_twice() -> None:
+    first = _candidate(
+        SourceSignalRole.BASE,
+        identifier="signal-duplicate",
+        group="observation-a",
+        sequence=1,
+    )
+    second = _candidate(
+        SourceSignalRole.BASE,
+        identifier="signal-duplicate",
+        group="observation-a",
+        sequence=2,
+    )
+    quote = _candidate(
+        SourceSignalRole.QUOTE,
+        identifier="signal-quote",
+        group="observation-a",
+        sequence=3,
+    )
+
+    snapshot = _resolve(first, second, quote)
+
+    assert first.signal_snapshot.signal_content_hash == (
+        second.signal_snapshot.signal_content_hash
+    )
+    assert snapshot.outcome is PairSignalSelectionOutcome.AMBIGUOUS
+    assert snapshot.reason is PairSignalSelectionReason.AMBIGUOUS_BASE_SIGNAL
+
+
+def test_same_signal_content_cannot_serve_as_both_base_and_quote() -> None:
+    materialization_request = request()
+    shared_snapshot = source_snapshot(
+        SourceSignalRole.BASE,
+        identifier="signal-shared",
+    )
+    base = candidate(
+        SourceSignalRole.BASE,
+        materialization_request=materialization_request,
+        snapshot=shared_snapshot,
+        store_sequence=1,
+    )
+    quote = candidate(
+        SourceSignalRole.QUOTE,
+        materialization_request=materialization_request,
+        snapshot=shared_snapshot,
+        store_sequence=2,
+    )
+
+    snapshot = resolve_pair_signal_selection(
+        materialization_request,
+        2,
+        NOW + timedelta(minutes=1),
+        (base, quote),
+    )
+
+    assert base.signal_snapshot.signal_id == quote.signal_snapshot.signal_id
+    assert base.signal_snapshot.signal_content_hash == (
+        quote.signal_snapshot.signal_content_hash
+    )
+    assert snapshot.outcome is PairSignalSelectionOutcome.NO_MATCH
+    assert snapshot.reason is PairSignalSelectionReason.NO_ELIGIBLE_QUOTE_SIGNAL
+
+
+def test_same_signal_id_with_different_base_quote_content_is_inventory_corruption() -> None:
+    base = _candidate(
+        SourceSignalRole.BASE,
+        identifier="signal-shared",
+        group="observation-a",
+        sequence=1,
+    )
+    quote = _candidate(
+        SourceSignalRole.QUOTE,
+        identifier="signal-shared",
+        group="observation-a",
+        sequence=2,
+    )
+
+    assert base.signal_snapshot.target_value != quote.signal_snapshot.target_value
+    assert base.signal_snapshot.signal_content_hash != (
+        quote.signal_snapshot.signal_content_hash
+    )
+    with pytest.raises(
+        ValueError,
+        match="one Signal ID maps to conflicting Signal content",
+    ):
+        _resolve(base, quote)
+
+
+def test_same_signal_id_with_different_version_content_is_inventory_corruption() -> None:
+    first = _candidate(
+        SourceSignalRole.BASE,
+        identifier="signal-shared",
+        group="observation-a",
+        sequence=1,
+    )
+    revised = _candidate(
+        SourceSignalRole.BASE,
+        identifier="signal-shared",
+        group="observation-a",
+        sequence=2,
+        producer_version="producer-v2",
+    )
+
+    assert first.signal_snapshot.signal_content_hash != (
+        revised.signal_snapshot.signal_content_hash
+    )
+    with pytest.raises(
+        ValueError,
+        match="one Signal ID maps to conflicting Signal content",
+    ):
+        _resolve(first, revised)
+
+
+def test_conflicting_signal_id_inventory_never_creates_a_terminal_snapshot() -> None:
+    base = _candidate(
+        SourceSignalRole.BASE,
+        identifier="signal-shared",
+        group="observation-a",
+        sequence=1,
+    )
+    quote = _candidate(
+        SourceSignalRole.QUOTE,
+        identifier="signal-shared",
+        group="observation-a",
+        sequence=2,
+    )
+    terminal_snapshot = None
+
+    with pytest.raises(
+        ValueError,
+        match="one Signal ID maps to conflicting Signal content",
+    ):
+        terminal_snapshot = _resolve(base, quote)
+
+    assert terminal_snapshot is None
+
+
+def test_normal_selection_uses_distinct_base_and_quote_signal_ids() -> None:
+    snapshot = _resolve(
+        _candidate(
+            SourceSignalRole.BASE,
+            identifier="signal-base",
+            group="observation-a",
+            sequence=1,
+        ),
+        _candidate(
+            SourceSignalRole.QUOTE,
+            identifier="signal-quote",
+            group="observation-a",
+            sequence=2,
+        ),
+    )
+
+    assert snapshot.outcome is PairSignalSelectionOutcome.SELECTED
+    assert snapshot.selected_base_signal_id != snapshot.selected_quote_signal_id
+
+
 def test_manual_terminal_results_and_selected_lineage_cannot_be_forged() -> None:
     selected = _resolve(
         _candidate(
@@ -481,6 +652,11 @@ def test_manual_terminal_results_and_selected_lineage_cannot_be_forged() -> None
         replace(
             selected,
             selected_base_candidate_id=selected.selected_quote_candidate_id,
+        )
+    with pytest.raises(ValueError, match="complete candidate inventory"):
+        replace(
+            selected,
+            selected_quote_signal_id=selected.selected_base_signal_id,
         )
 
 

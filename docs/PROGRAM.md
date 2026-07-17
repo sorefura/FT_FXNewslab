@@ -59,6 +59,10 @@ orders, canary limits, a kill switch, real-order reconciliation, emergency stop,
 rollback, and Live operational acceptance. Paper burn-in evidence may inform that
 separate review but cannot grant Live authority.
 
-Current implementation is complete through ExecPlan 0005. ExecPlan 0006 is at its
-planning/architecture milestone; the production Strategy, Paper components, and
-ExecPlan 0007 Live rollout are targets, not current runtime behavior.
+Current executable behavior is complete through ExecPlan 0005. ExecPlan 0006
+Milestone 2-A has implemented only the production Strategy domain contract
+foundation: immutable config/identity, authority mapping, operational Swap evidence,
+typed entry/exit evaluations and Candidates, and production Strategy Ports. Exact
+Pair Signal materialization (2-B), the concrete entry Strategy (2-C), the ordinary
+close Portfolio/Risk path (2-D), every Paper component, and ExecPlan 0007 Live
+rollout remain targets rather than current runtime behavior.

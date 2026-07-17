@@ -79,3 +79,36 @@ def test_live_adoption_gate_does_not_import_research_execution_or_broker_ports()
     imports = _imports(ROOT / "apps/swap_bot/src/swap_bot/adoption_gate.py")
     imported_modules = {name.split(".")[-1] for name in imports}
     assert {"fx_research", "execution", "ports"}.isdisjoint(imported_modules)
+
+
+def test_production_strategy_contracts_do_not_import_forbidden_layers() -> None:
+    strategy_root = ROOT / "apps/swap_bot/src/swap_bot/strategy"
+    forbidden_roots = {"fx_research", "openai"}
+    forbidden_live_modules = {
+        "execution",
+        "llm_feature",
+        "portfolio",
+        "risk",
+        "shadow",
+    }
+    for path in strategy_root.rglob("*.py"):
+        imports = _imports(path)
+        assert forbidden_roots.isdisjoint(
+            {name.split(".")[0] for name in imports}
+        ), f"forbidden Strategy import in {path}"
+        assert forbidden_live_modules.isdisjoint(
+            {name.split(".")[-1] for name in imports}
+        ), f"forbidden Live-layer import in {path}"
+
+
+def test_milestone_2a_adds_no_strategy_implementation_or_migration() -> None:
+    strategy_root = ROOT / "apps/swap_bot/src/swap_bot/strategy"
+    assert not (strategy_root / "news_filtered_carry.py").exists()
+    migrations = {
+        path.name
+        for path in (ROOT / "apps/swap_bot/src/swap_bot/migrations").glob("*.sql")
+    }
+    assert migrations == {
+        "0001_validated_signal_live_adoption.sql",
+        "0002_candidate_authorization_integrity.sql",
+    }

@@ -2,22 +2,27 @@
 
 ## Current operational gap
 
-The current implementation has an authorization-aware Strategy Protocol, immutable
-Candidate/Portfolio/Risk/approved-intent contracts, swap availability semantics, and
-an authorized shadow cycle that records `NOT_SUBMITTED`. It has no production
-Strategy, production pair/settings registry, ordinary Strategy exit, Paper Gateway,
-fill engine, account/PnL ledger, scheduler, or daemon.
+The current implementation has an authorization-aware accepted 0005 Strategy
+Protocol, immutable Candidate/Portfolio/Risk/approved-intent contracts, swap
+availability semantics, and an authorized shadow cycle that records `NOT_SUBMITTED`.
+Milestone 2-A additionally provides production Strategy config/identity, typed entry
+and exit Ports/results, lossless `ProductionTradeCandidate`, versioned
+`OperationalSwapEvidence`, `PositionCloseCandidate`, and execution-authority mapping.
+It has no concrete production Strategy, operational Signal/Swap adapter, production
+Candidate persistence, ordinary close Portfolio/Risk path, Paper Gateway, fill
+engine, account/PnL ledger, scheduler, or daemon.
 
-`TradeCandidate` is entry-only. `ApprovedLiquidationIntent` is created only for the
+Accepted 0005 `TradeCandidate` remains entry-only and unchanged.
+`ApprovedLiquidationIntent` is created only for the
 Risk margin kill switch and is not a normal Strategy close path. `AccountSnapshot`
 contains only margin ratio, while `SwapQuote` does not yet carry the unit/settlement/
 rollover/version identity needed for cash accrual. Test fixture values are not
 production defaults.
 
-## ExecPlan 0006 target: NewsFilteredCarryStrategy
+## ExecPlan 0006 M2-A contracts and NewsFilteredCarryStrategy target
 
-The initial production Strategy consumes exact `AuthorizedSignal` envelopes and
-versioned swap evidence. Its immutable config fixes Strategy/config identity,
+The production Ports consume exact `AuthorizedSignal` envelopes and versioned swap
+evidence. The implemented immutable config fixes Strategy/config identity,
 eligible Pairs, Pair transformation version, positive/negative thresholds, neutral
 band, and Signal/swap freshness. Initial Pair scope is exactly `USD_JPY` and
 `MXN_JPY`.
@@ -37,20 +42,21 @@ swap, while SELL requires strictly positive fresh short received swap. Missing,
 unknown, unavailable, stale, malformed, zero, or negative swap produces a structured
 skip.
 
-The current Candidate score type is a `Probability`, while Pair direction is a
-`PairScore` in `[-2, 2]`. ExecPlan 0006 must resolve that evidence contract explicitly
-and version it before implementation; it may not silently clamp or normalize Pair
-direction.
+The accepted 0005 Candidate score type is a `Probability`, while Pair direction is a
+`PairScore` in `[-2, 2]`. M2-A resolves this without altering 0005:
+`ProductionTradeCandidate` stores lossless `PairScore` and `Probability` confidence
+in separate fields and contains no quantity or Broker parameter.
 
-The current Protocol returns one Candidate or `None`. The production contract
-evaluates one configured Pair at a time in deterministic Pair order and returns a
-typed Candidate-or-structured-skip result, so `None` does not hide operational causes
-and a second eligible Pair is not silently discarded.
+The accepted 0005 Protocol returns one Candidate or `None`. The separate production
+contract evaluates one configured Pair at a time in deterministic Pair order and
+returns a typed Candidate-or-structured-skip result, so `None` does not hide
+operational causes and a second eligible Pair is not silently discarded.
 
-Strategy entry and ordinary exit remain separate typed paths. A dedicated
-reduce-only close Candidate/intent supports full or partial close with structured
-exit reason. Risk emergency liquidation remains a different authority. No action
-string is added to `TradeCandidate`.
+Strategy entry and ordinary exit are separate typed Ports. The implemented
+`PositionCloseCandidate` is always reduce-only, has a structured exit reason, and has
+no quantity or action string. Portfolio quantity, partial-close validation, approved
+close intent, and Risk no-overclose checks remain M2-D. Risk emergency liquidation
+remains a different authority.
 
 ## ExecPlan 0006 target: Paper authority
 

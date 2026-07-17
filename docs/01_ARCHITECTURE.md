@@ -1,16 +1,21 @@
 # Architecture
 
-## Production and Paper operations target
+## Production Strategy contract foundation and Paper target
 
-The following is the ExecPlan 0006 target and is not implemented at the current
-planning milestone:
+Milestone 2-A now implements the immutable production Strategy config,
+`OperationalSwapEvidence`, typed entry/exit evaluation and Candidate contracts,
+production Strategy Ports, and the separate execution-authority mapping/guard. It
+does not implement a concrete Strategy, Signal selection/materialization,
+Portfolio/Risk integration, persistence, or Paper runtime.
+
+The remaining ExecPlan 0006 target is:
 
 ```text
 Operational Signal Source
     -> Live Adoption Gate
     -> AuthorizedSignal
-    -> NewsFilteredCarryStrategy
-    -> TradeCandidate
+    -> ProductionEntryStrategy / NewsFilteredCarryStrategy (pending)
+    -> ProductionTradeCandidate
     -> Portfolio
     -> Risk
     -> ApprovedExecutionIntent
@@ -72,9 +77,10 @@ timestamp, local receipt/availability, and evaluation time and must be available
 after the approved intent and inside the active Step's frozen market window/due
 boundary. Research `ForwardResult` is forbidden as fill input.
 
-Current implementation remains the ExecPlan 0005 authorized shadow path: it reaches
-an approved intent and records `NOT_SUBMITTED`. There is no production Strategy,
-Paper Gateway, Paper ledger, or operational daemon yet.
+Current executable behavior remains the ExecPlan 0005 authorized shadow path: it
+reaches an approved intent and records `NOT_SUBMITTED`. The M2-A production contracts
+are not connected to Portfolio, Risk, Execution, or persistence, and there is no
+concrete production Strategy, Paper Gateway, Paper ledger, or operational daemon.
 
 ## Research-to-Live adoption boundary
 

@@ -1,8 +1,28 @@
 # Test Strategy
 
-## Production Strategy and Paper target tests
+## Production Strategy M2-A contract tests and Paper target tests
 
-ExecPlan 0006 implementation tests will state the following guarantees:
+Milestone 2-A tests already state:
+
+- execution authority is separate from Adoption runtime; Shadow/Paper map to
+  `RuntimeMode.SHADOW`, Live maps to `RuntimeMode.LIVE`, and the 0006 guard rejects
+  Live;
+- exact `USD_JPY`/`MXN_JPY` config is immutable, has no hidden defaults, and has a
+  deterministic canonical identity with exact integer-microsecond durations;
+- versioned `OperationalSwapEvidence` validates its intrinsic content ID, UTC
+  availability/effective time, availability/value rules, and received sign without
+  modifying accepted `SwapQuote`;
+- production entry accepts `AuthorizedSignal`, not raw Signal, and produces a
+  deterministic Candidate-or-structured-skip result with exact authorization,
+  adoption, Swap, and config lineage;
+- `ProductionTradeCandidate` stores lossless `PairScore` separately from confidence
+  and has no quantity, Portfolio, Risk, or Broker fields;
+- `PositionCloseCandidate` is a distinct, quantity-free, always-reduce-only ordinary
+  close request and is not Risk emergency liquidation; and
+- the strategy package imports no Research, AI/LLM, Execution, Portfolio, Risk, or
+  Broker module, while no concrete production Strategy or migration exists yet.
+
+Later ExecPlan 0006 implementation tests will state the following guarantees:
 
 - exact Authorized Signals and immutable Strategy config produce deterministic
   Candidates or structured skips;

@@ -1,10 +1,14 @@
 # Data and Versioning
 
-## Paper evidence target
+## Production Strategy identity and Paper evidence target
 
-ExecPlan 0006 plans additive Paper persistence beginning with Live migration `0003`;
-the current numbered migrations end at `0002`. The following records are target
-contracts and are not implemented at the planning milestone:
+Milestone 2-A adds content-addressed Strategy config, operational Swap evidence,
+entry evaluation, production Candidate, and ordinary close Candidate contracts in
+code without adding persistence. Existing Live migrations remain `0001` and `0002`.
+Milestone 2-B/C/D may add Strategy persistence using the next available additive
+numbers in implementation order. Paper persistence begins at the next available
+additive Live migration only after Milestone 2 production Strategy persistence is
+complete; `0003` is not reserved. The following Paper records remain target contracts:
 
 ```text
 paper_cycle_slot / paper_cycle_input_snapshot / paper_cycle_attempt

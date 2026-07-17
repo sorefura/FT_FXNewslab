@@ -9,9 +9,10 @@
   - Paper order/fill evidence is operational simulation and never grants real Broker
     authority.
 
-ExecPlan 0006 is currently at the planning/architecture milestone. Its target modules
-are not yet implemented. ExecPlan 0007 is reserved for Controlled Live execution
-rollout.
+ExecPlan 0006 Milestone 2-A has implemented the production Strategy domain contract
+foundation only. Pair Signal materialization, the concrete Strategy, production
+persistence/Portfolio/Risk integration, and all Paper modules remain pending.
+ExecPlan 0007 is reserved for Controlled Live execution rollout.
 
 ## ExecPlan 0005 adoption boundary
 

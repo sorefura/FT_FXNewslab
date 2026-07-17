@@ -28,6 +28,7 @@ from fx_signal_store import (
     inspect_source_candidate,
     observation_group_identity,
     pair_signal_identity_payload,
+    resolve_pair_signal_selection,
 )
 
 from tests.pair_signal_materialization.factories import (
@@ -71,31 +72,22 @@ def test_selection_identity_changes_with_checkpoint_candidate_set_and_outcome() 
         snapshot=source_snapshot(SourceSignalRole.BASE, identifier="signal-base-2"),
         store_sequence=3,
     )
-    expanded = PairSignalSelectionSnapshot.create(
-        contract_version=PAIR_SIGNAL_SELECTION_SNAPSHOT_VERSION,
-        request=selected.request,
-        checkpoint_sequence=3,
-        captured_at=selected.captured_at,
-        candidates=selected.candidates + (extra,),
-        outcome=selected.outcome,
-        reason=selected.reason,
-        selected_base_candidate_id=selected.selected_base_candidate_id,
-        selected_quote_candidate_id=selected.selected_quote_candidate_id,
-        selected_base_signal_id=selected.selected_base_signal_id,
-        selected_quote_signal_id=selected.selected_quote_signal_id,
-        selected_observation_group_identity=selected.selected_observation_group_identity,
+    expanded = resolve_pair_signal_selection(
+        selected.request,
+        3,
+        selected.captured_at,
+        selected.candidates + (extra,),
     )
-    no_match = PairSignalSelectionSnapshot.create(
-        contract_version=PAIR_SIGNAL_SELECTION_SNAPSHOT_VERSION,
-        request=selected.request,
-        checkpoint_sequence=2,
-        captured_at=selected.captured_at,
-        candidates=selected.candidates,
-        outcome=PairSignalSelectionOutcome.NO_MATCH,
-        reason=PairSignalSelectionReason.NO_COMPLETE_OBSERVATION_GROUP,
+    no_match = resolve_pair_signal_selection(
+        selected.request,
+        2,
+        selected.captured_at,
+        (),
     )
 
     assert selected.selection_snapshot_id != later_checkpoint.selection_snapshot_id
+    assert expanded.outcome is PairSignalSelectionOutcome.AMBIGUOUS
+    assert expanded.reason is PairSignalSelectionReason.AMBIGUOUS_BASE_SIGNAL
     assert selected.selection_snapshot_id != expanded.selection_snapshot_id
     assert selected.selection_snapshot_id != no_match.selection_snapshot_id
 
@@ -150,12 +142,15 @@ def test_selected_requires_exact_eligible_base_quote_and_observation_group() -> 
         ),
         store_sequence=2,
     )
-    with pytest.raises(ValueError, match="Observation group"):
-        selected_snapshot(
-            materialization_request=selected.request,
-            base=base,
-            quote=quote_other_group,
-        )
+    no_complete_group = selected_snapshot(
+        materialization_request=selected.request,
+        base=base,
+        quote=quote_other_group,
+    )
+    assert no_complete_group.outcome is PairSignalSelectionOutcome.NO_MATCH
+    assert no_complete_group.reason is (
+        PairSignalSelectionReason.NO_COMPLETE_OBSERVATION_GROUP
+    )
     stale = inspect_source_candidate(
         selected.request,
         SourceSignalRole.QUOTE,
@@ -168,12 +163,13 @@ def test_selected_requires_exact_eligible_base_quote_and_observation_group() -> 
     )
     assert stale.eligibility is PairSignalCandidateEligibility.INELIGIBLE
     assert stale.rejection_reason is PairSignalCandidateRejectionReason.STALE_AT_AS_OF
-    with pytest.raises(ValueError, match="eligible"):
-        selected_snapshot(
-            materialization_request=selected.request,
-            base=base,
-            quote=stale,
-        )
+    missing_quote = selected_snapshot(
+        materialization_request=selected.request,
+        base=base,
+        quote=stale,
+    )
+    assert missing_quote.outcome is PairSignalSelectionOutcome.NO_MATCH
+    assert missing_quote.reason is PairSignalSelectionReason.NO_ELIGIBLE_QUOTE_SIGNAL
 
 
 @pytest.mark.parametrize(
@@ -209,7 +205,7 @@ def test_selection_rejects_unsupported_outcome_reason_combinations(
 
 def test_non_selected_outcome_prohibits_selected_lineage() -> None:
     selected = selected_snapshot()
-    with pytest.raises(ValueError, match="prohibits"):
+    with pytest.raises(ValueError, match="complete candidate inventory"):
         PairSignalSelectionSnapshot.create(
             contract_version=PAIR_SIGNAL_SELECTION_SNAPSHOT_VERSION,
             request=selected.request,
@@ -262,14 +258,11 @@ def test_pair_signal_id_is_deterministic_and_commits_to_exact_selected_lineage()
 
 def test_pair_signal_id_rejects_non_selected_foreign_or_early_inputs() -> None:
     selection = selected_snapshot()
-    no_match = PairSignalSelectionSnapshot.create(
-        contract_version=PAIR_SIGNAL_SELECTION_SNAPSHOT_VERSION,
-        request=selection.request,
-        checkpoint_sequence=2,
-        captured_at=selection.captured_at,
-        candidates=selection.candidates,
-        outcome=PairSignalSelectionOutcome.NO_MATCH,
-        reason=PairSignalSelectionReason.NO_COMPLETE_OBSERVATION_GROUP,
+    no_match = resolve_pair_signal_selection(
+        selection.request,
+        2,
+        selection.captured_at,
+        (),
     )
     with pytest.raises(ValueError, match="SELECTED"):
         expected_pair_signal_id(selection.request, no_match, materialized_at=NOW)
@@ -381,7 +374,7 @@ def test_pair_signal_derivation_rejects_wrong_pair_signal_id_or_feature_lineage(
     selection = selected_snapshot()
     materialized_at = NOW + timedelta(minutes=2)
     pair_snapshot = pair_signal_snapshot(selection, materialized_at=materialized_at)
-    with pytest.raises(ValueError, match="Pair Signal ID"):
+    with pytest.raises(ValueError, match="signal_id"):
         PairSignalDerivation.create(
             pair_signal_snapshot=_changed_pair_snapshot(
                 pair_snapshot,
@@ -391,7 +384,7 @@ def test_pair_signal_derivation_rejects_wrong_pair_signal_id_or_feature_lineage(
             selection_snapshot=selection,
             materialized_at=materialized_at,
         )
-    with pytest.raises(ValueError, match="Feature lineage"):
+    with pytest.raises(ValueError, match="source_feature_ids"):
         PairSignalDerivation.create(
             pair_signal_snapshot=_changed_pair_snapshot(
                 pair_snapshot,

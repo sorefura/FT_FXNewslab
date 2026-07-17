@@ -16,11 +16,14 @@ Milestone 2-B1 now provides the upstream Pair materialization contracts in
 `fx_signal_store`, not in `swap_bot`. One Pair/as-of/specification creates one stable
 request. Exact source Signal content and Feature/Observation lineage are frozen as
 BASE/QUOTE candidates; the immutable selection outcome is `SELECTED`, `NO_MATCH`, or
-`AMBIGUOUS`. Deterministic Pair Signal identity and `PairSignalDerivation` retain the
-exact ordered source roles without adding Live semantics to `fx_core.Signal`.
+`AMBIGUOUS` and is derived from the complete candidate inventory. Deterministic Pair
+Signal identity, exact shared-transformer output verification, and relational
+`PairSignalDerivation` validation retain the exact ordered source roles without
+adding Live semantics to `fx_core.Signal`.
 
-No operational Signal query, checkpoint, Pair transformation, materializer, or
-Adoption-gate call is implemented yet. M2-C composition must prove that the Strategy
+No operational Signal query, checkpoint persistence, materializer, or Adoption-gate
+call is implemented yet. The shared transformer is invoked only by a pure expected-
+content verifier, not by an operational materializer. M2-C composition must prove that the Strategy
 config eligible Pair exactly matches the materialization Specification Pair; neither
 contract silently supplies a Pair whitelist for the other.
 

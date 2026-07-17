@@ -102,8 +102,8 @@ Milestone 2-B1 implementation started from clean, synchronized `main` at
 | Execution | `ExecutionService` accepts only `ApprovedExecutionIntent`, persistently claims its key, and always returns `NOT_SUBMITTED`; it never calls its injected Broker Gateway. | A boolean dry-run cannot represent fictional execution. Paper needs a distinct adapter, domain, result status, and authority. |
 | Idempotency | Execution intent carries a caller-supplied string. SQLite has a unique intent key and a separate claimed-key table. | There is no canonical operational cycle identity or deterministic Paper order/fill identity. |
 | Persistence | Live base tables are initialized inline. Numbered additive migrations `0001` and `0002` add adoption and Candidate-authorization state. Milestone 2-A and 2-B1 add no migration. Shared Signal Store still has only `0001_signal_lineage.sql`; its query/append behavior is unchanged. | M2-B2/B3 add checkpoint and exact atomic Pair materialization persistence before Strategy evaluation/Candidate/close persistence. Paper begins at the next available additive migration after that work, not a reserved `0003`. |
-| Signal source | `fx_signal_store` can read immutable Signals by ID or list by target/horizon/scorer version. Adoption runtime consumes a supplied Signal and never reads Research evaluation state. | There is no Live-owned operational Signal-source Port, checkpoint, ambiguity rule, or recurring selection cycle. |
-| Pair transformation | `fx_core.CurrencyPairSignalTransformer` persists `currency-pair-v1` semantics: base direction minus quote direction. M2-B1 now fixes stable Pair/as-of/specification request identity, exact Signal/Observation candidate inventory, terminal selection snapshot, deterministic Pair Signal ID, and ordered BASE/QUOTE derivation contracts. | M2-B2/B3 still need checkpoint/query, ranking/ambiguity processing, transformer invocation, and atomic exact persistence before Live authorization. |
+| Signal source | `fx_signal_store` can read immutable Signals by ID or list by target/horizon/scorer version. M2-B1 now provides a pure full-inventory resolver with fail-closed ambiguity semantics. Adoption runtime consumes a supplied Signal and never reads Research evaluation state. | There is no Live-owned operational Signal-source Port, checkpoint, resolver-to-query composition, or recurring selection cycle. |
+| Pair transformation | `fx_core.CurrencyPairSignalTransformer` persists `currency-pair-v1` semantics: base direction minus quote direction. M2-B1 fixes stable Pair/as-of/specification request identity, exact candidate inventory, inventory-derived terminal selection, deterministic Pair Signal ID, complete shared-transformer output verification, and relational BASE/QUOTE derivation integrity. | M2-B2/B3 still need checkpoint/query, exact append-or-compare, and atomic materializer composition before Live authorization. |
 | Modes | Adoption keeps `RuntimeMode.SHADOW/LIVE`. Milestone 2-A adds distinct `ExecutionAuthorityMode`, maps Shadow/Paper to Adoption Shadow and Live to Adoption Live, and makes the 0006 authority guard reject Live. | No operational composition persists or exercises Paper authority yet. |
 | Operations | CLI supports one offline fixture cycle and one-shot approve/revoke commands. | No production one-shot cycle, scheduler/daemon, overlap lock, checkpoint, health signal, restart recovery, reconciliation, or burn-in report exists. |
 | Pair/config values | M2-A config contract enforces the ordered exact Pair scope `USD_JPY`, `MXN_JPY` and requires every threshold, duration, version, and exit flag explicitly. Test values remain fixtures. | No reviewed production config instance or runtime settings source exists. Fixture and Research defaults are never promoted implicitly. |
@@ -286,13 +286,14 @@ calls an AI provider.
 
 Milestone 2-B is split into three reviewable stages:
 
-- **2-B1 (complete):** package-neutral canonical identity and immutable
-  Specification, Request, Signal content, Observation group, candidate inventory,
-  selection snapshot, Pair Signal identity, and derivation contracts;
+- **2-B1 (complete):** package-neutral canonical identity; immutable Specification,
+  Request, Signal content, Observation group, and candidate inventory; pure terminal
+  resolver; authenticated selection snapshot; deterministic Pair Signal identity;
+  exact shared-transformer output; and relational derivation contracts;
 - **2-B2 (pending):** monotonic Signal Store sequence/checkpoint schema and exact
   append/compare persistence; and
-- **2-B3 (pending):** deterministic candidate query/group ranking, terminal
-  selection, shared transformer invocation, and one-transaction materialization.
+- **2-B3 (pending):** deterministic candidate query, resolver/verifier composition,
+  and one-transaction materialization.
 
 The implemented `PairSignalMaterializationSpecification` explicitly fixes Pair,
 source/output Signal types, Horizon, producer/model/prompt/scorer/source and output
@@ -326,15 +327,19 @@ dominance is fixed in this order:
 ```text
 target type -> target currency -> Signal type -> Horizon
 -> producer -> model -> prompt -> scorer -> source transformation
--> direction type -> created after as-of -> observed after as-of -> stale at as-of
+-> observed after as-of -> created after as-of -> stale at as-of
 ```
 
 `PairSignalSelectionSnapshot` canonicalizes the complete inventory, commits to its
-candidate-set hash and checkpoint, and enforces exact selected BASE/QUOTE candidate,
-Signal, role, eligibility, Horizon, and Observation-set lineage. `SELECTED`,
-`NO_MATCH`, and `AMBIGUOUS` have disjoint structured reasons and are terminal for one
-Request. First-write audit `captured_at` must be UTC and no earlier than `as_of`, but
-is excluded from selection semantic identity.
+candidate-set hash and checkpoint, and recomputes outcome, reason, and selected
+BASE/QUOTE lineage with `resolve_pair_signal_selection()`. No-match precedence is
+missing BASE, missing QUOTE, then no complete exact group. Ambiguity in any complete
+group precedes ranking, BASE ambiguity precedes QUOTE ambiguity, one-to-one groups
+rank by observed then available time, and a semantic tie is
+`AMBIGUOUS_SOURCE_GROUP`; IDs and Store sequence never choose a winner. `SELECTED`,
+`NO_MATCH`, and `AMBIGUOUS` are terminal for one Request. First-write audit
+`captured_at` must be UTC and no earlier than `as_of`, but is excluded from selection
+semantic identity.
 
 The deterministic Pair Signal ID is fixed after Request/selection and frozen
 `materialized_at`, before transformer invocation. It commits to Pair/output type,
@@ -344,6 +349,15 @@ version, and time. It neither calls a Clock nor calculates `base - quote`.
 Signals/content hashes, Observation group/IDs, Specification, Request, selection,
 Horizon, transformation, and source/request/materialization times. Shared
 `fx_core.Signal` gains no `source_signal_ids` or Live-specific lineage.
+
+`expected_pair_signal_snapshot()` reconstructs the exact selected Currency Signals
+and calls the unchanged `CurrencyPairSignalTransformer` with the frozen ID and
+`materialized_at`. `validate_pair_signal_transformation()` compares every output
+semantic field and content hash with exact equality. `PairSignalDerivation.create()`
+uses that verifier, while `validate_against()` additionally proves every derivation-
+to-selection/source relation. M2-B2 persistence must call `validate_against()` before
+insert or idempotent reuse and again after hydration; intrinsic content identity is
+necessary but is not persistence authorization.
 
 M2-B2 must add a monotonic `store_sequence`. The first Request claim freezes:
 
@@ -357,12 +371,9 @@ terminal selection snapshot and never reruns selection. Because `Signal.created_
 is producer time rather than local insertion time, an old-dated backfill inserted
 after the checkpoint cannot enter a historical Request.
 
-M2-B3 groups only exact Observation sets. More than one eligible BASE or QUOTE in a
-group is ambiguous. Complete groups rank first by greatest
-`max(base.observed_at, quote.observed_at)`, then greatest
-`max(base.created_at, quote.created_at)`. A remaining semantic tie is
-`AMBIGUOUS_SOURCE_GROUP`; Signal or group ID may order diagnostics but may not choose
-a winner.
+M2-B3 supplies the persisted checkpoint-bounded inventory to the M2-B1 resolver; it
+does not reimplement exact-group ambiguity, semantic ranking, or shared-transformer
+output semantics in a Store adapter or application service.
 
 M2-B2/B3 must atomically persist selection snapshot, complete candidate inventory,
 derived Pair Signal, Feature links, Pair Signal Store sequence, and derivation.
@@ -768,17 +779,19 @@ all four are complete:
   - **2-B1 Pair Signal Materialization Contracts and Identity Foundation
     (complete):** package-neutral canonical identity; immutable versioned
     Specification and stable Pair/as-of Request; exact Signal content and Observation
-    group identity; typed BASE/QUOTE candidate inventory; immutable terminal
-    selection snapshot; deterministic pre-transform Pair Signal ID; and exact
-    PairSignalDerivation. No migration, Store query, Pair Signal generation, or
-    materializer was added.
+    group identity; typed BASE/QUOTE candidate inventory; pure full-inventory terminal
+    resolver; authenticated immutable selection snapshot; deterministic pre-transform
+    Pair Signal ID; exact shared-transformer output verifier; and intrinsic plus
+    relational PairSignalDerivation integrity. No migration, Store query, operational
+    Pair Signal persistence, or materializer was added.
   - **2-B2 Signal Store Checkpoint and Exact Persistence (pending):** monotonic Store
     sequence, first-claim checkpoint, saved terminal selection/candidate inventory,
-    and full-content/lineage append-or-compare operations.
+    full-content/lineage append-or-compare operations, and mandatory relational
+    validation before insert/reuse and after hydration.
   - **2-B3 Operational Pair Signal Materializer (pending):** deterministic as-of
-    candidate query, exact-group ranking and ambiguity handling,
-    `CurrencyPairSignalTransformer` invocation, and atomic Signal-plus-derivation
-    persistence.
+    candidate query, composition of the shared resolver/verifier, and atomic
+    Signal-plus-derivation persistence without reimplementing selection or transform
+    semantics.
 - **2-C Entry Strategy (pending):** concrete `NewsFilteredCarryStrategy`, operational
   Swap adapter, evaluation/Candidate persistence, and persistence-boundary recheck of
   the approval's exact `strategy_config_identity`.
@@ -1077,9 +1090,14 @@ ExecPlan 0006 is complete only when all of the following are true:
   identity; exact Signal content, Observation-group, candidate-inventory,
   selection-snapshot, deterministic Pair Signal identity, and derivation contracts;
   and extracted package-neutral canonical digest without changing accepted IDs.
+- [x] (2026-07-17) Milestone 2-B1 review correction - derived every terminal
+  selection result from the complete frozen inventory; rejected forged terminal
+  snapshots; verified full Pair Signal content through the unchanged shared
+  transformer; and separated derivation intrinsic identity from relational
+  source/transformation authenticity.
 - [x] (2026-07-17) Left checkpoint persistence, SQLite selection, Pair
-  transformation, and materializer execution pending for M2-B2/M2-B3; no migration
-  or existing Store behavior changed.
+  query/materializer composition, and atomic persistence pending for M2-B2/M2-B3; no
+  migration or existing Store behavior changed.
 - [ ] Milestone 2-B2 - Signal Store checkpoint and exact persistence.
 - [ ] Milestone 2-B3 - operational Pair Signal selection/materialization.
 - [ ] Milestone 2-B - exact Pair Signal materialization and selection.
@@ -1162,6 +1180,25 @@ ExecPlan 0006 is complete only when all of the following are true:
   pytest base directory and therefore produced setup errors rather than test failures.
   Resolution: rerun both supported interpreters against distinct OS temporary roots;
   both full suites passed, and Ruff/mypy ran without cache writes.
+- Observation: validating only caller-selected BASE/QUOTE records cannot detect an
+  extra eligible source or an older ambiguous complete group elsewhere in the frozen
+  inventory.
+  Resolution: derive the complete terminal decision from the full inventory and
+  require exact equality during both construction and hydration.
+- Observation: a deterministic Pair Signal ID authenticates request/source lineage
+  but intentionally contains no Pair score, strength, confidence, observed time, or
+  combined version output.
+  Resolution: reconstruct the typed source Signals and compare the complete unchanged
+  shared-transformer output separately from ID and content-hash self-consistency.
+- Observation: a content-addressed `PairSignalDerivation` cannot intrinsically prove
+  its relation to source snapshots that it does not fully contain.
+  Resolution: require explicit `validate_against()` at persistence boundaries; do
+  not treat intrinsic derivation identity as authorization to insert or reuse.
+- Observation: target/direction inconsistency is already rejected by
+  `SignalContentSnapshot`, and `Signal.observed_at <= Signal.created_at` makes future
+  observation the dominant temporal diagnosis when both timestamps are future.
+  Resolution: remove the unreachable direction rejection enum and evaluate observed-
+  future before created-future, retaining created-future for later-created evidence.
 - Observation: `CurrencyPairSignalTransformer` combines exact Feature lineage but the
   resulting Pair Signal does not retain the exact base and quote Signal IDs or roles.
   Resolution: Milestone 2-B introduces `PairSignalDerivation` with base/quote Signal
@@ -1327,7 +1364,20 @@ ExecPlan 0006 is complete only when all of the following are true:
 - 2026-07-17: Place canonical JSON/SHA-256 in package-neutral `fx_core.identity` and
   retain existing `swap_bot.adoption` wrappers byte-for-byte compatible.
 - 2026-07-17: Keep Store sequence/checkpoint schema, exact append/compare, candidate
-  query/ranking, transformer invocation, and atomic materializer in M2-B2/M2-B3.
+  query, resolver/verifier composition, and atomic materializer in M2-B2/M2-B3.
+- 2026-07-17: Derive terminal selection outcome, reason, and selected IDs from the
+  complete candidate inventory; caller-provided terminal fields are never authority.
+- 2026-07-17: Fail a Request closed when any complete Observation group has duplicate
+  BASE or QUOTE evidence, and rank one-to-one groups only by observed and available
+  time; semantic ties never use IDs or Store sequence to choose a winner.
+- 2026-07-17: Authenticate Pair Signal content by rerunning the unchanged shared
+  transformer and requiring exact field equality; do not duplicate its arithmetic or
+  version-combination semantics in `fx_signal_store`.
+- 2026-07-17: Keep derivation intrinsic identity separate from relational
+  authenticity. M2-B2 persistence must call `validate_against()` before insert/reuse
+  and after hydration.
+- 2026-07-17: Treat target/direction mismatch as intrinsic snapshot corruption and
+  diagnose observed-future before created-future in candidate rejection precedence.
 - 2026-07-17: Paper persistence begins at the next available additive Live migration
   after Milestone 2 Strategy persistence; `0003` is neither reserved nor created by
   Milestone 2-A.
@@ -1516,3 +1566,33 @@ Milestone 2-B1 Pair materialization identity foundation completed locally on
   Broker, Paper, scheduler, CLI, or ExecPlan 0007 implementation was added.
 - Hosted CI has not been run for this unpushed M2-B1 commit; only local validation is
   claimed.
+
+Milestone 2-B1 terminal-selection and transformation-authenticity review correction
+completed locally on 2026-07-17:
+
+- Python 3.11.9: `559 passed, 5 skipped`; Ruff passed; strict mypy passed for
+  71 source files.
+- Python 3.14.6: `559 passed, 5 skipped`; Ruff passed; strict mypy passed for
+  71 source files.
+- The five skips remain opt-in external provider smoke tests. Final pytest runs used
+  distinct OS temporary roots with cache disabled; Ruff used `--no-cache` and mypy
+  used `--no-incremental`.
+- Public import smoke for `resolve_pair_signal_selection`,
+  `expected_pair_signal_snapshot`, `validate_pair_signal_transformation`,
+  `PairSignalDerivation`, `PairSignalSelectionSnapshot`, and the existing Adoption
+  digest API passed on both supported Python versions.
+- Digest/M2-A identity compatibility plus the unchanged shared Pair transformer
+  characterization passed as a focused `29 passed` on both Python versions; the same
+  tests are included in the full suite.
+- `git diff --check` passed. The 13-file change is limited to the M2-B1 shared
+  contracts/exports, focused selection/transformation tests, test factories, and the
+  six living design documents.
+- Shared Signal Store migrations remain exactly `0001_signal_lineage.sql`; Live
+  migrations remain exactly `0001`/`0002`. No migration or SQLite Store query,
+  append, or persistence behavior changed.
+- `CurrencyPairSignalTransformer`, shared `Signal`, and `fx_core.identity` are
+  unchanged. No operational materializer, checkpoint/query implementation, concrete
+  Strategy, Adoption-gate call, Portfolio, Risk, Execution, Broker, Paper, scheduler,
+  CLI, or ExecPlan 0007 implementation was added or changed.
+- Hosted CI has not been run for this unpushed review-correction commit; only local
+  validation is claimed.

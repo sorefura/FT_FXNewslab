@@ -26,9 +26,12 @@ from .pair_materialization import (
     SourceSignalRole,
     canonical_observation_ids,
     expected_pair_signal_id,
+    expected_pair_signal_snapshot,
     inspect_source_candidate,
     observation_group_identity,
     pair_signal_identity_payload,
+    resolve_pair_signal_selection,
+    validate_pair_signal_transformation,
 )
 from .store import SignalLineage, SQLiteSignalStore
 
@@ -62,7 +65,10 @@ __all__ = [
     "SourceSignalRole",
     "canonical_observation_ids",
     "expected_pair_signal_id",
+    "expected_pair_signal_snapshot",
     "inspect_source_candidate",
     "observation_group_identity",
     "pair_signal_identity_payload",
+    "resolve_pair_signal_selection",
+    "validate_pair_signal_transformation",
 ]

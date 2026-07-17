@@ -29,8 +29,9 @@ packages/fx_core/src/fx_core/identity.py
 
 packages/fx_signal_store/src/fx_signal_store/pair_materialization.py
     Pair/as-of Specification and Request, exact Signal/Observation snapshots,
-    BASE/QUOTE candidate inventory, terminal selection snapshot,
-    deterministic Pair Signal ID, and PairSignalDerivation
+    BASE/QUOTE candidate inventory, full-inventory terminal resolver,
+    deterministic Pair Signal ID, exact shared-transformer output verifier,
+    and relational PairSignalDerivation
 ```
 
 `swap_bot.adoption` keeps compatibility wrappers for its existing public digest API.

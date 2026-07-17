@@ -36,7 +36,9 @@ overlap is a different group. Candidate inventory retains positive Store sequenc
 exact Signal content hash, BASE/QUOTE role, group, eligibility, and one versioned
 dominant rejection reason. The selection snapshot commits to the canonical complete
 candidate-set hash, checkpoint, outcome, reason, and selected lineage while excluding
-first-write audit `captured_at` from semantic identity.
+first-write audit `captured_at` from semantic identity. Outcome, reason, and selected
+IDs are derived from the complete inventory and recomputed during intrinsic
+validation; caller input is never terminal-result authority.
 
 M2-B2 will add a monotonic `store_sequence` and first-claim checkpoint equal to the
 current maximum sequence. Eligibility will require both
@@ -45,9 +47,10 @@ Retry reuses the original checkpoint and saved terminal selection snapshot. A
 backfilled Signal inserted after that checkpoint cannot enter the historical Request
 even when its `created_at` is old.
 
-M2-B3 selection will group eligible BASE/QUOTE candidates only by exact Observation
-set. Multiple eligible BASE or QUOTE records inside one group fail closed. Complete
-groups rank by greatest `max(base.observed_at, quote.observed_at)`, then greatest
+The M2-B1 resolver groups eligible BASE/QUOTE candidates only by exact Observation
+set. Multiple eligible BASE or QUOTE records inside any complete group fail the
+whole Request closed before ranking. One-to-one complete groups rank by greatest
+`max(base.observed_at, quote.observed_at)`, then greatest
 `max(base.created_at, quote.created_at)`. If those semantic values still tie, IDs are
 diagnostic ordering only and the result is `AMBIGUOUS_SOURCE_GROUP`.
 
@@ -61,8 +64,13 @@ derivation equality. Any conflict fails without partial records.
 Deterministic Pair Signal identity is fixed before transformation from exact request,
 selection, BASE/QUOTE Signal IDs and content hashes, Observation group,
 `currency-pair-v1`, and frozen `materialized_at`. It contains no Pair score and does
-not call the transformer. `PairSignalDerivation` owns exact ordered source Signal
-lineage; shared `Signal` remains unchanged.
+not call the transformer. Separately, `expected_pair_signal_snapshot()` reconstructs
+the exact typed source Signals and calls the unchanged shared transformer.
+`validate_pair_signal_transformation()` requires exact equality for every output
+field and content hash. `PairSignalDerivation` owns exact ordered source Signal
+lineage, and `validate_against()` must run before persistence insert/reuse and after
+hydration because intrinsic content identity alone cannot prove its source relation.
+Shared `Signal` remains unchanged.
 
 Position exit semantic identity embeds one `PositionExitPositionEvidence` payload
 containing the business Position ID, distinct immutable Position evidence ID, Pair,

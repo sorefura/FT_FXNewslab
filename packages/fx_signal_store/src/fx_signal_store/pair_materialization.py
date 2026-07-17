@@ -6,6 +6,7 @@ from enum import StrEnum
 from fx_core import (
     Currency,
     CurrencyPair,
+    CurrencyPairSignalTransformer,
     CurrencyTarget,
     DirectionScore,
     FeatureId,
@@ -68,7 +69,6 @@ class PairSignalCandidateRejectionReason(StrEnum):
     PROMPT_VERSION_MISMATCH = "PROMPT_VERSION_MISMATCH"
     SCORER_VERSION_MISMATCH = "SCORER_VERSION_MISMATCH"
     SOURCE_TRANSFORMATION_VERSION_MISMATCH = "SOURCE_TRANSFORMATION_VERSION_MISMATCH"
-    DIRECTION_TYPE_MISMATCH = "DIRECTION_TYPE_MISMATCH"
     CREATED_AFTER_AS_OF = "CREATED_AFTER_AS_OF"
     OBSERVED_AFTER_AS_OF = "OBSERVED_AFTER_AS_OF"
     STALE_AT_AS_OF = "STALE_AT_AS_OF"
@@ -88,6 +88,17 @@ class PairSignalSelectionReason(StrEnum):
     AMBIGUOUS_BASE_SIGNAL = "AMBIGUOUS_BASE_SIGNAL"
     AMBIGUOUS_QUOTE_SIGNAL = "AMBIGUOUS_QUOTE_SIGNAL"
     AMBIGUOUS_SOURCE_GROUP = "AMBIGUOUS_SOURCE_GROUP"
+
+
+@dataclass(frozen=True, slots=True)
+class _PairSignalSelectionDecision:
+    outcome: PairSignalSelectionOutcome
+    reason: PairSignalSelectionReason
+    selected_base_candidate_id: str | None = None
+    selected_quote_candidate_id: str | None = None
+    selected_base_signal_id: SignalId | None = None
+    selected_quote_signal_id: SignalId | None = None
+    selected_observation_group_identity: str | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -706,83 +717,67 @@ class PairSignalSelectionSnapshot:
                 raise ValueError("candidate is newer than selection checkpoint")
         if self.candidate_set_hash != _candidate_set_hash(self.candidates):
             raise ValueError("candidate_set_hash does not match candidate inventory")
-        self._validate_outcome()
+        self._validate_resolved_outcome()
         if self.selection_snapshot_id != self.expected_selection_snapshot_id:
             raise ValueError("selection_snapshot_id does not match intrinsic content")
 
-    def _validate_outcome(self) -> None:
+    def _validate_resolved_outcome(self) -> None:
         if not isinstance(self.outcome, PairSignalSelectionOutcome):
             raise TypeError("selection outcome must be PairSignalSelectionOutcome")
         if not isinstance(self.reason, PairSignalSelectionReason):
             raise TypeError("selection reason must be PairSignalSelectionReason")
-        if self.outcome is PairSignalSelectionOutcome.SELECTED:
-            if self.reason is not PairSignalSelectionReason.SELECTED_EXACT_GROUP:
-                raise ValueError("SELECTED requires SELECTED_EXACT_GROUP")
-            required = (
-                self.selected_base_candidate_id,
-                self.selected_quote_candidate_id,
-                self.selected_base_signal_id,
-                self.selected_quote_signal_id,
-                self.selected_observation_group_identity,
-            )
-            if any(item is None for item in required):
-                raise ValueError("SELECTED requires complete selected lineage")
-            base, quote = _selected_candidates(self)
-            if base.role is not SourceSignalRole.BASE or quote.role is not SourceSignalRole.QUOTE:
-                raise ValueError("selected candidates do not match BASE/QUOTE roles")
-            if (
-                base.eligibility is not PairSignalCandidateEligibility.ELIGIBLE
-                or quote.eligibility is not PairSignalCandidateEligibility.ELIGIBLE
-            ):
-                raise ValueError("SELECTED requires eligible candidates")
-            if base.signal_snapshot.signal_id != self.selected_base_signal_id:
-                raise ValueError("selected BASE Signal ID does not match candidate")
-            if quote.signal_snapshot.signal_id != self.selected_quote_signal_id:
-                raise ValueError("selected QUOTE Signal ID does not match candidate")
-            if self.selected_base_signal_id == self.selected_quote_signal_id:
-                raise ValueError("BASE and QUOTE must use different Signals")
-            if (
-                base.observation_group_identity != quote.observation_group_identity
-                or base.observation_group_identity
-                != self.selected_observation_group_identity
-            ):
-                raise ValueError("selected candidates must share one exact Observation group")
-            if base.observation_ids != quote.observation_ids:
-                raise ValueError("selected candidates require exact Observation set equality")
-            _validate_candidate_role_target(self.request, base)
-            _validate_candidate_role_target(self.request, quote)
-            if base.signal_snapshot.horizon != quote.signal_snapshot.horizon:
-                raise ValueError("selected source Signal Horizons must match")
-            return
-        selected = (
-            self.selected_base_candidate_id,
-            self.selected_quote_candidate_id,
-            self.selected_base_signal_id,
-            self.selected_quote_signal_id,
-            self.selected_observation_group_identity,
+        expected = _resolve_selection_decision(
+            self.request,
+            self.checkpoint_sequence,
+            self.captured_at,
+            self.candidates,
         )
-        if any(item is not None for item in selected):
-            raise ValueError("non-selected outcome prohibits selected lineage")
-        no_match_reasons = {
-            PairSignalSelectionReason.NO_ELIGIBLE_BASE_SIGNAL,
-            PairSignalSelectionReason.NO_ELIGIBLE_QUOTE_SIGNAL,
-            PairSignalSelectionReason.NO_COMPLETE_OBSERVATION_GROUP,
-        }
-        ambiguous_reasons = {
-            PairSignalSelectionReason.AMBIGUOUS_BASE_SIGNAL,
-            PairSignalSelectionReason.AMBIGUOUS_QUOTE_SIGNAL,
-            PairSignalSelectionReason.AMBIGUOUS_SOURCE_GROUP,
-        }
-        if (
-            self.outcome is PairSignalSelectionOutcome.NO_MATCH
-            and self.reason not in no_match_reasons
-        ):
-            raise ValueError("NO_MATCH requires a no-match reason")
-        if (
-            self.outcome is PairSignalSelectionOutcome.AMBIGUOUS
-            and self.reason not in ambiguous_reasons
-        ):
-            raise ValueError("AMBIGUOUS requires an ambiguity reason")
+        actual = _PairSignalSelectionDecision(
+            outcome=self.outcome,
+            reason=self.reason,
+            selected_base_candidate_id=self.selected_base_candidate_id,
+            selected_quote_candidate_id=self.selected_quote_candidate_id,
+            selected_base_signal_id=self.selected_base_signal_id,
+            selected_quote_signal_id=self.selected_quote_signal_id,
+            selected_observation_group_identity=(
+                self.selected_observation_group_identity
+            ),
+        )
+        if actual != expected:
+            raise ValueError(
+                "selection terminal result does not match complete candidate inventory"
+            )
+
+
+def resolve_pair_signal_selection(
+    request: PairSignalMaterializationRequest,
+    checkpoint_sequence: int,
+    captured_at: datetime,
+    candidates: Iterable[PairSignalSelectionCandidate],
+) -> PairSignalSelectionSnapshot:
+    ordered = _canonical_candidates(candidates)
+    decision = _resolve_selection_decision(
+        request,
+        checkpoint_sequence,
+        captured_at,
+        ordered,
+    )
+    return PairSignalSelectionSnapshot.create(
+        contract_version=PAIR_SIGNAL_SELECTION_SNAPSHOT_VERSION,
+        request=request,
+        checkpoint_sequence=checkpoint_sequence,
+        captured_at=captured_at,
+        candidates=ordered,
+        outcome=decision.outcome,
+        reason=decision.reason,
+        selected_base_candidate_id=decision.selected_base_candidate_id,
+        selected_quote_candidate_id=decision.selected_quote_candidate_id,
+        selected_base_signal_id=decision.selected_base_signal_id,
+        selected_quote_signal_id=decision.selected_quote_signal_id,
+        selected_observation_group_identity=(
+            decision.selected_observation_group_identity
+        ),
+    )
 
 
 def pair_signal_identity_payload(
@@ -841,6 +836,73 @@ def expected_pair_signal_id(
     )
 
 
+def expected_pair_signal_snapshot(
+    selection_snapshot: PairSignalSelectionSnapshot,
+    *,
+    materialized_at: datetime,
+) -> SignalContentSnapshot:
+    selection_snapshot.validate_intrinsic_integrity()
+    base, quote = _selected_candidates(selection_snapshot)
+    pair_signal = CurrencyPairSignalTransformer(
+        selection_snapshot.request.specification.output_transformation_version
+    ).transform(
+        _signal_from_content_snapshot(base.signal_snapshot),
+        _signal_from_content_snapshot(quote.signal_snapshot),
+        pair=selection_snapshot.pair,
+        signal_id=expected_pair_signal_id(
+            selection_snapshot.request,
+            selection_snapshot,
+            materialized_at=materialized_at,
+        ),
+        created_at=materialized_at,
+    )
+    return SignalContentSnapshot.from_signal(
+        pair_signal,
+        SignalLineage(
+            signal_id=pair_signal.signal_id,
+            feature_ids=pair_signal.source_feature_ids,
+            observation_ids=base.observation_ids,
+        ),
+    )
+
+
+def validate_pair_signal_transformation(
+    pair_signal_snapshot: SignalContentSnapshot,
+    selection_snapshot: PairSignalSelectionSnapshot,
+    *,
+    materialized_at: datetime,
+) -> None:
+    pair_signal_snapshot.validate_intrinsic_integrity()
+    expected = expected_pair_signal_snapshot(
+        selection_snapshot,
+        materialized_at=materialized_at,
+    )
+    fields = (
+        "signal_id",
+        "target_type",
+        "target_value",
+        "signal_type",
+        "direction_type",
+        "direction_value",
+        "strength",
+        "confidence",
+        "horizon",
+        "observed_at",
+        "created_at",
+        "producer_version",
+        "model_version",
+        "prompt_version",
+        "scorer_version",
+        "transformation_version",
+        "source_feature_ids",
+        "source_observation_ids",
+        "signal_content_hash",
+    )
+    for field in fields:
+        if getattr(pair_signal_snapshot, field) != getattr(expected, field):
+            raise ValueError(f"Pair Signal transformation output mismatch: {field}")
+
+
 @dataclass(frozen=True, slots=True)
 class PairSignalDerivation:
     derivation_id: str
@@ -877,40 +939,13 @@ class PairSignalDerivation:
         selection_snapshot: PairSignalSelectionSnapshot,
         materialized_at: datetime,
     ) -> "PairSignalDerivation":
-        pair_signal_snapshot.validate_intrinsic_integrity()
-        selection_snapshot.validate_intrinsic_integrity()
+        validate_pair_signal_transformation(
+            pair_signal_snapshot,
+            selection_snapshot,
+            materialized_at=materialized_at,
+        )
         request = selection_snapshot.request
         base, quote = _selected_candidates(selection_snapshot)
-        expected_id = expected_pair_signal_id(
-            request, selection_snapshot, materialized_at=materialized_at
-        )
-        if pair_signal_snapshot.signal_id != expected_id:
-            raise ValueError("Pair Signal ID does not match exact selected lineage")
-        if (
-            pair_signal_snapshot.target_type is not SignalTargetType.PAIR
-            or pair_signal_snapshot.direction_type is not SignalDirectionType.PAIR_SCORE
-            or pair_signal_snapshot.target_value != request.pair.symbol
-        ):
-            raise ValueError("Pair Signal content does not match request Pair")
-        if pair_signal_snapshot.signal_type != request.specification.output_signal_type:
-            raise ValueError("Pair Signal type does not match specification")
-        if pair_signal_snapshot.horizon is not request.specification.horizon:
-            raise ValueError("Pair Signal Horizon does not match specification")
-        if (
-            pair_signal_snapshot.transformation_version
-            != request.specification.output_transformation_version
-        ):
-            raise ValueError("Pair Signal transformation does not match specification")
-        if pair_signal_snapshot.created_at != materialized_at:
-            raise ValueError("Pair Signal created_at must equal frozen materialized_at")
-        expected_features = _canonical_feature_ids(
-            base.signal_snapshot.source_feature_ids
-            + quote.signal_snapshot.source_feature_ids
-        )
-        if pair_signal_snapshot.source_feature_ids != expected_features:
-            raise ValueError("Pair Signal Feature lineage does not match source Signals")
-        if pair_signal_snapshot.source_observation_ids != base.observation_ids:
-            raise ValueError("Pair Signal Observation lineage does not match source group")
         values: dict[str, object] = {
             "contract_version": PAIR_SIGNAL_DERIVATION_VERSION,
             "pair_signal_id": pair_signal_snapshot.signal_id,
@@ -935,10 +970,12 @@ class PairSignalDerivation:
             "materialized_at": materialized_at,
         }
         payload = _derivation_payload(**values)  # type: ignore[arg-type]
-        return cls(
+        derivation = cls(
             derivation_id="pair-signal-derivation-" + digest(payload),
             **values,  # type: ignore[arg-type]
         )
+        derivation.validate_against(pair_signal_snapshot, selection_snapshot)
+        return derivation
 
     @property
     def identity_payload(self) -> dict[str, object]:
@@ -1021,6 +1058,98 @@ class PairSignalDerivation:
             raise ValueError("derivation materialized_at predates QUOTE Signal")
         if self.derivation_id != self.expected_derivation_id:
             raise ValueError("derivation_id does not match intrinsic content")
+
+    def validate_against(
+        self,
+        pair_signal_snapshot: SignalContentSnapshot,
+        selection_snapshot: PairSignalSelectionSnapshot,
+    ) -> None:
+        self.validate_intrinsic_integrity()
+        pair_signal_snapshot.validate_intrinsic_integrity()
+        selection_snapshot.validate_intrinsic_integrity()
+        validate_pair_signal_transformation(
+            pair_signal_snapshot,
+            selection_snapshot,
+            materialized_at=self.materialized_at,
+        )
+        base, quote = _selected_candidates(selection_snapshot)
+        expected: tuple[tuple[str, object, object], ...] = (
+            ("pair_signal_id", self.pair_signal_id, pair_signal_snapshot.signal_id),
+            (
+                "pair_signal_content_hash",
+                self.pair_signal_content_hash,
+                pair_signal_snapshot.signal_content_hash,
+            ),
+            (
+                "selection_snapshot_id",
+                self.selection_snapshot_id,
+                selection_snapshot.selection_snapshot_id,
+            ),
+            (
+                "materialization_request_id",
+                self.materialization_request_id,
+                selection_snapshot.request_id,
+            ),
+            ("pair", self.pair, selection_snapshot.pair),
+            ("base_candidate_id", self.base_candidate_id, base.candidate_id),
+            ("quote_candidate_id", self.quote_candidate_id, quote.candidate_id),
+            ("base_signal_id", self.base_signal_id, base.signal_snapshot.signal_id),
+            (
+                "base_signal_content_hash",
+                self.base_signal_content_hash,
+                base.signal_snapshot.signal_content_hash,
+            ),
+            ("quote_signal_id", self.quote_signal_id, quote.signal_snapshot.signal_id),
+            (
+                "quote_signal_content_hash",
+                self.quote_signal_content_hash,
+                quote.signal_snapshot.signal_content_hash,
+            ),
+            (
+                "observation_group_identity",
+                self.observation_group_identity,
+                base.observation_group_identity,
+            ),
+            ("observation_ids", self.observation_ids, base.observation_ids),
+            (
+                "horizon",
+                self.horizon,
+                selection_snapshot.request.specification.horizon,
+            ),
+            (
+                "transformation_version",
+                self.transformation_version,
+                selection_snapshot.request.specification.output_transformation_version,
+            ),
+            (
+                "specification_id",
+                self.specification_id,
+                selection_snapshot.specification_id,
+            ),
+            (
+                "materialization_request_as_of",
+                self.materialization_request_as_of,
+                selection_snapshot.as_of,
+            ),
+            (
+                "base_signal_created_at",
+                self.base_signal_created_at,
+                base.signal_snapshot.created_at,
+            ),
+            (
+                "quote_signal_created_at",
+                self.quote_signal_created_at,
+                quote.signal_snapshot.created_at,
+            ),
+            (
+                "materialized_at",
+                self.materialized_at,
+                pair_signal_snapshot.created_at,
+            ),
+        )
+        for field, actual, relational_expected in expected:
+            if actual != relational_expected:
+                raise ValueError(f"Pair Signal derivation mismatch: {field}")
 
 
 def _specification_payload(
@@ -1151,29 +1280,13 @@ def _candidate_rejection_reason(
         != specification.expected_source_transformation_version
     ):
         return PairSignalCandidateRejectionReason.SOURCE_TRANSFORMATION_VERSION_MISMATCH
-    if snapshot.direction_type is not SignalDirectionType.DIRECTION_SCORE:
-        return PairSignalCandidateRejectionReason.DIRECTION_TYPE_MISMATCH
-    if snapshot.created_at > request.as_of:
-        return PairSignalCandidateRejectionReason.CREATED_AFTER_AS_OF
     if snapshot.observed_at > request.as_of:
         return PairSignalCandidateRejectionReason.OBSERVED_AFTER_AS_OF
+    if snapshot.created_at > request.as_of:
+        return PairSignalCandidateRejectionReason.CREATED_AFTER_AS_OF
     if request.as_of - snapshot.observed_at > specification.source_signal_max_age:
         return PairSignalCandidateRejectionReason.STALE_AT_AS_OF
     return None
-
-
-def _validate_candidate_role_target(
-    request: PairSignalMaterializationRequest,
-    candidate: PairSignalSelectionCandidate,
-) -> None:
-    expected = (
-        request.pair.base if candidate.role is SourceSignalRole.BASE else request.pair.quote
-    )
-    if (
-        candidate.signal_snapshot.target_type is not SignalTargetType.CURRENCY
-        or candidate.signal_snapshot.target_value != expected.code
-    ):
-        raise ValueError("selected candidate target does not match its Pair role")
 
 
 def _canonical_candidates(
@@ -1189,6 +1302,132 @@ def _canonical_candidates(
                 item.candidate_id,
             ),
         )
+    )
+
+
+def _resolve_selection_decision(
+    request: PairSignalMaterializationRequest,
+    checkpoint_sequence: int,
+    captured_at: datetime,
+    candidates: Iterable[PairSignalSelectionCandidate],
+) -> _PairSignalSelectionDecision:
+    request.validate_intrinsic_integrity()
+    _require_non_negative_int(checkpoint_sequence, "checkpoint_sequence")
+    require_utc(captured_at, "selection captured_at")
+    if captured_at < request.as_of:
+        raise ValueError("selection captured_at cannot be before request as_of")
+    inventory = tuple(candidates)
+    candidate_ids: set[str] = set()
+    candidate_keys: set[tuple[SourceSignalRole, SignalId, int]] = set()
+    group_observations: dict[str, tuple[ObservationId, ...]] = {}
+    for candidate in inventory:
+        if not isinstance(candidate, PairSignalSelectionCandidate):
+            raise TypeError("selection inventory accepts only Pair Signal candidates")
+        candidate.validate_intrinsic_integrity()
+        if candidate.request != request:
+            raise ValueError("selection candidate belongs to another request")
+        if candidate.store_sequence > checkpoint_sequence:
+            raise ValueError("candidate is newer than selection checkpoint")
+        if candidate.candidate_id in candidate_ids:
+            raise ValueError("selection candidate IDs must be unique")
+        candidate_ids.add(candidate.candidate_id)
+        key = (candidate.role, candidate.signal_snapshot.signal_id, candidate.store_sequence)
+        if key in candidate_keys:
+            raise ValueError("selection candidate inventory contains duplicates")
+        candidate_keys.add(key)
+        existing_observations = group_observations.setdefault(
+            candidate.observation_group_identity,
+            candidate.observation_ids,
+        )
+        if existing_observations != candidate.observation_ids:
+            raise ValueError(
+                "Observation group identity maps to conflicting Observation IDs"
+            )
+
+    eligible = tuple(
+        candidate
+        for candidate in inventory
+        if candidate.eligibility is PairSignalCandidateEligibility.ELIGIBLE
+    )
+    eligible_base = tuple(
+        candidate for candidate in eligible if candidate.role is SourceSignalRole.BASE
+    )
+    if not eligible_base:
+        return _PairSignalSelectionDecision(
+            PairSignalSelectionOutcome.NO_MATCH,
+            PairSignalSelectionReason.NO_ELIGIBLE_BASE_SIGNAL,
+        )
+    eligible_quote = tuple(
+        candidate for candidate in eligible if candidate.role is SourceSignalRole.QUOTE
+    )
+    if not eligible_quote:
+        return _PairSignalSelectionDecision(
+            PairSignalSelectionOutcome.NO_MATCH,
+            PairSignalSelectionReason.NO_ELIGIBLE_QUOTE_SIGNAL,
+        )
+
+    grouped: dict[
+        tuple[str, tuple[ObservationId, ...]],
+        dict[SourceSignalRole, list[PairSignalSelectionCandidate]],
+    ] = {}
+    for candidate in eligible:
+        group = grouped.setdefault(
+            (candidate.observation_group_identity, candidate.observation_ids),
+            {SourceSignalRole.BASE: [], SourceSignalRole.QUOTE: []},
+        )
+        group[candidate.role].append(candidate)
+    complete = tuple(
+        group
+        for group in grouped.values()
+        if group[SourceSignalRole.BASE] and group[SourceSignalRole.QUOTE]
+    )
+    if not complete:
+        return _PairSignalSelectionDecision(
+            PairSignalSelectionOutcome.NO_MATCH,
+            PairSignalSelectionReason.NO_COMPLETE_OBSERVATION_GROUP,
+        )
+    if any(len(group[SourceSignalRole.BASE]) > 1 for group in complete):
+        return _PairSignalSelectionDecision(
+            PairSignalSelectionOutcome.AMBIGUOUS,
+            PairSignalSelectionReason.AMBIGUOUS_BASE_SIGNAL,
+        )
+    if any(len(group[SourceSignalRole.QUOTE]) > 1 for group in complete):
+        return _PairSignalSelectionDecision(
+            PairSignalSelectionOutcome.AMBIGUOUS,
+            PairSignalSelectionReason.AMBIGUOUS_QUOTE_SIGNAL,
+        )
+
+    ranked: list[
+        tuple[
+            tuple[datetime, datetime],
+            PairSignalSelectionCandidate,
+            PairSignalSelectionCandidate,
+        ]
+    ] = []
+    for group in complete:
+        base = group[SourceSignalRole.BASE][0]
+        quote = group[SourceSignalRole.QUOTE][0]
+        rank = (
+            max(base.signal_snapshot.observed_at, quote.signal_snapshot.observed_at),
+            max(base.signal_snapshot.created_at, quote.signal_snapshot.created_at),
+        )
+        ranked.append((rank, base, quote))
+    best_rank = max(item[0] for item in ranked)
+    best = tuple(item for item in ranked if item[0] == best_rank)
+    if len(best) > 1:
+        return _PairSignalSelectionDecision(
+            PairSignalSelectionOutcome.AMBIGUOUS,
+            PairSignalSelectionReason.AMBIGUOUS_SOURCE_GROUP,
+        )
+    _, base, quote = best[0]
+    return _PairSignalSelectionDecision(
+        PairSignalSelectionOutcome.SELECTED,
+        PairSignalSelectionReason.SELECTED_EXACT_GROUP,
+        selected_base_candidate_id=base.candidate_id,
+        selected_quote_candidate_id=quote.candidate_id,
+        selected_base_signal_id=base.signal_snapshot.signal_id,
+        selected_quote_signal_id=quote.signal_snapshot.signal_id,
+        selected_observation_group_identity=base.observation_group_identity,
     )
 
 
@@ -1258,6 +1497,33 @@ def _selected_candidates(
     if base is None or quote is None:
         raise ValueError("selected candidate is absent from inventory")
     return base, quote
+
+
+def _signal_from_content_snapshot(snapshot: SignalContentSnapshot) -> Signal:
+    snapshot.validate_intrinsic_integrity()
+    if snapshot.target_type is not SignalTargetType.CURRENCY:
+        raise TypeError("Pair transformation source must be a Currency Signal")
+    if snapshot.direction_type is not SignalDirectionType.DIRECTION_SCORE:
+        raise TypeError("Pair transformation source requires DirectionScore")
+    return Signal(
+        signal_id=snapshot.signal_id,
+        target=CurrencyTarget(Currency(snapshot.target_value)),
+        signal_type=snapshot.signal_type,
+        direction=DirectionScore(snapshot.direction_value),
+        strength=Probability(snapshot.strength),
+        confidence=Probability(snapshot.confidence),
+        horizon=snapshot.horizon,
+        observed_at=snapshot.observed_at,
+        created_at=snapshot.created_at,
+        source_feature_ids=snapshot.source_feature_ids,
+        versions=VersionMetadata(
+            producer_version=snapshot.producer_version,
+            model_version=snapshot.model_version,
+            prompt_version=snapshot.prompt_version,
+            scorer_version=snapshot.scorer_version,
+            transformation_version=snapshot.transformation_version,
+        ),
+    )
 
 
 def _derivation_payload(

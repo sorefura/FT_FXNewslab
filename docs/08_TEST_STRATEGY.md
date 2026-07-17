@@ -50,13 +50,23 @@ Milestone 2-B1 tests additionally state:
 - BASE/QUOTE candidate roles are typed, eligibility mismatches have a fixed dominant
   reason order, and intrinsic corrupt records fail closed;
 - selection snapshots commit to canonical complete candidate inventory and enforce
-  exact selected BASE/QUOTE lineage; `captured_at` is not semantic identity;
+  terminal outcome/reason/selected lineage recomputed from that inventory;
+  `captured_at` is not semantic identity;
+- no BASE, no QUOTE, incomplete groups, within-group ambiguity, semantic ranking,
+  and semantic-rank ties produce exact fail-closed terminal reasons without ID or
+  Store-sequence winner tie-breakers;
+- forged SELECTED/NO_MATCH/AMBIGUOUS outcomes and forged selected IDs fail at both
+  factory and hydration validation;
 - deterministic Pair Signal ID commits to request, selection, exact source content,
   group, transformation, and frozen materialization time without calculating
   `base - quote`; and
+- exact Pair Signal direction, strength, confidence, observed time, versions, target,
+  type, Horizon, time, and lineage are compared with the unchanged shared transformer
+  output using intrinsically valid forged snapshots; and
 - `PairSignalDerivation` preserves ordered source IDs/content hashes separately from
-  shared `Signal`, while no migration, Store query, materializer, concrete Strategy,
-  or Paper code exists.
+  shared `Signal` and requires relational `validate_against()` in addition to
+  intrinsic identity, while no migration, Store query, materializer, concrete
+  Strategy, or Paper code exists.
 
 Later ExecPlan 0006 implementation tests will state the following guarantees:
 

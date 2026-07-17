@@ -209,6 +209,8 @@ def test_pair_signal_snapshot_preserves_pair_direction_type() -> None:
 
     assert snapshot.target_value == "USD_JPY"
     assert snapshot.direction_value == 0.9
+    with pytest.raises(TypeError, match="Pair Signal snapshot requires PairScore"):
+        replace(snapshot, direction_type=snapshot.direction_type.DIRECTION_SCORE)
 
 
 @pytest.mark.parametrize(
@@ -246,6 +248,13 @@ def test_pair_signal_snapshot_preserves_pair_direction_type() -> None:
         (
             {
                 "observed_at": NOW + timedelta(seconds=1),
+                "created_at": NOW + timedelta(seconds=1),
+            },
+            PairSignalCandidateRejectionReason.OBSERVED_AFTER_AS_OF,
+        ),
+        (
+            {
+                "observed_at": NOW - timedelta(seconds=1),
                 "created_at": NOW + timedelta(seconds=1),
             },
             PairSignalCandidateRejectionReason.CREATED_AFTER_AS_OF,
@@ -302,6 +311,13 @@ def test_candidate_target_type_mismatch_dominates_other_mismatches() -> None:
     assert inspected.rejection_reason is (
         PairSignalCandidateRejectionReason.TARGET_TYPE_MISMATCH
     )
+
+
+def test_direction_mismatch_is_intrinsic_and_not_a_candidate_rejection_reason() -> None:
+    assert "DIRECTION_TYPE_MISMATCH" not in PairSignalCandidateRejectionReason.__members__
+    source = source_snapshot()
+    with pytest.raises(TypeError, match="Currency Signal snapshot"):
+        replace(source, direction_type=source.direction_type.PAIR_SCORE)
 
 
 def test_exact_source_candidate_is_eligible_and_group_is_derived() -> None:

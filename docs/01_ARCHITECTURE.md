@@ -8,15 +8,18 @@ production Strategy Ports, and the separate execution-authority mapping/guard. I
 does not implement a concrete Strategy, Signal selection/materialization,
 Portfolio/Risk integration, persistence, or Paper runtime.
 
-Milestone 2-B1 now implements the package-neutral identity and immutable contract
-foundation that precedes operational Pair Signal generation:
+Milestone 2-B1 now implements the package-neutral identity, immutable selection,
+and transformation-authenticity foundation that precedes operational Pair Signal
+persistence:
 
 ```text
 PairSignalMaterializationSpecification
     -> stable Pair/as-of Request
     -> exact BASE/QUOTE candidate inventory
+    -> terminal result derived from the complete candidate inventory
     -> immutable SELECTED / NO_MATCH / AMBIGUOUS snapshot
     -> deterministic Pair Signal ID
+    -> exact shared CurrencyPairSignalTransformer output
     -> PairSignalDerivation
 ```
 
@@ -25,14 +28,21 @@ worker, and retry metadata. `SignalContentSnapshot` commits to the full immutabl
 Signal plus canonical Feature/Observation lineage, and exact Observation ID set
 equality defines a v1 source group. BASE and QUOTE remain ordered roles. Selection
 snapshot semantic identity includes the complete candidate-set hash but excludes
-first-write `captured_at`. Exact source Signal lineage belongs to
+first-write `captured_at`. Construction and hydration rerun the same pure resolver;
+the caller cannot choose the terminal outcome or selected IDs. Ambiguity in any
+complete group fails the Request closed, and semantic-rank ties do not use IDs or
+Store sequence as winner tie-breakers. Exact source Signal lineage belongs to
 `PairSignalDerivation`, not to the shared `Signal` model.
 
-These contracts live in `fx_signal_store` and depend only on `fx_core`. They neither
-query SQLite nor call the shared transformer. Milestone 2-B2 will freeze a monotonic
-Store checkpoint; Milestone 2-B3 will select and atomically persist the derived Pair
-Signal using `CurrencyPairSignalTransformer`. No Live application dependency is
-admitted into the shared package direction.
+These contracts live in `fx_signal_store` and depend only on `fx_core`. A pure helper
+reconstructs the exact selected Currency Signals, calls the unchanged shared
+`CurrencyPairSignalTransformer`, and compares every Pair Signal semantic field with
+exact equality. `PairSignalDerivation.validate_against()` separates content-addressed
+intrinsic integrity from source/transformation relational authenticity. They do not
+query SQLite. Milestone 2-B2 will freeze a monotonic Store checkpoint and must call
+relational validation before insert/reuse and after hydration; Milestone 2-B3 will
+query candidates and atomically persist the authenticated result. No Live
+application dependency is admitted into the shared package direction.
 
 Position exit evaluation is content-addressed from exact typed evidence rather than
 only a business Position ID. `PositionExitPositionEvidence` self-describes the exact

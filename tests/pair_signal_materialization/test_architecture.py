@@ -32,7 +32,17 @@ def test_shared_identity_imports_no_application_or_infrastructure_package() -> N
     )
 
 
-def test_milestone_2b1_changes_no_store_migration_or_shared_signal_lineage() -> None:
+def test_milestone_2b2a_store_imports_no_application_or_materializer_logic() -> None:
+    module = ROOT / "packages/fx_signal_store/src/fx_signal_store/store.py"
+    imported_roots = {name.split(".")[0] for name in _imports(module)}
+    source = module.read_text(encoding="utf-8")
+
+    assert {"swap_bot", "fx_research"}.isdisjoint(imported_roots)
+    assert "CurrencyPairSignalTransformer" not in source
+    assert "resolve_pair_signal_selection" not in source
+
+
+def test_milestone_2b2a_adds_only_claim_migration_and_keeps_shared_signal_lineage() -> None:
     signal_fields = {item.name for item in fields(Signal)}
     assert "source_signal_ids" not in signal_fields
     migrations = {
@@ -41,7 +51,10 @@ def test_milestone_2b1_changes_no_store_migration_or_shared_signal_lineage() -> 
             "*.sql"
         )
     }
-    assert migrations == {"0001_signal_lineage.sql"}
+    assert migrations == {
+        "0001_signal_lineage.sql",
+        "0002_pair_materialization_persistence.sql",
+    }
 
 
 def test_milestone_2b1_adds_no_materializer_or_concrete_strategy() -> None:

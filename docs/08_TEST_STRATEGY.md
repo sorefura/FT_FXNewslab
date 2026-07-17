@@ -1,6 +1,6 @@
 # Test Strategy
 
-## Production Strategy M2-A and Pair materialization M2-B1 contract tests
+## Production Strategy M2-A and Pair materialization M2-B1/B2-A tests
 
 Milestone 2-A tests already state:
 
@@ -67,6 +67,32 @@ Milestone 2-B1 tests additionally state:
   shared `Signal` and requires relational `validate_against()` in addition to
   intrinsic identity, while no migration, Store query, materializer, concrete
   Strategy, or Paper code exists.
+
+Milestone 2-B2-A tests additionally state:
+
+- fresh and legacy-0001 databases migrate to exactly 0001/0002, and every legacy
+  Signal receives exactly one `LEGACY_BACKFILL` Store entry in explicit
+  `created_at, SignalId` catalog order without claiming historical insertion order;
+- every new Signal receives one positive monotonic committed Store sequence, while
+  Signal, Feature lineage, and Store entry roll back together on either lineage or
+  Store-entry failure;
+- `append_signal_if_absent()` retains its existing ID-present `False` behavior and
+  neither changes nor duplicates the persisted Store entry;
+- Store checkpoint is the maximum committed Store sequence, so an old-created
+  backfill appended later receives a later sequence;
+- Specification and Request reuse requires exact hydrated equality, and the Pair/
+  as-of/Specification business key cannot map to another Request ID;
+- one `BEGIN IMMEDIATE` Claim transaction freezes the first checkpoint and
+  `captured_at`; retry, reopen, late append, and old-dated backfill return the same
+  persisted Claim;
+- a failed Claim leaves no partial Specification, Request, or Claim row, while two
+  Store instances converge to one first-written Claim rather than treating a lock as
+  success;
+- Claim and `list_signals()` use connection-scoped helpers without opening a nested
+  connection; and
+- Store entry, Specification, Request, and Claim tables reject UPDATE/DELETE, while
+  selection snapshot, candidate, Pair Signal derivation/completion, materializer,
+  Strategy, and Paper persistence remain absent.
 
 Later ExecPlan 0006 implementation tests will state the following guarantees:
 

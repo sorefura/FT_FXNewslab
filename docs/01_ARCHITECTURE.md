@@ -39,10 +39,34 @@ reconstructs the exact selected Currency Signals, calls the unchanged shared
 `CurrencyPairSignalTransformer`, and compares every Pair Signal semantic field with
 exact equality. `PairSignalDerivation.validate_against()` separates content-addressed
 intrinsic integrity from source/transformation relational authenticity. They do not
-query SQLite. Milestone 2-B2 will freeze a monotonic Store checkpoint and must call
-relational validation before insert/reuse and after hydration; Milestone 2-B3 will
-query candidates and atomically persist the authenticated result. No Live
-application dependency is admitted into the shared package direction.
+query SQLite.
+
+Milestone 2-B2-A now adds the first persistence boundary:
+
+```text
+Signal append
+    -> Signal + Feature lineage + one monotonic Store sequence in one transaction
+
+Pair/as-of/Specification Request
+    -> BEGIN IMMEDIATE
+    -> exact Specification and Request append-or-compare
+    -> first-write Claim(checkpoint_sequence, captured_at)
+```
+
+Legacy Signals receive one deterministic catalog sequence ordered by
+`signals.created_at, signals.id`; this does not reconstruct historical insertion
+order. `Signal.created_at` remains producer availability, while Store sequence is
+the committed local-availability boundary. Retry returns the first Claim unchanged,
+and later or old-dated backfills receive a larger Store sequence without changing
+that Request checkpoint. Connection-scoped helpers keep the Claim transaction on one
+SQLite connection. Claim is a retry anchor, not `SELECTED`, `NO_MATCH`, or
+`AMBIGUOUS` terminal evidence.
+
+Milestone 2-B2-B/C will persist the complete selection inventory/snapshot and exact
+Pair Signal/derivation/completion artifacts. Milestone 2-B3 will query candidates and
+compose the pure resolver/verifier into the operational materializer. Relational
+validation remains mandatory before Pair artifact insert/reuse and after hydration.
+No Live application dependency is admitted into the shared package direction.
 
 Position exit evaluation is content-addressed from exact typed evidence rather than
 only a business Position ID. `PositionExitPositionEvidence` self-describes the exact
@@ -124,9 +148,11 @@ after the approved intent and inside the active Step's frozen market window/due
 boundary. Research `ForwardResult` is forbidden as fill input.
 
 Current executable behavior remains the ExecPlan 0005 authorized shadow path: it
-reaches an approved intent and records `NOT_SUBMITTED`. The M2-A production contracts
-are not connected to Portfolio, Risk, Execution, or persistence, and there is no
-concrete production Strategy, Paper Gateway, Paper ledger, or operational daemon.
+reaches an approved intent and records `NOT_SUBMITTED`. M2-B2-A changes only the
+shared Signal Store and Request Claim persistence boundary. The M2-A production
+contracts are not connected to Portfolio, Risk, Execution, or persistence, and there
+is no selection-snapshot store, Pair materializer, concrete production Strategy,
+Paper Gateway, Paper ledger, or operational daemon.
 
 ## Research-to-Live adoption boundary
 

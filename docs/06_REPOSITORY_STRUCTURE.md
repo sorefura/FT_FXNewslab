@@ -20,8 +20,8 @@ swap_bot/
   live/           existing adoption/Portfolio/Risk/Execution boundaries
 ```
 
-Milestone 2-B1 adds two shared-package modules without changing that Live module
-map:
+Milestone 2-B1 added the package-neutral identity and Pair materialization contract
+modules without changing that Live module map:
 
 ```text
 packages/fx_core/src/fx_core/identity.py
@@ -35,17 +35,38 @@ packages/fx_signal_store/src/fx_signal_store/pair_materialization.py
 ```
 
 `swap_bot.adoption` keeps compatibility wrappers for its existing public digest API.
-`fx_signal_store` imports neither `swap_bot` nor `fx_research`. M2-B1 adds no
-migration or Store behavior; checkpoint schema/query and atomic materialization stay
-in M2-B2/M2-B3.
+`fx_signal_store` imports neither `swap_bot` nor `fx_research`.
+
+Milestone 2-B2-A adds only the shared Store persistence seam:
+
+```text
+packages/fx_signal_store/src/fx_signal_store/persistence.py
+    Signal Store entry/origin, materialization Claim, lineage, and persistence errors
+
+packages/fx_signal_store/src/fx_signal_store/store.py
+    connection-scoped Signal/lineage helpers, atomic Signal/Store-entry append,
+    exact Specification/Request persistence, and first-write Claim API
+
+packages/fx_signal_store/src/fx_signal_store/migrations/
+    0001_signal_lineage.sql
+    0002_pair_materialization_persistence.sql
+```
+
+Moving `SignalLineage` to the persistence seam prevents a Store-to-contract circular
+import while retaining its existing public export. The 0002 migration contains Store
+sequence, Specification, Request, and Claim tables only. It adds no selection
+snapshot, candidate inventory, Pair Signal derivation/completion, operational
+materializer, or Live application table. M2-B2-B/C and M2-B3 retain those pending
+responsibilities.
 
 The actual migration remains incremental; files are moved only when the boundary is
 implemented. Paper infrastructure may depend on Live-owned approved-intent contracts
 but cannot import or construct the real Broker Private transport. It cannot import
 `fx_research`; public Paper market data is exposed through a Live-owned Port.
 
-The current numbered Live migrations are `0001` and `0002`; M2-A adds none.
-Milestone 2-B/C/D use the next available additive numbers as their persistence is
+The shared Signal Store migrations are now `0001` and `0002`. The independently
+numbered Live migrations remain `0001` and `0002`; M2-A and M2-B2-A add none there.
+Milestone 2-C/D use the next available Live additive numbers as their persistence is
 implemented. Paper persistence begins at the next available migration after that
 Strategy persistence and leaves the inline historical base schema unchanged. No
 number is pre-reserved for Paper.

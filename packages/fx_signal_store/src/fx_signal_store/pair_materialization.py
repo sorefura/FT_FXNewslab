@@ -22,7 +22,7 @@ from fx_core import (
 from fx_core.identity import digest
 from fx_core.time import require_utc
 
-from .store import SignalLineage
+from .persistence import SignalLineage
 
 PAIR_SIGNAL_MATERIALIZATION_SPEC_VERSION = "pair-signal-materialization-spec-v1"
 PAIR_SIGNAL_MATERIALIZATION_REQUEST_VERSION = "pair-signal-materialization-request-v1"

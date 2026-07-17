@@ -10,8 +10,8 @@ numbers in implementation order. Paper persistence begins at the next available
 additive Live migration only after Milestone 2 production Strategy persistence is
 complete; `0003` is not reserved.
 
-Milestone 2-B1 adds no migration and changes no SQLite behavior. It defines the
-content-addressed evidence that M2-B2/B3 must persist:
+Milestone 2-B1 added no migration and changed no SQLite behavior. It defines the
+content-addressed evidence that M2-B2/B3 persist in stages:
 
 ```text
 PairSignalMaterializationSpecification
@@ -40,12 +40,28 @@ first-write audit `captured_at` from semantic identity. Outcome, reason, and sel
 IDs are derived from the complete inventory and recomputed during intrinsic
 validation; caller input is never terminal-result authority.
 
-M2-B2 will add a monotonic `store_sequence` and first-claim checkpoint equal to the
-current maximum sequence. Eligibility will require both
+M2-B2-A now adds `0002_pair_materialization_persistence.sql`, one immutable positive
+monotonic `store_sequence` per Signal, and a first-claim checkpoint equal to the
+current maximum sequence. New Signal, Feature lineage, and Store entry rows commit in
+one transaction. `stored_at` is local UTC Store time captured once per append; it is
+not copied from `Signal.created_at`.
+
+Migration backfills one Store entry per pre-0002 Signal in explicit
+`signals.created_at ASC, signals.id ASC` order with `LEGACY_BACKFILL` origin. This is
+a deterministic legacy catalog order, not recovered historical insertion order.
+Normal append uses `APPEND`; `PAIR_MATERIALIZATION` is reserved for M2-B2-C.
+
+One immutable Specification and Request are stored by full-content append-or-compare.
+The first Request Claim is written under `BEGIN IMMEDIATE` and freezes
+`checkpoint_sequence` plus caller-supplied UTC `captured_at`. A retry returns that
+persisted Claim even if the caller supplies a later audit time. Claim is a retry
+anchor and may exist without terminal completion; it is not a selection outcome.
+
+Eligibility in M2-B2-B/B3 will require both
 `store_sequence <= checkpoint_sequence` and `signal.created_at <= request.as_of`.
-Retry reuses the original checkpoint and saved terminal selection snapshot. A
-backfilled Signal inserted after that checkpoint cannot enter the historical Request
-even when its `created_at` is old.
+The first condition already has a frozen persistence boundary; terminal selection
+snapshot persistence remains pending. A backfilled Signal inserted after that
+checkpoint cannot enter the historical Request even when its `created_at` is old.
 
 The M2-B1 resolver groups eligible BASE/QUOTE candidates only by exact Observation
 set. Multiple eligible BASE or QUOTE records inside any complete group fail the
@@ -55,11 +71,13 @@ whole Request closed before ranking. One-to-one complete groups rank by greatest
 diagnostic ordering only and the result is `AMBIGUOUS_SOURCE_GROUP`.
 
 `SELECTED`, `NO_MATCH`, and `AMBIGUOUS` are immutable terminal outcomes for one
-Request. M2-B2/B3 must save candidate inventory, selection snapshot, derived Pair
-Signal and Feature links, its Store sequence, and `PairSignalDerivation` in one
-transaction. Existing `append_signal_if_absent()` is not exact persistence: reuse of
-one Signal ID requires full Signal, Feature/Observation lineage, selection, and
-derivation equality. Any conflict fails without partial records.
+Request. M2-B2-A deliberately persists none of them. M2-B2-B/C and M2-B3 must save
+candidate inventory, selection snapshot, derived Pair Signal and Feature links, its
+Store sequence, and `PairSignalDerivation` in the required exact transactions.
+Existing `append_signal_if_absent()` retains its legacy ID-present `False` semantics
+and is not exact Pair persistence: reuse of one Signal ID requires full Signal,
+Feature/Observation lineage, selection, and derivation equality through a separate
+future API. Any conflict fails without partial records.
 
 Deterministic Pair Signal identity is fixed before transformation from exact request,
 selection, BASE/QUOTE Signal IDs and content hashes, Observation group,

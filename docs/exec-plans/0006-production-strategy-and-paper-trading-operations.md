@@ -90,6 +90,8 @@ Milestone 2-A implementation started from clean, synchronized `main` at
 `93edaf27c04f94e0a38f5b5ee9d70f4dc128d681`.
 Milestone 2-B1 implementation started from clean, synchronized `main` at
 `a81102e3a08286ab03ba792d37abb229d8de28f7`.
+Milestone 2-B2-A implementation started from clean, synchronized `main` at
+`95a8f86ab649ee0e5a1d336210fb1b95e81b40a0`.
 
 | Area | Current implementation | Gap carried into this plan |
 |---|---|---|
@@ -101,9 +103,9 @@ Milestone 2-B1 implementation started from clean, synchronized `main` at
 | Broker boundary | `BrokerGateway.submit(ApprovedExecutionIntent) -> OrderResult`. `GmoPrivatePostTransport.post_once` requires configuration plus `LIVE_TRADING_ARMED=YES` and does not retry. | No Paper Gateway exists. The low-level Private transport is not a complete Broker adapter and must remain outside paper composition. |
 | Execution | `ExecutionService` accepts only `ApprovedExecutionIntent`, persistently claims its key, and always returns `NOT_SUBMITTED`; it never calls its injected Broker Gateway. | A boolean dry-run cannot represent fictional execution. Paper needs a distinct adapter, domain, result status, and authority. |
 | Idempotency | Execution intent carries a caller-supplied string. SQLite has a unique intent key and a separate claimed-key table. | There is no canonical operational cycle identity or deterministic Paper order/fill identity. |
-| Persistence | Live base tables are initialized inline. Numbered additive migrations `0001` and `0002` add adoption and Candidate-authorization state. Milestone 2-A and 2-B1 add no migration. Shared Signal Store still has only `0001_signal_lineage.sql`; its query/append behavior is unchanged. | M2-B2/B3 add checkpoint and exact atomic Pair materialization persistence before Strategy evaluation/Candidate/close persistence. Paper begins at the next available additive migration after that work, not a reserved `0003`. |
-| Signal source | `fx_signal_store` can read immutable Signals by ID or list by target/horizon/scorer version. M2-B1 now provides a pure full-inventory resolver with fail-closed ambiguity semantics. Adoption runtime consumes a supplied Signal and never reads Research evaluation state. | There is no Live-owned operational Signal-source Port, checkpoint, resolver-to-query composition, or recurring selection cycle. |
-| Pair transformation | `fx_core.CurrencyPairSignalTransformer` persists `currency-pair-v1` semantics: base direction minus quote direction. M2-B1 fixes stable Pair/as-of/specification request identity, exact candidate inventory, inventory-derived terminal selection, deterministic Pair Signal ID, complete shared-transformer output verification, and relational BASE/QUOTE derivation integrity. | M2-B2/B3 still need checkpoint/query, exact append-or-compare, and atomic materializer composition before Live authorization. |
+| Persistence | Live base tables and numbered Live migrations `0001`/`0002` remain unchanged. Shared Signal Store migration `0002_pair_materialization_persistence.sql` now adds immutable Store entry, Specification, Request, and Claim tables. Signal/Feature lineage/Store entry append is atomic, and legacy Signals receive deterministic catalog sequence. | Selection inventory/snapshot, Pair Signal/derivation/completion exact persistence remains M2-B2-B/C. Paper begins only after later Strategy persistence, not at a reserved Live `0003`. |
+| Signal source | `fx_signal_store` can read immutable Signals by ID or list by target/horizon/scorer version. M2-B1 provides the pure resolver; M2-B2-A adds one monotonic Store sequence per Signal and a first-write Request Claim that freezes checkpoint/captured time. Adoption runtime still consumes a supplied Signal and never reads Research evaluation state. | There is no checkpoint-bounded candidate query, persisted terminal selection, resolver-to-query composition, Live-owned operational Signal-source Port, or recurring selection cycle. |
+| Pair transformation | `fx_core.CurrencyPairSignalTransformer` persists `currency-pair-v1` semantics. M2-B1 fixes stable Request, exact inventory/terminal selection, deterministic Pair Signal identity, full transformer verification, and derivation integrity. M2-B2-A persists exact Specification/Request plus nonterminal Claim only. | M2-B2-B/C and M2-B3 still need selection/Pair artifact persistence, checkpoint-bounded query, and materializer composition before Live authorization. |
 | Modes | Adoption keeps `RuntimeMode.SHADOW/LIVE`. Milestone 2-A adds distinct `ExecutionAuthorityMode`, maps Shadow/Paper to Adoption Shadow and Live to Adoption Live, and makes the 0006 authority guard reject Live. | No operational composition persists or exercises Paper authority yet. |
 | Operations | CLI supports one offline fixture cycle and one-shot approve/revoke commands. | No production one-shot cycle, scheduler/daemon, overlap lock, checkpoint, health signal, restart recovery, reconciliation, or burn-in report exists. |
 | Pair/config values | M2-A config contract enforces the ordered exact Pair scope `USD_JPY`, `MXN_JPY` and requires every threshold, duration, version, and exit flag explicitly. Test values remain fixtures. | No reviewed production config instance or runtime settings source exists. Fixture and Research defaults are never promoted implicitly. |
@@ -116,9 +118,11 @@ production defaults.
 
 This is the target for ExecPlan 0006. Milestone 2-A implements the authority, config,
 Swap evidence, evaluation, Candidate, close, and Strategy Port contracts. Milestone
-2-B1 implements only Pair materialization domain/identity contracts. SQLite
-checkpoint/query, actual Pair transformation/persistence, the concrete Strategy, and
-every Paper component shown below remain unimplemented.
+2-B1 implements Pair materialization domain/identity contracts. Milestone 2-B2-A now
+implements monotonic Signal Store sequence plus exact Request Claim persistence.
+Checkpoint-bounded candidate query, terminal selection and Pair artifact persistence,
+actual operational Pair transformation, the concrete Strategy, and every Paper
+component shown below remain unimplemented.
 
 ```text
 Operational Signal Source (shared immutable Signal store)
@@ -290,8 +294,14 @@ Milestone 2-B is split into three reviewable stages:
   Request, Signal content, Observation group, and candidate inventory; pure terminal
   resolver; authenticated selection snapshot; deterministic Pair Signal identity;
   exact shared-transformer output; and relational derivation contracts;
-- **2-B2 (pending):** monotonic Signal Store sequence/checkpoint schema and exact
-  append/compare persistence; and
+- **2-B2 (in progress):** exact persistence, split into three boundaries:
+  - **2-B2-A (complete):** monotonic Signal Store sequence, deterministic legacy
+    catalog backfill, atomic Signal/Feature-lineage/Store-entry append, exact
+    Specification/Request persistence, and first-write Request Claim;
+  - **2-B2-B (pending):** checkpoint-bounded complete candidate inventory and
+    authenticated terminal selection snapshot persistence;
+  - **2-B2-C (pending):** exact Pair Signal, Feature links, Store entry, derivation,
+    and completion-root persistence with relational authenticity; and
 - **2-B3 (pending):** deterministic candidate query, resolver/verifier composition,
   and one-transaction materialization.
 
@@ -320,7 +330,7 @@ ineligible candidate.
 An Observation group is the exact non-empty canonical Observation ID set under
 `exact-observation-set-v1`. Partial overlap is not equality. Each immutable
 `PairSignalSelectionCandidate` retains the stable Request, explicit ordered BASE or
-QUOTE role, exact Signal content hash, future positive `store_sequence`, intrinsic
+QUOTE role, exact Signal content hash, positive persisted `store_sequence`, intrinsic
 group, structured eligibility/rejection reason, and content ID. Candidate mismatch
 dominance is fixed in this order:
 
@@ -362,32 +372,50 @@ and calls the unchanged `CurrencyPairSignalTransformer` with the frozen ID and
 `materialized_at`. `validate_pair_signal_transformation()` compares every output
 semantic field and content hash with exact equality. `PairSignalDerivation.create()`
 uses that verifier, while `validate_against()` additionally proves every derivation-
-to-selection/source relation. M2-B2 persistence must call `validate_against()` before
-insert or idempotent reuse and again after hydration; intrinsic content identity is
-necessary but is not persistence authorization.
+to-selection/source relation. M2-B2-C persistence must call `validate_against()`
+before insert or idempotent reuse and again after hydration; intrinsic content
+identity is necessary but is not persistence authorization.
 
-M2-B2 must add a monotonic `store_sequence`. The first Request claim freezes:
+M2-B2-A adds one immutable positive monotonic `store_sequence` per Signal. A normal
+Signal append writes Signal, Feature lineage, and Store entry with `APPEND` origin in
+one transaction. Migration assigns every legacy Signal one `LEGACY_BACKFILL` entry
+ordered by `signals.created_at ASC, signals.id ASC`. That deterministic catalog order
+does not claim to recover historical local insertion order. `stored_at` is a distinct
+UTC local audit timestamp captured once per append; `Signal.created_at` is never
+reused as local Store time.
+
+The first Request Claim explicitly uses `BEGIN IMMEDIATE` and freezes:
 
 ```text
 checkpoint_sequence = MAX(store_sequence)
+captured_at           = caller-supplied first-write UTC audit time
 ```
 
-Candidate eligibility then requires both `store_sequence <= checkpoint_sequence`
-and `signal.created_at <= request.as_of`. Retry reads the original checkpoint and
-terminal selection snapshot and never reruns selection. Because `Signal.created_at`
-is producer time rather than local insertion time, an old-dated backfill inserted
-after the checkpoint cannot enter a historical Request.
+The same transaction append-or-exact-compares full Specification and Request content.
+Retry returns the persisted Claim and does not replace its checkpoint or
+`captured_at`, even when the caller supplies a later time. Claim is a nonterminal
+retry anchor: it may exist before selection/completion, and it is never interpreted
+as `SELECTED`, `NO_MATCH`, or `AMBIGUOUS`. Connection-scoped private helpers prevent
+public Store APIs from opening another connection inside the Claim transaction.
+
+Candidate eligibility in M2-B2-B/B3 requires both
+`store_sequence <= checkpoint_sequence` and
+`signal.created_at <= request.as_of`. Because `Signal.created_at` is producer time
+rather than local insertion time, an old-dated backfill inserted after the checkpoint
+receives a later Store sequence and cannot enter the historical Request.
 
 M2-B3 supplies the persisted checkpoint-bounded inventory to the M2-B1 resolver; it
 does not reimplement exact-group ambiguity, semantic ranking, or shared-transformer
 output semantics in a Store adapter or application service.
 
-M2-B2/B3 must atomically persist selection snapshot, complete candidate inventory,
-derived Pair Signal, Feature links, Pair Signal Store sequence, and derivation.
-Existing `append_signal_if_absent()` is insufficient because an existing Signal ID
-does not prove equal content or lineage. Idempotent reuse requires full Signal,
-Feature/Observation lineage, selection, and derivation equality; any mismatch rolls
-back without partial records.
+M2-B2-B/C and M2-B3 must persist selection snapshot, complete candidate inventory,
+derived Pair Signal, Feature links, Pair Signal Store sequence, derivation, and
+completion root under their exact transaction boundaries. Existing
+`append_signal_if_absent()` intentionally retains its legacy ID-present `False`
+semantics and is insufficient for Pair artifacts because an existing Signal ID does
+not prove equal content or lineage. Future exact idempotent reuse requires full
+Signal, Feature/Observation lineage, selection, and derivation equality; any mismatch
+rolls back without partial records.
 
 ### Operational inputs and time
 
@@ -791,10 +819,19 @@ all four are complete:
     Pair Signal ID; exact shared-transformer output verifier; and intrinsic plus
     relational PairSignalDerivation integrity. No migration, Store query, operational
     Pair Signal persistence, or materializer was added.
-  - **2-B2 Signal Store Checkpoint and Exact Persistence (pending):** monotonic Store
-    sequence, first-claim checkpoint, saved terminal selection/candidate inventory,
-    full-content/lineage append-or-compare operations, and mandatory relational
-    validation before insert/reuse and after hydration.
+  - **2-B2 Signal Store Checkpoint and Exact Persistence (in progress):** split so a
+    Request Claim cannot be mistaken for a completed selection/materialization.
+    - **2-B2-A Signal Store Sequence and Materialization Request Claim
+      (complete):** `0002_pair_materialization_persistence.sql`; one immutable Store
+      sequence per Signal; deterministic legacy catalog backfill; atomic Signal,
+      Feature-lineage, and Store-entry append; connection-scoped Store helpers; exact
+      Specification/Request append-or-compare; and `BEGIN IMMEDIATE` first-write Claim
+      with frozen checkpoint/captured time.
+    - **2-B2-B Selection Evidence Persistence (pending):** checkpoint-bounded complete
+      candidate inventory and authenticated terminal Selection Snapshot persistence.
+    - **2-B2-C Pair Artifact Exact Persistence (pending):** exact Pair Signal, Feature
+      links, Store entry, PairSignalDerivation, and completion-root persistence with
+      mandatory relational validation before insert/reuse and after hydration.
   - **2-B3 Operational Pair Signal Materializer (pending):** deterministic as-of
     candidate query, composition of the shared resolver/verifier, and atomic
     Signal-plus-derivation persistence without reimplementing selection or transform
@@ -982,9 +1019,12 @@ python -m swap_bot paper-burn-in-report --config <paper-config>
 - Existing `SHADOW` runtime authorization rows remain readable. Operational authority
   uses the fixed compatibility mapping above rather than adding `RuntimeMode.PAPER`
   or reinterpreting stored values.
-- Existing numbered Live migrations `0001`/`0002` remain unchanged. Milestone 2-B/C/D
-  use next available additive numbers in implementation order. Paper persistence then
-  begins at the next available migration; `0003` is not reserved for Paper.
+- Existing numbered Live migrations `0001`/`0002` remain unchanged. Shared Signal
+  Store migration `0002_pair_materialization_persistence.sql` is independently
+  numbered after `0001_signal_lineage.sql` and backfills Store catalog sequence
+  without rewriting Signal content. Milestone 2-C/D use the next available Live
+  additive numbers in implementation order. Paper persistence then begins at the next
+  available Live migration; `0003` is not reserved for Paper.
 - Paper tables are additive and use append-only guards. Paper projections can be
   rebuilt from their evidence records.
 - The fixture-only `shadow-once` command remains characterization evidence until a
@@ -1108,6 +1148,18 @@ ExecPlan 0006 is complete only when all of the following are true:
 - [x] (2026-07-17) Left checkpoint persistence, SQLite selection, Pair
   query/materializer composition, and atomic persistence pending for M2-B2/M2-B3; no
   migration or existing Store behavior changed.
+- [x] (2026-07-18) Milestone 2-B2-A - added one immutable monotonic Store sequence
+  per Signal; backfilled legacy Signals in explicit deterministic catalog order
+  without claiming historical insertion recovery; and made Signal, Feature lineage,
+  and Store entry append atomic.
+- [x] (2026-07-18) Added exact Specification/Request persistence and a
+  `BEGIN IMMEDIATE` first-write materialization Claim with frozen checkpoint and
+  `captured_at`; retry returns the persisted Claim and opens no nested connection.
+- [x] (2026-07-18) Passed M2-B2-A through the full local Python 3.11/3.14 test,
+  Ruff, strict mypy, public-import smoke, migration smoke, and diff-check matrix.
+- [x] Milestone 2-B2-A - Signal Store sequence and materialization Request Claim.
+- [ ] Milestone 2-B2-B - selection evidence persistence.
+- [ ] Milestone 2-B2-C - Pair artifact exact persistence and completion root.
 - [ ] Milestone 2-B2 - Signal Store checkpoint and exact persistence.
 - [ ] Milestone 2-B3 - operational Pair Signal selection/materialization.
 - [ ] Milestone 2-B - exact Pair Signal materialization and selection.
@@ -1232,11 +1284,35 @@ ExecPlan 0006 is complete only when all of the following are true:
   fail-closed behavior, and a checkpoint.
 - Observation: `append_signal_if_absent` uses `INSERT OR IGNORE` and does not prove
   that a reused deterministic ID has identical content and lineage.
-  Resolution: Milestone 2-B adds an exact persistence operation that compares the
+  Resolution: M2-B2-A retains this legacy ID-present `False` behavior for existing
+  callers; M2-B2-C adds a separate exact Pair artifact operation that compares the
   complete existing Signal and derivation before treating a retry as idempotent.
 - Observation: `Signal.created_at` is producer availability time, not local Signal
   Store insertion time, so it cannot exclude an old-dated backfill by itself.
-  Resolution: M2-B2 combines request `as_of` with a frozen monotonic Store checkpoint.
+  Resolution: M2-B2-A records a distinct local `stored_at` and monotonic Store
+  sequence, then freezes the current maximum on the first Request Claim; later
+  selection combines this checkpoint with request `as_of`.
+- Observation: an existing pre-0002 Signal row has no trustworthy local insertion
+  timestamp from which to reconstruct its historical order.
+  Resolution: migration assigns explicit deterministic `created_at, SignalId`
+  catalog order and records `LEGACY_BACKFILL`; tests and documents do not call that
+  order recovered history.
+- Observation: appending a Store entry after the Signal transaction permits a crash
+  or failure to leave a Signal that is absent from a checkpoint catalog.
+  Resolution: Signal, Feature lineage, and Store entry append in one transaction;
+  both missing-lineage and Store-entry failure tests require a complete rollback.
+- Observation: current public Store reads each open a connection, and using them from
+  a Claim transaction would move checkpoint/hydration work outside its writer lock.
+  Resolution: M2-B2-A adds connection-scoped private helpers, makes `list_signals()`
+  hydrate on one connection, and proves one Claim opens exactly one connection.
+- Observation: a retry that takes a new checkpoint or replaces `captured_at` changes
+  the historical input boundary after late/backfilled Signals arrive.
+  Resolution: the first `BEGIN IMMEDIATE` Claim freezes both values and every retry
+  returns that persisted Claim unchanged.
+- Observation: a Claim can validly survive a crash before terminal Selection or Pair
+  artifact persistence.
+  Resolution: treat Claim as a retry anchor and incomplete-operation evidence, never
+  as `SELECTED`, `NO_MATCH`, `AMBIGUOUS`, or completion.
 - Observation: putting discovered Signal, Observation, or checkpoint IDs into the
   Request ID makes one retry become a different semantic Request.
   Resolution: one Pair/as-of/Specification alone defines the stable Request; input
@@ -1362,7 +1438,9 @@ ExecPlan 0006 is complete only when all of the following are true:
 - 2026-07-17: Defer operational Pair selection/materialization until Milestone 2-B can
   preserve exact base/quote Signal lineage and exact persistence idempotency.
 - 2026-07-17: Split Pair materialization into M2-B1 identity/domain contracts,
-  M2-B2 checkpoint/exact persistence, and M2-B3 operational selection/transformation.
+  M2-B2 exact persistence, and M2-B3 operational selection/transformation. M2-B2 is
+  subsequently split into Request Claim (A), selection evidence (B), and Pair
+  artifact/completion persistence (C).
 - 2026-07-17: Define one stable materialization Request by exact
   Pair/as-of/Specification and exclude selected Signal IDs, checkpoint, capture time,
   materialization time, and retry metadata from Request identity.
@@ -1375,7 +1453,8 @@ ExecPlan 0006 is complete only when all of the following are true:
 - 2026-07-17: Make selection snapshot identity commit to the complete canonical
   candidate inventory hash and terminal `SELECTED`/`NO_MATCH`/`AMBIGUOUS` result.
 - 2026-07-17: Exclude first-write `captured_at` from selection semantic identity;
-  M2-B2 must preserve the originally stored audit value on retry.
+  M2-B2-A preserves the originally stored Claim audit value on retry and M2-B2-B must
+  reuse it for persisted selection evidence.
 - 2026-07-17: Derive Pair Signal ID before transformation from exact source lineage
   and frozen `materialized_at`; the identity helper neither calls Clock nor computes
   `base - quote`.
@@ -1383,8 +1462,10 @@ ExecPlan 0006 is complete only when all of the following are true:
   adding source Signal IDs to shared `fx_core.Signal`.
 - 2026-07-17: Place canonical JSON/SHA-256 in package-neutral `fx_core.identity` and
   retain existing `swap_bot.adoption` wrappers byte-for-byte compatible.
-- 2026-07-17: Keep Store sequence/checkpoint schema, exact append/compare, candidate
-  query, resolver/verifier composition, and atomic materializer in M2-B2/M2-B3.
+- 2026-07-17: Keep Store sequence/checkpoint schema and Specification/Request Claim in
+  M2-B2-A; selection persistence in M2-B2-B; Pair artifact/completion exact
+  persistence in M2-B2-C; and candidate query plus resolver/verifier materializer
+  composition in M2-B3.
 - 2026-07-17: Derive terminal selection outcome, reason, and selected IDs from the
   complete candidate inventory; caller-provided terminal fields are never authority.
 - 2026-07-17: Fail a Request closed when any complete Observation group has duplicate
@@ -1394,8 +1475,8 @@ ExecPlan 0006 is complete only when all of the following are true:
   transformer and requiring exact field equality; do not duplicate its arithmetic or
   version-combination semantics in `fx_signal_store`.
 - 2026-07-17: Keep derivation intrinsic identity separate from relational
-  authenticity. M2-B2 persistence must call `validate_against()` before insert/reuse
-  and after hydration.
+  authenticity. M2-B2-C persistence must call `validate_against()` before
+  insert/reuse and after hydration.
 - 2026-07-17: Treat target/direction mismatch as intrinsic snapshot corruption and
   diagnose observed-future before created-future in candidate rejection precedence.
 - 2026-07-17: Validate `SignalId`-to-content uniqueness across the complete candidate
@@ -1404,6 +1485,21 @@ ExecPlan 0006 is complete only when all of the following are true:
   selection boundary rather than waiting for derivation.
 - 2026-07-17: Treat conflicting source identity as intrinsic inventory corruption
   that fails before any terminal selection snapshot is created.
+- 2026-07-18: Give every Signal exactly one immutable Store sequence. The committed
+  sequence, not `Signal.created_at`, is the local availability boundary.
+- 2026-07-18: Backfill legacy Signals in deterministic `created_at, SignalId` catalog
+  order with `LEGACY_BACKFILL` origin; do not describe it as recovered insertion
+  history.
+- 2026-07-18: Append Signal, Feature lineage, and Store entry in one transaction and
+  retain `append_signal_if_absent()` legacy ID-present behavior.
+- 2026-07-18: Give one Pair/as-of/Specification Request one immutable first-write
+  Claim. `BEGIN IMMEDIATE` freezes checkpoint and `captured_at`; retry returns the
+  persisted Claim rather than caller's later values.
+- 2026-07-18: Require exact hydrated Specification and Request equality for reuse;
+  ID equality or `INSERT OR IGNORE` alone is not persistence authority.
+- 2026-07-18: Keep Claim distinct from terminal Selection and Completion. Selection
+  inventory/snapshot remains M2-B2-B, Pair Signal/derivation/completion remains
+  M2-B2-C, and the operational materializer remains M2-B3.
 - 2026-07-17: Paper persistence begins at the next available additive Live migration
   after Milestone 2 Strategy persistence; `0003` is neither reserved nor created by
   Milestone 2-A.
@@ -1642,3 +1738,34 @@ Milestone 2-B1 source-Signal identity final review correction completed locally 
   Execution, Paper, or ExecPlan 0007 implementation was added or changed.
 - Hosted CI has not been run for this unpushed final-review commit; only local
   validation is claimed.
+
+Milestone 2-B2-A Signal Store sequence and materialization Request Claim completed
+locally on 2026-07-18:
+
+- Python 3.11.9: `597 passed, 5 skipped`; Ruff passed; strict mypy passed for
+  72 source files.
+- Python 3.14.6: `597 passed, 5 skipped`; Ruff passed; strict mypy passed for
+  72 source files.
+- The five skips remain opt-in external provider smoke tests. Final full pytest runs
+  used distinct workspace basetemp roots with cache disabled.
+- Public import smoke passed on both supported Python versions for
+  `SignalStoreEntry`, `SignalStorageOrigin`, `PairSignalMaterializationClaim`,
+  `PairMaterializationPersistenceConflict`, and `SignalStoreIntegrityError`.
+- Fresh database, legacy-0001 upgrade, reopen/rerun, deterministic backfill,
+  immutability, and table-scope migration smoke passed as a focused `6 passed` on
+  both Python versions.
+- `git diff --check` passed. The 15-file change adds
+  `0002_pair_materialization_persistence.sql`, shared Store persistence contracts,
+  atomic/connection-scoped Store behavior, focused tests, and the five requested
+  living design documents.
+- Every new/legacy Signal has exactly one Store entry; Signal, Feature lineage, and
+  Store entry failure tests roll back in full. Concurrent same-Request Claims converge
+  to one persisted checkpoint and first-written `captured_at`.
+- The 0002 migration contains only Store entry, Specification, Request, and Claim
+  tables. It adds no Selection Snapshot, candidate inventory, Pair Signal,
+  derivation, completion, or operational materializer table.
+- Existing Live migrations remain exactly `0001`/`0002`; shared `Signal`,
+  `CurrencyPairSignalTransformer`, concrete Strategy, Portfolio, Risk, Execution,
+  Broker, Paper, scheduler, CLI, and ExecPlan 0007 are unchanged.
+- Hosted CI has not been run for this unpushed M2-B2-A commit; only local validation
+  is claimed.

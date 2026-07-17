@@ -33,16 +33,28 @@ from .pair_materialization import (
     resolve_pair_signal_selection,
     validate_pair_signal_transformation,
 )
-from .store import SignalLineage, SQLiteSignalStore
+from .persistence import (
+    PAIR_SIGNAL_MATERIALIZATION_CLAIM_VERSION,
+    SIGNAL_STORE_ENTRY_VERSION,
+    PairMaterializationPersistenceConflict,
+    PairSignalMaterializationClaim,
+    SignalLineage,
+    SignalStorageOrigin,
+    SignalStoreEntry,
+    SignalStoreIntegrityError,
+)
+from .store import SQLiteSignalStore
 
 __all__ = [
     "PAIR_SIGNAL_DERIVATION_VERSION",
     "PAIR_SIGNAL_IDENTITY_VERSION",
+    "PAIR_SIGNAL_MATERIALIZATION_CLAIM_VERSION",
     "PAIR_SIGNAL_MATERIALIZATION_REQUEST_VERSION",
     "PAIR_SIGNAL_MATERIALIZATION_SPEC_VERSION",
     "PAIR_SIGNAL_SELECTION_CANDIDATE_VERSION",
     "PAIR_SIGNAL_SELECTION_SNAPSHOT_VERSION",
     "SIGNAL_CONTENT_SNAPSHOT_VERSION",
+    "SIGNAL_STORE_ENTRY_VERSION",
     "SUPPORTED_OBSERVATION_GROUP_POLICY_VERSION",
     "SUPPORTED_OUTPUT_SIGNAL_TYPE",
     "SUPPORTED_PAIR_TRANSFORMATION_VERSION",
@@ -53,6 +65,8 @@ __all__ = [
     "PairSignalDerivation",
     "PairSignalMaterializationRequest",
     "PairSignalMaterializationSpecification",
+    "PairSignalMaterializationClaim",
+    "PairMaterializationPersistenceConflict",
     "PairSignalSelectionCandidate",
     "PairSignalSelectionOutcome",
     "PairSignalSelectionReason",
@@ -61,6 +75,9 @@ __all__ = [
     "SignalContentSnapshot",
     "SignalDirectionType",
     "SignalLineage",
+    "SignalStorageOrigin",
+    "SignalStoreEntry",
+    "SignalStoreIntegrityError",
     "SignalTargetType",
     "SourceSignalRole",
     "canonical_observation_ids",

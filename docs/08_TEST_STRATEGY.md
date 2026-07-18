@@ -73,13 +73,18 @@ Milestone 2-B2-A tests additionally state:
 - fresh and legacy-0001 databases migrate to exactly 0001/0002, and every legacy
   Signal receives exactly one `LEGACY_BACKFILL` Store entry in explicit
   `created_at, SignalId` catalog order without claiming historical insertion order;
+- each migration body and marker commit in one `BEGIN IMMEDIATE` transaction;
+  statement or marker failure leaves no partial DDL, DML/backfill, or marker, and
+  concurrent fresh/legacy startup converges to one complete application;
 - every new Signal receives one positive monotonic committed Store sequence, while
   Signal, Feature lineage, and Store entry roll back together on either lineage or
   Store-entry failure;
 - `append_signal_if_absent()` retains its existing ID-present `False` behavior and
   neither changes nor duplicates the persisted Store entry;
-- Store checkpoint is the maximum committed Store sequence, so an old-created
-  backfill appended later receives a later sequence;
+- Store checkpoint is the maximum committed Store sequence only after complete
+  one-Signal/one-entry coverage and entry hydration are proven; missing, orphaned,
+  duplicate, malformed, or subject-mismatched catalog evidence fails closed;
+- an old-created backfill appended later receives a later sequence;
 - Specification and Request reuse requires exact hydrated equality, and the Pair/
   as-of/Specification business key cannot map to another Request ID;
 - one `BEGIN IMMEDIATE` Claim transaction freezes the first checkpoint and
@@ -88,6 +93,9 @@ Milestone 2-B2-A tests additionally state:
 - a failed Claim leaves no partial Specification, Request, or Claim row, while two
   Store instances converge to one first-written Claim rather than treating a lock as
   success;
+- an incomplete/corrupt catalog rejects Claim creation before any partial row, and a
+  retried persisted Claim is rejected when its positive checkpoint exceeds the
+  current maximum or no longer references an exact Store boundary;
 - Claim and `list_signals()` use connection-scoped helpers without opening a nested
   connection; and
 - Store entry, Specification, Request, and Claim tables reject UPDATE/DELETE, while

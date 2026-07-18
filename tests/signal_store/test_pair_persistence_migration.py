@@ -1,6 +1,8 @@
 import sqlite3
+from concurrent.futures import ThreadPoolExecutor
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
+from threading import Barrier
 
 import pytest
 from fx_core import SignalId
@@ -52,6 +54,36 @@ def _applied_migrations(path: Path) -> tuple[str, ...]:
             "SELECT version FROM schema_migrations ORDER BY version"
         ).fetchall()
     return tuple(row[0] for row in rows)
+
+
+def _migration_counts(path: Path) -> tuple[tuple[str, int], ...]:
+    with sqlite3.connect(path) as connection:
+        rows = connection.execute(
+            "SELECT version, COUNT(*) FROM schema_migrations "
+            "GROUP BY version ORDER BY version"
+        ).fetchall()
+    return tuple((str(row[0]), int(row[1])) for row in rows)
+
+
+def _table_exists(path: Path, table: str) -> bool:
+    with sqlite3.connect(path) as connection:
+        row = connection.execute(
+            "SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = ?",
+            (table,),
+        ).fetchone()
+    return row is not None
+
+
+def _initialize_concurrently(path: Path) -> tuple[SQLiteSignalStore, SQLiteSignalStore]:
+    barrier = Barrier(2)
+
+    def initialize() -> SQLiteSignalStore:
+        barrier.wait()
+        return SQLiteSignalStore(path)
+
+    with ThreadPoolExecutor(max_workers=2) as executor:
+        futures = tuple(executor.submit(initialize) for _ in range(2))
+        return tuple(future.result() for future in futures)  # type: ignore[return-value]
 
 
 def test_fresh_database_applies_exactly_0001_and_0002(tmp_path: Path) -> None:
@@ -110,6 +142,116 @@ def test_reopen_and_migrate_rerun_do_not_duplicate_legacy_entries(tmp_path: Path
         count = connection.execute("SELECT COUNT(*) FROM signal_store_entries").fetchone()
     assert count == (1,)
     assert reopened.get_signal_store_entry(SignalId("signal-1")).store_sequence == 1
+
+
+def test_statement_failure_rolls_back_migration_body_and_marker(tmp_path: Path) -> None:
+    path = tmp_path / "statement-failure.sqlite3"
+    store = SQLiteSignalStore(path)
+    migration_name = "9999_synthetic_failure.sql"
+
+    with store._connect() as connection, pytest.raises(sqlite3.OperationalError):
+        store._apply_migration_exact(
+            connection,
+            migration_name=migration_name,
+            migration_sql=(
+                "CREATE TABLE synthetic_first (id INTEGER PRIMARY KEY);\n"
+                "CREATE TABL synthetic_invalid (id INTEGER PRIMARY KEY);"
+            ),
+            applied_at=NOW,
+        )
+
+    assert _table_exists(path, "synthetic_first") is False
+    assert migration_name not in _applied_migrations(path)
+
+    with store._connect() as connection:
+        store._apply_migration_exact(
+            connection,
+            migration_name=migration_name,
+            migration_sql="CREATE TABLE synthetic_first (id INTEGER PRIMARY KEY);",
+            applied_at=NOW,
+        )
+
+    assert _table_exists(path, "synthetic_first") is True
+    assert migration_name in _applied_migrations(path)
+
+
+class _Failing0002MarkerStore(SQLiteSignalStore):
+    def _record_migration(
+        self,
+        connection: sqlite3.Connection,
+        *,
+        migration_name: str,
+        applied_at: datetime,
+    ) -> None:
+        if migration_name == "0002_pair_materialization_persistence.sql":
+            raise RuntimeError("test marker failure")
+        super()._record_migration(
+            connection,
+            migration_name=migration_name,
+            applied_at=applied_at,
+        )
+
+
+def test_marker_failure_rolls_back_0002_schema_and_legacy_backfill(
+    tmp_path: Path,
+) -> None:
+    path = tmp_path / "marker-failure.sqlite3"
+    _create_0001_legacy_database(
+        path,
+        (("signal-1", datetime(2026, 7, 17, tzinfo=UTC)),),
+    )
+
+    with pytest.raises(RuntimeError, match="marker failure"):
+        _Failing0002MarkerStore(path)
+
+    assert _table_exists(path, "signal_store_entries") is False
+    assert _applied_migrations(path) == ("0001_signal_lineage.sql",)
+
+    corrected = SQLiteSignalStore(path)
+
+    assert corrected.get_signal_store_entry(SignalId("signal-1")).store_sequence == 1
+    assert _applied_migrations(path) == (
+        "0001_signal_lineage.sql",
+        "0002_pair_materialization_persistence.sql",
+    )
+
+
+def test_concurrent_fresh_store_initialization_applies_each_migration_once(
+    tmp_path: Path,
+) -> None:
+    path = tmp_path / "concurrent-fresh.sqlite3"
+
+    stores = _initialize_concurrently(path)
+
+    assert all(store.current_signal_checkpoint() == 0 for store in stores)
+    assert _migration_counts(path) == (
+        ("0001_signal_lineage.sql", 1),
+        ("0002_pair_materialization_persistence.sql", 1),
+    )
+    assert _table_exists(path, "signal_store_entries") is True
+
+
+def test_concurrent_legacy_upgrade_backfills_each_signal_once(tmp_path: Path) -> None:
+    path = tmp_path / "concurrent-legacy.sqlite3"
+    created_at = datetime(2026, 7, 17, tzinfo=UTC)
+    _create_0001_legacy_database(
+        path,
+        (("signal-a", created_at), ("signal-b", created_at + timedelta(seconds=1))),
+    )
+
+    stores = _initialize_concurrently(path)
+
+    assert all(store.current_signal_checkpoint() == 2 for store in stores)
+    assert _migration_counts(path) == (
+        ("0001_signal_lineage.sql", 1),
+        ("0002_pair_materialization_persistence.sql", 1),
+    )
+    with sqlite3.connect(path) as connection:
+        entries = connection.execute(
+            "SELECT signal_id, COUNT(*) FROM signal_store_entries "
+            "GROUP BY signal_id ORDER BY signal_id"
+        ).fetchall()
+    assert entries == [("signal-a", 1), ("signal-b", 1)]
 
 
 def test_new_evidence_tables_reject_update_and_delete(tmp_path: Path) -> None:

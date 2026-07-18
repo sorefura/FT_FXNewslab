@@ -12,6 +12,7 @@ from fx_signal_store import (
     PairSignalMaterializationClaim,
     PairSignalMaterializationRequest,
     PairSignalMaterializationSpecification,
+    SignalStoreIntegrityError,
     SQLiteSignalStore,
 )
 
@@ -321,6 +322,111 @@ def test_claim_failure_rolls_back_specification_request_and_claim(
         )
 
     assert _counts(store.path) == (0, 0, 0)
+
+
+def test_missing_store_entry_rejects_claim_without_partial_rows(tmp_path: Path) -> None:
+    store = _store_with_source(tmp_path / "signals.sqlite3")
+    store.append_signal(signal(), stored_at=NOW)
+    with sqlite3.connect(store.path) as connection:
+        connection.execute("DROP TRIGGER signal_store_entries_no_delete")
+        connection.execute("DELETE FROM signal_store_entries WHERE signal_id = 'signal-1'")
+
+    with pytest.raises(SignalStoreIntegrityError, match="without a Store entry"):
+        store.claim_pair_signal_materialization(
+            request(),
+            captured_at=NOW + timedelta(minutes=1),
+        )
+
+    assert _counts(store.path) == (0, 0, 0)
+
+
+def test_orphan_store_entry_rejects_claim_without_partial_rows(tmp_path: Path) -> None:
+    store = SQLiteSignalStore(tmp_path / "signals.sqlite3")
+    with sqlite3.connect(store.path) as connection:
+        connection.execute("PRAGMA foreign_keys = OFF")
+        connection.execute(
+            """
+            INSERT INTO signal_store_entries(
+                contract_version, signal_id, stored_at, storage_origin
+            ) VALUES ('signal-store-entry-v1', 'signal-orphan', ?, 'APPEND')
+            """,
+            (NOW.isoformat(),),
+        )
+
+    with pytest.raises(SignalStoreIntegrityError, match="without a Signal"):
+        store.claim_pair_signal_materialization(
+            request(),
+            captured_at=NOW + timedelta(minutes=1),
+        )
+
+    assert _counts(store.path) == (0, 0, 0)
+
+
+def test_retry_rejects_claim_checkpoint_above_current_catalog(
+    tmp_path: Path,
+) -> None:
+    store = _store_with_source(tmp_path / "signals.sqlite3")
+    store.append_signal(signal(), stored_at=NOW)
+    original = store.claim_pair_signal_materialization(
+        request(),
+        captured_at=NOW + timedelta(minutes=1),
+    )
+    with sqlite3.connect(store.path) as connection:
+        connection.execute("DROP TRIGGER pair_signal_materialization_claims_no_update")
+        connection.execute(
+            "UPDATE pair_signal_materialization_claims SET checkpoint_sequence = 2"
+        )
+
+    with pytest.raises(SignalStoreIntegrityError, match="exceeds current checkpoint"):
+        store.claim_pair_signal_materialization(
+            request(),
+            captured_at=NOW + timedelta(minutes=5),
+        )
+
+    with sqlite3.connect(store.path) as connection:
+        row = connection.execute(
+            "SELECT checkpoint_sequence, captured_at "
+            "FROM pair_signal_materialization_claims"
+        ).fetchone()
+    assert row == (2, original.captured_at.isoformat())
+
+
+def test_retry_rejects_claim_checkpoint_without_exact_store_boundary(
+    tmp_path: Path,
+) -> None:
+    store = _store_with_source(tmp_path / "signals.sqlite3")
+    store.append_signal(signal(identifier="signal-a"), stored_at=NOW)
+    original = store.claim_pair_signal_materialization(
+        request(),
+        captured_at=NOW + timedelta(minutes=1),
+    )
+    store.append_signal(
+        signal(identifier="signal-b"),
+        stored_at=NOW + timedelta(minutes=2),
+    )
+    with sqlite3.connect(store.path) as connection:
+        connection.execute("DROP TRIGGER signal_store_entries_no_update")
+        connection.execute(
+            "UPDATE signal_store_entries SET store_sequence = 3 "
+            "WHERE signal_id = 'signal-b'"
+        )
+        connection.execute("DROP TRIGGER pair_signal_materialization_claims_no_update")
+        connection.execute(
+            "UPDATE pair_signal_materialization_claims SET checkpoint_sequence = 2"
+        )
+
+    with pytest.raises(SignalStoreIntegrityError, match="does not reference a Store entry"):
+        store.claim_pair_signal_materialization(
+            request(),
+            captured_at=NOW + timedelta(minutes=5),
+        )
+
+    with sqlite3.connect(store.path) as connection:
+        row = connection.execute(
+            "SELECT checkpoint_sequence, captured_at "
+            "FROM pair_signal_materialization_claims"
+        ).fetchone()
+    assert row == (2, original.captured_at.isoformat())
 
 
 def test_two_store_instances_converge_on_one_first_written_claim(

@@ -58,22 +58,91 @@ class SQLiteSignalStore:
 
     def migrate(self) -> None:
         migration_root = files("fx_signal_store").joinpath("migrations")
-        with closing(self._connect()) as connection, connection:
+        with closing(self._connect()) as connection:
             connection.execute(
                 "CREATE TABLE IF NOT EXISTS schema_migrations "
                 "(version TEXT PRIMARY KEY, applied_at TEXT NOT NULL)"
             )
-            applied = {
-                row[0] for row in connection.execute("SELECT version FROM schema_migrations")
-            }
+            connection.commit()
             for migration in sorted(migration_root.iterdir(), key=lambda item: item.name):
-                if not migration.name.endswith(".sql") or migration.name in applied:
+                if not migration.name.endswith(".sql"):
                     continue
-                connection.executescript(migration.read_text(encoding="utf-8"))
-                connection.execute(
-                    "INSERT INTO schema_migrations(version, applied_at) VALUES (?, ?)",
-                    (migration.name, datetime.now(UTC).isoformat()),
+                if self._migration_applied(connection, migration.name):
+                    continue
+                self._apply_migration_exact(
+                    connection,
+                    migration_name=migration.name,
+                    migration_sql=migration.read_text(encoding="utf-8"),
+                    applied_at=datetime.now(UTC),
                 )
+
+    def _apply_migration_exact(
+        self,
+        connection: sqlite3.Connection,
+        *,
+        migration_name: str,
+        migration_sql: str,
+        applied_at: datetime,
+    ) -> None:
+        require_utc(applied_at, "migration applied_at")
+        connection.execute("BEGIN IMMEDIATE")
+        try:
+            if self._migration_applied(connection, migration_name):
+                connection.commit()
+                return
+            for statement in self._iter_complete_sql_statements(migration_sql):
+                connection.execute(statement)
+            self._record_migration(
+                connection,
+                migration_name=migration_name,
+                applied_at=applied_at,
+            )
+            connection.commit()
+        except BaseException:
+            connection.rollback()
+            raise
+
+    @staticmethod
+    def _migration_applied(
+        connection: sqlite3.Connection,
+        migration_name: str,
+    ) -> bool:
+        row = connection.execute(
+            "SELECT 1 FROM schema_migrations WHERE version = ?",
+            (migration_name,),
+        ).fetchone()
+        return row is not None
+
+    def _record_migration(
+        self,
+        connection: sqlite3.Connection,
+        *,
+        migration_name: str,
+        applied_at: datetime,
+    ) -> None:
+        connection.execute(
+            "INSERT INTO schema_migrations(version, applied_at) VALUES (?, ?)",
+            (migration_name, applied_at.isoformat()),
+        )
+
+    @staticmethod
+    def _iter_complete_sql_statements(migration_sql: str) -> Iterable[str]:
+        buffer: list[str] = []
+        for character in migration_sql:
+            buffer.append(character)
+            if character != ";":
+                continue
+            candidate = "".join(buffer)
+            if not sqlite3.complete_statement(candidate):
+                continue
+            statement = candidate.strip()
+            if statement:
+                yield statement
+            buffer.clear()
+        if "".join(buffer).strip():
+            raise SignalStoreIntegrityError(
+                "migration SQL contains an incomplete statement"
+            )
 
     def append_observation(self, observation: NewsObservation) -> None:
         with closing(self._connect()) as connection, connection:
@@ -455,26 +524,38 @@ class SQLiteSignalStore:
         connection: sqlite3.Connection,
         signal_id: SignalId,
     ) -> SignalStoreEntry:
-        row = connection.execute(
+        rows = connection.execute(
             "SELECT * FROM signal_store_entries WHERE signal_id = ?",
             (signal_id.value,),
-        ).fetchone()
+        ).fetchall()
         signal_exists = connection.execute(
             "SELECT 1 FROM signals WHERE id = ?",
             (signal_id.value,),
         ).fetchone()
-        if row is None:
+        if not rows:
             if signal_exists is None:
                 raise KeyError(signal_id.value)
             raise SignalStoreIntegrityError(
                 f"Signal {signal_id.value} has no Signal Store entry"
             )
+        if len(rows) != 1:
+            raise SignalStoreIntegrityError(
+                f"Signal {signal_id.value} has multiple Signal Store entries"
+            )
         if signal_exists is None:
             raise SignalStoreIntegrityError(
-                f"Signal Store entry {row['store_sequence']} has no Signal row"
+                f"Signal Store entry {rows[0]['store_sequence']} has no Signal row"
             )
+        return self._signal_store_entry_from_row(rows[0], expected_signal_id=signal_id)
+
+    @staticmethod
+    def _signal_store_entry_from_row(
+        row: sqlite3.Row,
+        *,
+        expected_signal_id: SignalId | None = None,
+    ) -> SignalStoreEntry:
         try:
-            return SignalStoreEntry(
+            entry = SignalStoreEntry(
                 contract_version=row["contract_version"],
                 store_sequence=row["store_sequence"],
                 signal_id=SignalId(row["signal_id"]),
@@ -483,15 +564,78 @@ class SQLiteSignalStore:
             )
         except (TypeError, ValueError) as error:
             raise SignalStoreIntegrityError(
-                f"Signal Store entry for {signal_id.value} is invalid"
+                "Signal Store catalog contains an invalid Store entry"
             ) from error
+        if expected_signal_id is not None and entry.signal_id != expected_signal_id:
+            raise SignalStoreIntegrityError(
+                "Signal Store entry subject does not match its Signal"
+            )
+        return entry
+
+    def _validate_signal_store_catalog_integrity(
+        self,
+        connection: sqlite3.Connection,
+    ) -> None:
+        missing_entry = connection.execute(
+            """
+            SELECT s.id
+            FROM signals AS s
+            LEFT JOIN signal_store_entries AS e ON e.signal_id = s.id
+            WHERE e.signal_id IS NULL
+            LIMIT 1
+            """
+        ).fetchone()
+        if missing_entry is not None:
+            raise SignalStoreIntegrityError(
+                "Signal Store catalog contains a Signal without a Store entry"
+            )
+        orphan_entry = connection.execute(
+            """
+            SELECT e.signal_id
+            FROM signal_store_entries AS e
+            LEFT JOIN signals AS s ON s.id = e.signal_id
+            WHERE s.id IS NULL
+            LIMIT 1
+            """
+        ).fetchone()
+        if orphan_entry is not None:
+            raise SignalStoreIntegrityError(
+                "Signal Store catalog contains a Store entry without a Signal"
+            )
+        duplicate_entry = connection.execute(
+            """
+            SELECT signal_id
+            FROM signal_store_entries
+            GROUP BY signal_id
+            HAVING COUNT(*) != 1
+            LIMIT 1
+            """
+        ).fetchone()
+        if duplicate_entry is not None:
+            raise SignalStoreIntegrityError(
+                "Signal Store catalog contains multiple entries for one Signal"
+            )
+        rows = connection.execute(
+            """
+            SELECT e.*, s.id AS subject_signal_id
+            FROM signal_store_entries AS e
+            JOIN signals AS s ON s.id = e.signal_id
+            ORDER BY e.store_sequence
+            """
+        ).fetchall()
+        for row in rows:
+            entry = self._signal_store_entry_from_row(row)
+            if entry.signal_id.value != row["subject_signal_id"]:
+                raise SignalStoreIntegrityError(
+                    "Signal Store entry subject does not match its Signal"
+                )
 
     def current_signal_checkpoint(self) -> int:
         with closing(self._connect()) as connection, connection:
             return self._current_signal_checkpoint(connection)
 
-    @staticmethod
-    def _current_signal_checkpoint(connection: sqlite3.Connection) -> int:
+    def _current_signal_checkpoint(self, connection: sqlite3.Connection) -> int:
+        self._validate_signal_store_catalog_integrity(connection)
         row = connection.execute(
             "SELECT MAX(store_sequence) AS checkpoint FROM signal_store_entries"
         ).fetchone()
@@ -513,10 +657,16 @@ class SQLiteSignalStore:
         with closing(self._connect()) as connection:
             try:
                 connection.execute("BEGIN IMMEDIATE")
+                current_checkpoint = self._current_signal_checkpoint(connection)
                 self._append_or_compare_specification(connection, request.specification)
                 self._append_or_compare_request(connection, request)
                 existing = self._get_materialization_claim(connection, request.request_id)
                 if existing is not None:
+                    self._validate_materialization_claim_checkpoint(
+                        connection,
+                        existing,
+                        current_checkpoint=current_checkpoint,
+                    )
                     connection.commit()
                     return existing
                 connection.execute(
@@ -528,7 +678,7 @@ class SQLiteSignalStore:
                     (
                         request.request_id,
                         PAIR_SIGNAL_MATERIALIZATION_CLAIM_VERSION,
-                        self._current_signal_checkpoint(connection),
+                        current_checkpoint,
                         captured_at.isoformat(),
                     ),
                 )
@@ -537,11 +687,38 @@ class SQLiteSignalStore:
                     raise SignalStoreIntegrityError(
                         "materialization Claim insert produced no persisted row"
                     )
+                self._validate_materialization_claim_checkpoint(
+                    connection,
+                    inserted,
+                    current_checkpoint=current_checkpoint,
+                )
                 connection.commit()
                 return inserted
             except Exception:
                 connection.rollback()
                 raise
+
+    @staticmethod
+    def _validate_materialization_claim_checkpoint(
+        connection: sqlite3.Connection,
+        claim: PairSignalMaterializationClaim,
+        *,
+        current_checkpoint: int,
+    ) -> None:
+        if claim.checkpoint_sequence > current_checkpoint:
+            raise SignalStoreIntegrityError(
+                "materialization Claim checkpoint exceeds current checkpoint"
+            )
+        if claim.checkpoint_sequence == 0:
+            return
+        row = connection.execute(
+            "SELECT COUNT(*) FROM signal_store_entries WHERE store_sequence = ?",
+            (claim.checkpoint_sequence,),
+        ).fetchone()
+        if row is None or row[0] != 1:
+            raise SignalStoreIntegrityError(
+                "materialization Claim checkpoint does not reference a Store entry"
+            )
 
     def _append_or_compare_specification(
         self,

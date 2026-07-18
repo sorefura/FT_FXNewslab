@@ -46,6 +46,13 @@ current maximum sequence. New Signal, Feature lineage, and Store entry rows comm
 one transaction. `stored_at` is local UTC Store time captured once per append; it is
 not copied from `Signal.created_at`.
 
+The migration runner applies every numbered migration body and its
+`schema_migrations` marker in one `BEGIN IMMEDIATE` transaction. It rechecks the
+marker after acquiring the writer lock, executes complete top-level SQL statements
+without `executescript()` transaction ambiguity, and rolls back DDL, DML/backfill,
+and marker together on any failure. Concurrent initialization therefore observes
+either the complete marked migration or no part of it.
+
 Migration backfills one Store entry per pre-0002 Signal in explicit
 `signals.created_at ASC, signals.id ASC` order with `LEGACY_BACKFILL` origin. This is
 a deterministic legacy catalog order, not recovered historical insertion order.
@@ -56,6 +63,15 @@ The first Request Claim is written under `BEGIN IMMEDIATE` and freezes
 `checkpoint_sequence` plus caller-supplied UTC `captured_at`. A retry returns that
 persisted Claim even if the caller supplies a later audit time. Claim is a retry
 anchor and may exist without terminal completion; it is not a selection outcome.
+
+Before returning a checkpoint or writing/reusing a Claim, the Store validates total
+catalog coverage: every Signal has exactly one Store entry, every Store entry has a
+Signal, and every entry hydrates with its exact subject, supported contract/origin,
+positive sequence, and UTC `stored_at`. `MAX(store_sequence)` is computed only after
+that validation. A persisted Claim checkpoint must not exceed the current maximum;
+every positive checkpoint must still reference one exact Store entry. Checkpoint zero
+remains valid historical evidence for a first Claim over an empty Store, and later
+appends do not change it.
 
 Eligibility in M2-B2-B/B3 will require both
 `store_sequence <= checkpoint_sequence` and `signal.created_at <= request.as_of`.

@@ -103,7 +103,7 @@ Milestone 2-B2-A implementation started from clean, synchronized `main` at
 | Broker boundary | `BrokerGateway.submit(ApprovedExecutionIntent) -> OrderResult`. `GmoPrivatePostTransport.post_once` requires configuration plus `LIVE_TRADING_ARMED=YES` and does not retry. | No Paper Gateway exists. The low-level Private transport is not a complete Broker adapter and must remain outside paper composition. |
 | Execution | `ExecutionService` accepts only `ApprovedExecutionIntent`, persistently claims its key, and always returns `NOT_SUBMITTED`; it never calls its injected Broker Gateway. | A boolean dry-run cannot represent fictional execution. Paper needs a distinct adapter, domain, result status, and authority. |
 | Idempotency | Execution intent carries a caller-supplied string. SQLite has a unique intent key and a separate claimed-key table. | There is no canonical operational cycle identity or deterministic Paper order/fill identity. |
-| Persistence | Live base tables and numbered Live migrations `0001`/`0002` remain unchanged. Shared Signal Store migration `0002_pair_materialization_persistence.sql` now adds immutable Store entry, Specification, Request, and Claim tables. Signal/Feature lineage/Store entry append is atomic, and legacy Signals receive deterministic catalog sequence. | Selection inventory/snapshot, Pair Signal/derivation/completion exact persistence remains M2-B2-B/C. Paper begins only after later Strategy persistence, not at a reserved Live `0003`. |
+| Persistence | Live base tables and numbered Live migrations `0001`/`0002` remain unchanged. Shared Signal Store migration `0002_pair_materialization_persistence.sql` now adds immutable Store entry, Specification, Request, and Claim tables. Signal/Feature lineage/Store entry append is atomic, migration body/marker application is one writer transaction, and checkpoint/Claim creation requires a complete valid catalog. | Selection inventory/snapshot, Pair Signal/derivation/completion exact persistence remains M2-B2-B/C. Paper begins only after later Strategy persistence, not at a reserved Live `0003`. |
 | Signal source | `fx_signal_store` can read immutable Signals by ID or list by target/horizon/scorer version. M2-B1 provides the pure resolver; M2-B2-A adds one monotonic Store sequence per Signal and a first-write Request Claim that freezes checkpoint/captured time. Adoption runtime still consumes a supplied Signal and never reads Research evaluation state. | There is no checkpoint-bounded candidate query, persisted terminal selection, resolver-to-query composition, Live-owned operational Signal-source Port, or recurring selection cycle. |
 | Pair transformation | `fx_core.CurrencyPairSignalTransformer` persists `currency-pair-v1` semantics. M2-B1 fixes stable Request, exact inventory/terminal selection, deterministic Pair Signal identity, full transformer verification, and derivation integrity. M2-B2-A persists exact Specification/Request plus nonterminal Claim only. | M2-B2-B/C and M2-B3 still need selection/Pair artifact persistence, checkpoint-bounded query, and materializer composition before Live authorization. |
 | Modes | Adoption keeps `RuntimeMode.SHADOW/LIVE`. Milestone 2-A adds distinct `ExecutionAuthorityMode`, maps Shadow/Paper to Adoption Shadow and Live to Adoption Live, and makes the 0006 authority guard reject Live. | No operational composition persists or exercises Paper authority yet. |
@@ -390,6 +390,12 @@ The first Request Claim explicitly uses `BEGIN IMMEDIATE` and freezes:
 checkpoint_sequence = MAX(store_sequence)
 captured_at           = caller-supplied first-write UTC audit time
 ```
+
+`MAX(store_sequence)` is not authority by itself. Before checkpoint or Claim
+creation, the same connection must prove complete one-Signal/one-Store-entry
+coverage, reject orphan/duplicate/unhydratable entries, and validate every positive
+persisted Claim checkpoint against one exact current Store boundary. A catalog error
+rolls back the complete Specification/Request/Claim transaction.
 
 The same transaction append-or-exact-compares full Specification and Request content.
 Retry returns the persisted Claim and does not replace its checkpoint or
@@ -825,8 +831,9 @@ all four are complete:
       (complete):** `0002_pair_materialization_persistence.sql`; one immutable Store
       sequence per Signal; deterministic legacy catalog backfill; atomic Signal,
       Feature-lineage, and Store-entry append; connection-scoped Store helpers; exact
-      Specification/Request append-or-compare; and `BEGIN IMMEDIATE` first-write Claim
-      with frozen checkpoint/captured time.
+      Specification/Request append-or-compare; atomic migration-body/marker writer
+      transactions; complete catalog validation; and `BEGIN IMMEDIATE` first-write
+      Claim with frozen and relationally revalidated checkpoint/captured time.
     - **2-B2-B Selection Evidence Persistence (pending):** checkpoint-bounded complete
       candidate inventory and authenticated terminal Selection Snapshot persistence.
     - **2-B2-C Pair Artifact Exact Persistence (pending):** exact Pair Signal, Feature
@@ -1157,6 +1164,15 @@ ExecPlan 0006 is complete only when all of the following are true:
   `captured_at`; retry returns the persisted Claim and opens no nested connection.
 - [x] (2026-07-18) Passed M2-B2-A through the full local Python 3.11/3.14 test,
   Ruff, strict mypy, public-import smoke, migration smoke, and diff-check matrix.
+- [x] (2026-07-18) Milestone 2-B2-A review correction - made each migration body
+  and its `schema_migrations` marker one atomic writer transaction; rechecked
+  migration markers after writer-lock acquisition; rejected partial or concurrent
+  migration application; required a complete one-Signal/one-Store-entry catalog
+  before checkpoint or Claim creation; and rejected corrupted persisted Claim
+  boundaries on retry.
+- [x] (2026-07-18) Passed the M2-B2-A review correction through the full local
+  Python 3.11/3.14 test, Ruff, strict mypy, public-import smoke, focused migration/
+  catalog/Claim tests, and diff-check matrix.
 - [x] Milestone 2-B2-A - Signal Store sequence and materialization Request Claim.
 - [ ] Milestone 2-B2-B - selection evidence persistence.
 - [ ] Milestone 2-B2-C - Pair artifact exact persistence and completion root.
@@ -1313,6 +1329,30 @@ ExecPlan 0006 is complete only when all of the following are true:
   artifact persistence.
   Resolution: treat Claim as a retry anchor and incomplete-operation evidence, never
   as `SELECTED`, `NO_MATCH`, `AMBIGUOUS`, or completion.
+- Observation: Python `sqlite3.executescript()` can commit a pending transaction and
+  does not automatically place a later marker insert in the script transaction.
+  Resolution: execute complete SQL statements inside one explicit writer transaction
+  and insert the migration marker before the same commit.
+- Observation: a connection context manager around `executescript()` does not make
+  migration DDL/backfill plus a later marker atomic.
+  Resolution: rollback the complete migration body and marker on any statement or
+  marker failure; never accept partial unmarked schema as applied.
+- Observation: checking a migration marker before waiting for a writer lock permits
+  a concurrent initializer to rerun a body completed by the first writer.
+  Resolution: recheck the marker after `BEGIN IMMEDIATE` and return without executing
+  migration SQL when the preceding writer already committed it.
+- Observation: `UNIQUE(signal_id)` proves at most one Store entry for a Signal, but
+  cannot prove that every Signal has an entry.
+  Resolution: validate complete Signal-to-entry coverage and orphan absence before
+  every checkpoint and Claim.
+- Observation: `MAX(store_sequence)` can look valid while an unsequenced Signal is
+  absent from the availability catalog.
+  Resolution: hydrate and validate the complete catalog before calculating MAX and
+  fail closed with `SignalStoreIntegrityError` on corruption.
+- Observation: a Claim's intrinsic non-negative checkpoint does not prove that its
+  persisted sequence still names a valid Store boundary.
+  Resolution: on retry, compare it with the current complete catalog and require each
+  positive checkpoint to reference one exact Store entry without rewriting the Claim.
 - Observation: putting discovered Signal, Observation, or checkpoint IDs into the
   Request ID makes one retry become a different semantic Request.
   Resolution: one Pair/as-of/Specification alone defines the stable Request; input
@@ -1500,6 +1540,17 @@ ExecPlan 0006 is complete only when all of the following are true:
 - 2026-07-18: Keep Claim distinct from terminal Selection and Completion. Selection
   inventory/snapshot remains M2-B2-B, Pair Signal/derivation/completion remains
   M2-B2-C, and the operational materializer remains M2-B3.
+- 2026-07-18: Commit each migration SQL body and its `schema_migrations` marker in one
+  explicit writer transaction, with marker recheck after lock acquisition.
+- 2026-07-18: Never accept partial unmarked migration state; DDL, DML/backfill, and
+  marker succeed or roll back together.
+- 2026-07-18: Require complete one-Signal/one-Store-entry catalog coverage and valid
+  entry hydration before returning any checkpoint or creating a Claim.
+- 2026-07-18: Raise `SignalStoreIntegrityError` for catalog corruption and validate a
+  persisted Claim's positive checkpoint against the exact current Store boundary on
+  every retry.
+- 2026-07-18: Keep terminal selection persistence in M2-B2-B/C; this M2-B2-A review
+  correction adds no candidate inventory, selection, Pair artifact, or materializer.
 - 2026-07-17: Paper persistence begins at the next available additive Live migration
   after Milestone 2 Strategy persistence; `0003` is neither reserved nor created by
   Milestone 2-A.
@@ -1769,3 +1820,42 @@ locally on 2026-07-18:
   Broker, Paper, scheduler, CLI, and ExecPlan 0007 are unchanged.
 - Hosted CI has not been run for this unpushed M2-B2-A commit; only local validation
   is claimed.
+
+Milestone 2-B2-A fail-closed migration/checkpoint review correction completed
+locally on 2026-07-18:
+
+- Python 3.11.9: `608 passed, 5 skipped`; Ruff passed; strict mypy passed for
+  72 source files.
+- Python 3.14.6: `608 passed, 5 skipped`; Ruff passed; strict mypy passed for
+  72 source files.
+- The five skips remain opt-in external provider smoke tests. Final full pytest runs
+  used separate workspace `--basetemp` roots with cache disabled.
+- Focused migration, Store-sequence/catalog, and Claim persistence suites passed as
+  `41 passed` on both supported Python versions.
+- Statement-failure injection rolled back the earlier successful DDL and omitted its
+  marker; reopening showed no partial object, and the corrected migration reran
+  successfully.
+- Marker-failure injection after 0002 DDL/backfill rolled back every 0002 table,
+  legacy Store-entry backfill row, and marker; a normal reopen then upgraded
+  successfully.
+- Barrier-synchronized concurrent fresh initialization and concurrent legacy-0001
+  upgrade each converged to exactly one 0001 marker, one 0002 marker, one complete
+  table set, and one Store entry per legacy Signal without exception.
+- Missing Signal entry, direct unsequenced Signal, orphan entry, and malformed entry
+  tests rejected checkpoint creation with `SignalStoreIntegrityError` instead of a
+  partial MAX. Claim tests left zero Specification, Request, and Claim rows.
+- Existing-Claim retry rejected a checkpoint above the current maximum and a
+  positive checkpoint without an exact Store entry. Neither corruption was replaced
+  with a new checkpoint or `captured_at`; healthy zero/positive Claim retry, late
+  append, and old-created backfill behavior remained passing.
+- Public import smoke passed on both versions. `git diff --check` passed.
+- Shared migration filenames remain exactly `0001_signal_lineage.sql` and
+  `0002_pair_materialization_persistence.sql`; no `0003` migration was created or
+  edited.
+- The eight-file change is limited to the Signal Store runner/checkpoint/Claim
+  boundary, focused tests, this living ExecPlan, and the three requested permanent
+  architecture/data/test documents. No Selection Snapshot/candidate/Pair Signal/
+  derivation/completion persistence, materializer, concrete Strategy, Portfolio,
+  Risk, Execution, Broker, Paper, scheduler, CLI, or ExecPlan 0007 code changed.
+- Hosted CI has not been run for this unpushed review correction; only local
+  validation is claimed.

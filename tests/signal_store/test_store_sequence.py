@@ -32,6 +32,39 @@ def _row_count(path: Path, table: str) -> int:
     return int(row[0])
 
 
+def _insert_signal_without_store_entry(path: Path, identifier: str) -> None:
+    item = signal(identifier=identifier)
+    with sqlite3.connect(path) as connection:
+        connection.execute(
+            """
+            INSERT INTO signals(
+                id, target_type, target_value, signal_type, direction, strength,
+                confidence, horizon, observed_at, created_at, producer_version,
+                model_version, prompt_version, scorer_version, transformation_version
+            ) VALUES (?, 'currency', 'USD', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            (
+                item.signal_id.value,
+                item.signal_type,
+                item.direction.value,
+                item.strength.value,
+                item.confidence.value,
+                item.horizon.value,
+                item.observed_at.isoformat(),
+                item.created_at.isoformat(),
+                item.versions.producer_version,
+                item.versions.model_version,
+                item.versions.prompt_version,
+                item.versions.scorer_version,
+                item.versions.transformation_version,
+            ),
+        )
+        connection.executemany(
+            "INSERT INTO signal_sources(signal_id, feature_id) VALUES (?, ?)",
+            ((item.signal_id.value, source.value) for source in item.source_feature_ids),
+        )
+
+
 def test_signal_store_entry_is_typed_immutable_and_utc() -> None:
     entry = SignalStoreEntry(
         contract_version=SIGNAL_STORE_ENTRY_VERSION,
@@ -200,6 +233,52 @@ def test_existing_signal_without_store_entry_fails_closed(tmp_path: Path) -> Non
 
     with pytest.raises(SignalStoreIntegrityError, match="has no Signal Store entry"):
         store.append_signal_if_absent(signal(), stored_at=STORED_AT)
+
+
+def test_checkpoint_rejects_missing_store_entry_instead_of_returning_partial_max(
+    tmp_path: Path,
+) -> None:
+    store = _store_with_feature(tmp_path / "signals.sqlite3")
+    store.append_signal(signal(identifier="signal-sequenced"), stored_at=STORED_AT)
+    _insert_signal_without_store_entry(store.path, "signal-unsequenced")
+
+    with pytest.raises(SignalStoreIntegrityError, match="without a Store entry"):
+        store.current_signal_checkpoint()
+
+
+def test_checkpoint_rejects_orphan_store_entry(tmp_path: Path) -> None:
+    store = SQLiteSignalStore(tmp_path / "signals.sqlite3")
+    with sqlite3.connect(store.path) as connection:
+        connection.execute("PRAGMA foreign_keys = OFF")
+        connection.execute(
+            """
+            INSERT INTO signal_store_entries(
+                contract_version, signal_id, stored_at, storage_origin
+            ) VALUES (?, ?, ?, ?)
+            """,
+            (
+                SIGNAL_STORE_ENTRY_VERSION,
+                "signal-orphan",
+                STORED_AT.isoformat(),
+                SignalStorageOrigin.APPEND.value,
+            ),
+        )
+
+    with pytest.raises(SignalStoreIntegrityError, match="without a Signal"):
+        store.current_signal_checkpoint()
+
+
+def test_checkpoint_rejects_store_entry_that_cannot_be_hydrated(tmp_path: Path) -> None:
+    store = _store_with_feature(tmp_path / "signals.sqlite3")
+    store.append_signal(signal(), stored_at=STORED_AT)
+    with sqlite3.connect(store.path) as connection:
+        connection.execute("DROP TRIGGER signal_store_entries_no_update")
+        connection.execute(
+            "UPDATE signal_store_entries SET stored_at = 'not-a-datetime'"
+        )
+
+    with pytest.raises(SignalStoreIntegrityError, match="invalid Store entry"):
+        store.current_signal_checkpoint()
 
 
 class _ConnectionCountingStore(SQLiteSignalStore):

@@ -62,6 +62,20 @@ that Request checkpoint. Connection-scoped helpers keep the Claim transaction on
 SQLite connection. Claim is a retry anchor, not `SELECTED`, `NO_MATCH`, or
 `AMBIGUOUS` terminal evidence.
 
+Each numbered Signal Store migration executes its complete SQL body and
+`schema_migrations` marker inside one explicit `BEGIN IMMEDIATE` writer transaction.
+The marker is rechecked only after the writer boundary is acquired, so concurrent
+initializers converge without rerunning the migration body. Statement, backfill, or
+marker failure rolls the whole migration back instead of leaving partial unmarked
+schema.
+
+Checkpoint and Claim creation fail closed unless the current catalog proves exactly
+one valid, hydratable Store entry for every Signal and no orphan entry. Retry also
+requires a persisted positive checkpoint to reference an exact still-valid Store
+sequence no greater than the current committed maximum. Catalog or Claim-boundary
+corruption raises `SignalStoreIntegrityError` before any Specification, Request, or
+Claim write commits.
+
 Milestone 2-B2-B/C will persist the complete selection inventory/snapshot and exact
 Pair Signal/derivation/completion artifacts. Milestone 2-B3 will query candidates and
 compose the pure resolver/verifier into the operational materializer. Relational

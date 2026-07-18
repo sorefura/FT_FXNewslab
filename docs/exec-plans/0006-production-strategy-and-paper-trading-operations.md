@@ -96,6 +96,8 @@ Milestone 2-B3 implementation started from clean, synchronized `main` at
 `2bc58244eda1939514fed8c063931f655e492750`.
 Milestone 2-B4 implementation started from clean, synchronized `main` at
 `60c792eec21cb00300aaf7f7ace8821c1ddfdebd`.
+Milestone 2-B5 implementation started from clean, synchronized `main` at
+`3eb4e8bc62cac5e9fd08a9b24c833586f1b2b8aa`.
 
 | Area | Current implementation | Gap carried into this plan |
 |---|---|---|
@@ -108,8 +110,8 @@ Milestone 2-B4 implementation started from clean, synchronized `main` at
 | Execution | `ExecutionService` accepts only `ApprovedExecutionIntent`, persistently claims its key, and always returns `NOT_SUBMITTED`; it never calls its injected Broker Gateway. | A boolean dry-run cannot represent fictional execution. Paper needs a distinct adapter, domain, result status, and authority. |
 | Idempotency | Execution intent carries a caller-supplied string. SQLite has a unique intent key and a separate claimed-key table. | There is no canonical operational cycle identity or deterministic Paper order/fill identity. |
 | Persistence | Live base tables and numbered Live migrations `0001`/`0002` remain unchanged. Shared Signal Store migrations `0002` through `0004` separately add Store/Claim, Selection, and exact Pair artifact Completion evidence. Signal append, Claim, Selection capture, and Completion use explicit atomic boundaries and exact hydration. | Paper begins only after later Strategy persistence, not at a reserved Live `0003`. |
-| Signal source | `fx_signal_store` can read immutable Signals, freeze one Request Claim, capture every checkpoint Signal in both BASE/QUOTE roles, and persist a selected Pair Signal/lineage/Store/Derivation/Completion atomically. Non-selected outcomes persist artifact-free Completion roots. Adoption runtime still consumes a supplied Signal and never reads Research evaluation state. | There is no Live-owned operational Signal-source Port, claim-to-completion orchestration, or recurring materializer/cycle. |
-| Pair transformation | `fx_core.CurrencyPairSignalTransformer` persists `currency-pair-v1` semantics. M2-B1 fixes identity/verifier contracts; M2-B2 freezes Store/Claim authority; M2-B3 persists terminal selection evidence; M2-B4 persists and reauthenticates exact Pair artifacts. | M2-B5 still needs operational materializer composition before Live authorization. |
+| Signal source | `fx_signal_store` can read immutable Signals, freeze one Request Claim, capture every checkpoint Signal in both BASE/QUOTE roles, persist a selected Pair Signal/lineage/Store/Derivation/Completion atomically, and compose those three public boundaries through a Store-neutral operational Materializer. Non-selected outcomes persist artifact-free Completion roots. Adoption runtime still consumes a supplied Signal and never reads Research evaluation state. | There is no Live-owned Signal-source/Adoption composition or recurring materialization cycle. |
+| Pair transformation | `fx_core.CurrencyPairSignalTransformer` persists `currency-pair-v1` semantics. M2-B1 fixes identity/verifier contracts; M2-B2 freezes Store/Claim authority; M2-B3 persists terminal selection evidence; M2-B4 persists and reauthenticates exact Pair artifacts; M2-B5 composes exact replay without duplicating transformation logic. | Live Adoption and concrete Strategy integration remain M2-C work. |
 | Modes | Adoption keeps `RuntimeMode.SHADOW/LIVE`. Milestone 2-A adds distinct `ExecutionAuthorityMode`, maps Shadow/Paper to Adoption Shadow and Live to Adoption Live, and makes the 0006 authority guard reject Live. | No operational composition persists or exercises Paper authority yet. |
 | Operations | CLI supports one offline fixture cycle and one-shot approve/revoke commands. | No production one-shot cycle, scheduler/daemon, overlap lock, checkpoint, health signal, restart recovery, reconciliation, or burn-in report exists. |
 | Pair/config values | M2-A config contract enforces the ordered exact Pair scope `USD_JPY`, `MXN_JPY` and requires every threshold, duration, version, and exit flag explicitly. Test values remain fixtures. | No reviewed production config instance or runtime settings source exists. Fixture and Research defaults are never promoted implicitly. |
@@ -125,9 +127,10 @@ Swap evidence, evaluation, Candidate, close, and Strategy Port contracts. Milest
 2-B1 implements Pair materialization domain/identity contracts. Milestone 2-B2
 implements monotonic Signal Store sequence plus exact Request Claim persistence.
 Milestone 2-B3 implements checkpoint-bounded complete candidate capture and terminal
-Selection evidence persistence. Pair artifact persistence, actual operational Pair
-materializer composition, the concrete Strategy, and every Paper component shown
-below remain unimplemented.
+Selection evidence persistence. Milestone 2-B4 persists exact Pair artifacts and
+Completion; Milestone 2-B5 composes Claim, Selection, and Completion through a
+Store-neutral operational Materializer. The concrete Strategy, Live Adoption
+composition, and every Paper component shown below remain unimplemented.
 
 ```text
 Operational Signal Source (shared immutable Signal store)
@@ -307,8 +310,10 @@ Milestone 2-B is split into five reviewable stages:
 - **2-B4 (complete):** exact Pair Signal, Feature links, Store entry, derivation,
   ordered Observation evidence, and completion-root persistence with relational
   authenticity and first-write materialization time; and
-- **2-B5 (pending):** operational candidate query, resolver/verifier composition,
-  and one-transaction materializer orchestration.
+- **2-B5 (complete):** a three-operation Store Protocol, exact
+  Claim -> Selection -> Completion call order, validated typed operational result,
+  staged crash/retry and concurrency convergence, explicit error propagation, and
+  no new transaction, SQL, retry loop, migration, or authorization boundary.
 
 The implemented `PairSignalMaterializationSpecification` explicitly fixes Pair,
 source/output Signal types, Horizon, producer/model/prompt/scorer/source and output
@@ -439,8 +444,8 @@ Derivation rows without Completion fail as orphan corruption. Existing
 semantics and is insufficient for Pair artifacts because an existing Signal ID does
 not prove equal content or lineage. Exact idempotent reuse requires full Signal,
 Feature/Observation lineage, selection, Store entry, derivation, and Completion
-equality; any mismatch rolls back without partial records. M2-B5 retains only the
-operational claim/capture/completion composition.
+equality; any mismatch rolls back without partial records. M2-B5 now adds only the
+operational claim/capture/completion composition and no persistence behavior.
 
 ### Operational inputs and time
 
@@ -833,7 +838,7 @@ all four are complete:
   reason explicitly validates its required evidence. Monetary evidence is finite
   Decimal and v1 config accepts only supported downstream contracts. It adds no
   concrete Strategy, store, or migration and preserves the accepted 0005 contracts.
-- **2-B Pair Signal Materialization (in progress):** exact base/quote Signal
+- **2-B Pair Signal Materialization (complete):** exact base/quote Signal
   derivation, deterministic selection/checkpoint, atomic Pair Signal plus derivation
   persistence, and exact idempotency.
   - **2-B1 Pair Signal Materialization Contracts and Identity Foundation
@@ -863,10 +868,11 @@ all four are complete:
     persistence; first-write materialization time; exact retry/concurrency; orphan
     rejection; and mandatory relational validation before insert and after hydration
     or reuse.
-  - **2-B5 Operational Pair Signal Materializer (pending):** deterministic as-of
-    operational composition of the shared resolver/verifier and atomic
-    Signal-plus-derivation persistence without reimplementing selection or transform
-    semantics.
+  - **2-B5 Operational Pair Signal Materializer (complete):** Store-neutral
+    composition of the already-public Claim, Selection capture, and Completion APIs;
+    typed operational outcome/result validation; durable staged recovery; concurrent
+    convergence; and exact exception propagation without reimplementing selection,
+    transformation, SQL, or persistence transactions.
 - **2-C Entry Strategy (pending):** concrete `NewsFilteredCarryStrategy`, operational
   Swap adapter, evaluation/Candidate persistence, and persistence-boundary recheck of
   the approval's exact `strategy_config_identity`.
@@ -1221,11 +1227,23 @@ ExecPlan 0006 is complete only when all of the following are true:
 - [x] (2026-07-18) Passed M2-B4 through the full local Python 3.11/3.14 test, Ruff,
   strict mypy, public-import, migration, focused exact persistence, concurrency,
   corruption/orphan/rollback, and diff-check matrix.
+- [x] (2026-07-19) Milestone 2-B5 - composed Claim, Selection capture, and
+  Completion through one three-operation Store-neutral Materializer; retained each
+  short atomic persistence boundary instead of creating one long transaction; and
+  mapped exact nested evidence to `MATERIALIZED`, `REUSED_IDENTICAL`,
+  `NO_SELECTION`, or `AMBIGUOUS`.
+- [x] (2026-07-19) Replayed the same Request safely from Claim-only,
+  Claim-plus-Selection, and completed states; propagated conflicts, corruption, and
+  database errors without fallback or automatic retry; and proved checkpoint
+  exclusion for late and old-created backfilled Signals plus concurrent convergence.
+- [x] (2026-07-19) Passed M2-B5 through the full local Python 3.11/3.14 test, Ruff,
+  strict mypy, public-import, focused operational/recovery/concurrency, migration,
+  and diff-check matrix with no migration or Adoption/Strategy/Paper integration.
 - [x] Milestone 2-B2 - Signal Store sequence and materialization Request Claim.
 - [x] Milestone 2-B3 - Selection Evidence Persistence.
 - [x] Milestone 2-B4 - Pair Artifact Exact Persistence and completion root.
-- [ ] Milestone 2-B5 - Operational Pair Signal Materializer.
-- [ ] Milestone 2-B - exact Pair Signal materialization and selection.
+- [x] Milestone 2-B5 - Operational Pair Signal Materializer.
+- [x] Milestone 2-B - exact Pair Signal materialization and selection.
 - [ ] Milestone 2-C - concrete entry Strategy and persistence.
 - [ ] Milestone 2-D - ordinary close Portfolio/Risk path.
 - [ ] Milestone 2 - Production Strategy Implementation.
@@ -1523,6 +1541,31 @@ ExecPlan 0006 is complete only when all of the following are true:
   malicious rewriting without being authentic shared-transformer output.
   Resolution: retry reruns the shared transformer and relational derivation verifier;
   database rows alone are never transformation authority.
+- Observation: wrapping Claim, Selection, and Completion in one long transaction
+  would remove the durable Claim/Selection recovery anchors and hold the SQLite
+  writer lock across domain reconstruction.
+  Resolution: the operational Materializer composes the three existing public APIs
+  and preserves their independent short writer transactions.
+- Observation: Claim-only and Claim-plus-Selection are valid resumable states, not
+  corrupt partial transactions.
+  Resolution: recovery replays the same semantic Request from the beginning and
+  relies on exact lower-level first-write reuse.
+- Observation: an in-memory operational return cannot prove that terminal work
+  committed, especially when a process crashes after Completion but before return.
+  Resolution: Completion presence remains the persisted terminal root; the aggregate
+  result only summarizes and revalidates nested Evidence.
+- Observation: forwarding a conditional SELECTED materialization time to NO_MATCH or
+  AMBIGUOUS would violate the artifact-free M2-B4 Completion contract.
+  Resolution: pass `materialized_at_if_selected` only after persisted Selection says
+  SELECTED; non-selected completion receives no materialization-time argument.
+- Observation: an automatic retry loop inside the Materializer would hide the exact
+  failing boundary and duplicate the caller's operational retry policy.
+  Resolution: call each stage at most once, propagate its original exception, and
+  require an explicit caller replay of the same Request.
+- Observation: a persisted Pair Signal remains an immutable hypothesis artifact and
+  is not a Live authority envelope.
+  Resolution: M2-B5 imports no Adoption or Strategy type and leaves
+  `AuthorizedSignal` production to M2-C.
 
 ## Decision log
 
@@ -1680,6 +1723,28 @@ ExecPlan 0006 is complete only when all of the following are true:
   derivation revalidation.
 - 2026-07-18: Leave Claim/Selection/Completion orchestration, scheduling, and Live
   consumption to M2-B5; M2-B4 adds no operational materializer.
+- 2026-07-19: Depend M2-B5 on a structural three-operation Store Protocol rather
+  than concrete SQLite, connection, path, transaction, or private helper APIs.
+- 2026-07-19: Fix the operational order as Claim, Selection capture, then Completion
+  and retain each operation's independent short writer transaction.
+- 2026-07-19: Add no M2-B5 migration, run-status table, mutable progress row, or new
+  persisted result root; Claim, Selection, and Completion already express progress.
+- 2026-07-19: Let callers provide only the exact Request, Claim audit time, and
+  conditional SELECTED materialization time; never accept candidate, Selection,
+  artifact, Completion, or operational outcome authority.
+- 2026-07-19: Forward `materialized_at_if_selected` only for SELECTED; NO_MATCH and
+  AMBIGUOUS retain artifact-free Completion calls without that argument.
+- 2026-07-19: Recover by replaying the whole Request and relying on exact lower-level
+  reuse; do not sleep, loop, back off, or automatically retry inside Materializer.
+- 2026-07-19: Preserve conflicts, corruption, SQLite failures, and invalid inputs as
+  exceptions rather than mapping them to normal operational outcomes.
+- 2026-07-19: Restrict `MATERIALIZED` and `REUSED_IDENTICAL` to SELECTED artifacts;
+  map NO_MATCH to `NO_SELECTION` while preserving its detailed Selection reason,
+  and retain AMBIGUOUS as a normal terminal operational outcome.
+- 2026-07-19: Treat the frozen Materializer result as a validated operational view
+  of nested persisted Evidence, not Signal authorization or another persistence root.
+- 2026-07-19: Leave Live Adoption, concrete Strategy, recurring operation, and Paper
+  integration to M2-C and later milestones.
 - 2026-07-17: Paper persistence begins at the next available additive Live migration
   after Milestone 2 Strategy persistence; `0003` is neither reserved nor created by
   Milestone 2-A.
@@ -2063,3 +2128,51 @@ Milestone 2-B4 Pair Artifact Exact Persistence completed locally on 2026-07-18:
   concrete Strategy, Live Adoption connection, Portfolio, Risk, Broker/Execution,
   Paper, or ExecPlan 0007 implementation was added. Hosted CI has not been run; only
   local validation is claimed.
+
+Milestone 2-B5 Operational Pair Materializer completed locally on 2026-07-19:
+
+- Python 3.11.9: `724 passed, 5 skipped`; Python 3.14.6:
+  `724 passed, 5 skipped`. The five skips remain opt-in external-provider smoke
+  tests. Full pytest used distinct OS temporary roots with cache disabled.
+- Ruff passed on both supported versions; strict mypy passed for 73 source files on
+  both. Public import smoke passed for `OperationalPairSignalMaterializer`,
+  `PairSignalMaterializationStore`, `PairSignalMaterializerOutcome`, and
+  `PairSignalMaterializerResult` on both versions.
+- Focused operational/architecture validation passed as `28 passed` on both
+  versions. Migration filename/fresh/reopen/rollback/concurrency validation passed as
+  `15 passed` on both versions with exactly:
+  `0001_signal_lineage.sql`, `0002_pair_materialization_persistence.sql`,
+  `0003_pair_signal_selection_evidence.sql`, and
+  `0004_pair_signal_artifact_persistence.sql`.
+- First SELECTED orchestration called Claim, Selection, and Completion once in exact
+  order and returned `MATERIALIZED`; exact replay returned `REUSED_IDENTICAL` while
+  preserving first Claim capture, Pair materialization time, Store sequence, and
+  artifact cardinality. NO_MATCH returned `NO_SELECTION`; AMBIGUOUS returned
+  `AMBIGUOUS`; both created/reused artifact-free Completion roots without receiving
+  the conditional materialization time.
+- Missing first SELECTED materialization time left one Claim and one Selection with
+  no Completion/artifact; replay with a valid time converged to `MATERIALIZED`.
+  Simulated crashes after Claim, Selection, and Completion retained exactly the
+  completed durable stages; replay converged to one result, with post-Completion
+  replay returning `REUSED_IDENTICAL`.
+- No-auto-retry probes observed exactly `Claim` for Claim failure,
+  `Claim -> Selection` for Selection failure, and
+  `Claim -> Selection -> Completion` for Completion failure. The original
+  persistence conflict, Store integrity error, and SQLite locked error objects and
+  messages propagated; no following stage ran.
+- A Signal appended after Claim and an old-created Signal backfilled after Claim were
+  both excluded by the persisted checkpoint. A Signal appended after Selection did
+  not change Completion or replayed Pair artifacts.
+- Concurrent SELECTED Materializers converged to one Claim, Selection, Completion,
+  Pair Signal, Store entry, and Derivation with one `MATERIALIZED` and one
+  `REUSED_IDENTICAL`. Concurrent NO_MATCH/AMBIGUOUS runs converged to one artifact-
+  free Completion with one nested `INSERTED` and one `REUSED_IDENTICAL` disposition,
+  while both operational results retained the same non-selected outcome.
+- `git diff --check` passed. The nine-file change adds only the Store-neutral
+  Materializer module/export, its focused operational/architecture tests, and the
+  five requested living documents. No existing migration, `store.py`,
+  `persistence.py`, Pair transformation, Live Adoption, concrete Strategy,
+  Portfolio, Risk, Broker/Execution, Paper, scheduler/CLI, or ExecPlan 0007 code
+  changed.
+- Hosted CI has not been run for this unpushed M2-B5 commit; only local validation is
+  claimed.

@@ -32,7 +32,7 @@ def test_shared_identity_imports_no_application_or_infrastructure_package() -> N
     )
 
 
-def test_milestone_2b4_store_imports_no_application_or_pair_transformer() -> None:
+def test_milestone_2b5_store_imports_no_application_or_pair_transformer() -> None:
     module = ROOT / "packages/fx_signal_store/src/fx_signal_store/store.py"
     imported_roots = {name.split(".")[0] for name in _imports(module)}
     source = module.read_text(encoding="utf-8")
@@ -42,7 +42,7 @@ def test_milestone_2b4_store_imports_no_application_or_pair_transformer() -> Non
     assert "resolve_pair_signal_selection" in source
 
 
-def test_milestone_2b4_adds_exact_artifact_migration_and_keeps_shared_lineage() -> None:
+def test_milestone_2b5_keeps_exact_artifact_migrations_and_shared_lineage() -> None:
     signal_fields = {item.name for item in fields(Signal)}
     assert "source_signal_ids" not in signal_fields
     migrations = {
@@ -59,10 +59,32 @@ def test_milestone_2b4_adds_exact_artifact_migration_and_keeps_shared_lineage() 
     }
 
 
-def test_milestone_2b4_adds_no_materializer_or_concrete_strategy() -> None:
-    assert not (
+def test_milestone_2b5_adds_materializer_without_concrete_strategy() -> None:
+    assert (
         ROOT / "packages/fx_signal_store/src/fx_signal_store/materializer.py"
     ).exists()
     assert not (
         ROOT / "apps/swap_bot/src/swap_bot/strategy/news_filtered_carry.py"
     ).exists()
+
+
+def test_operational_materializer_has_no_sql_application_or_live_dependency() -> None:
+    module = ROOT / "packages/fx_signal_store/src/fx_signal_store/materializer.py"
+    imported_roots = {name.split(".")[0] for name in _imports(module)}
+    source = module.read_text(encoding="utf-8")
+
+    assert {
+        "sqlite3",
+        "swap_bot",
+        "fx_research",
+    }.isdisjoint(imported_roots)
+    assert "self.store._" not in source
+    assert "CurrencyPairSignalTransformer" not in source
+    assert "resolve_pair_signal_selection" not in source
+    assert "expected_pair_signal" not in source
+    assert "BEGIN" not in source
+    assert "COMMIT" not in source
+    assert "ROLLBACK" not in source
+    assert "LiveAdoptionGate" not in source
+    assert "AuthorizedSignal" not in source
+    assert "ProductionEntryStrategy" not in source

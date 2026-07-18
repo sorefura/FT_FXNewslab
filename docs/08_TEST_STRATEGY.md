@@ -1,6 +1,6 @@
 # Test Strategy
 
-## Production Strategy M2-A and Pair materialization M2-B1/B2/B3/B4 tests
+## Production Strategy M2-A and Pair materialization M2-B1/B2/B3/B4/B5 tests
 
 Milestone 2-A tests already state:
 
@@ -149,6 +149,31 @@ Milestone 2-B4 tests additionally state:
 - one completion call uses one connection and invokes no public nested Store API.
   Operational materializer, concrete Strategy, Live Adoption composition, Portfolio,
   Risk, Broker/Execution, scheduler/CLI, and Paper remain absent.
+
+Milestone 2-B5 tests additionally state:
+
+- the Store-neutral Protocol exposes exactly Claim, Selection capture, and
+  Completion, and `SQLiteSignalStore` structurally conforms without adapter changes;
+- one materializer call invokes those operations exactly once in that order and
+  does not begin a transaction, issue SQL, call private Store helpers, or duplicate
+  resolver/transformer behavior;
+- the frozen operational result revalidates Request, Claim checkpoint/capture time,
+  Selection, Completion, artifact cardinality, and the exact four-value outcome
+  mapping;
+- first SELECTED completion is `MATERIALIZED`, exact SELECTED replay is
+  `REUSED_IDENTICAL`, NO_MATCH is `NO_SELECTION`, and AMBIGUOUS remains
+  `AMBIGUOUS` with its detailed Selection reason intact;
+- Claim-only, Claim-plus-Selection, and completed crash states converge by replaying
+  the same Request, while missing first SELECTED time leaves durable recovery anchors;
+- conflicts, corruption, and database errors propagate unchanged after one failing
+  stage call; no following stage, sleep, backoff, or automatic retry occurs;
+- Signals appended or old-created backfilled after Claim cannot cross its checkpoint,
+  and Signals appended after Selection cannot change Completion or retry artifacts;
+- concurrent materializers converge on one Claim, Selection, Completion, and
+  optional Pair artifact set, with persistence dispositions retaining first-writer
+  versus exact-reuse evidence; and
+- migration filenames remain exactly 0001-0004 and no Adoption, Strategy, Portfolio,
+  Risk, Broker/Execution, scheduler/CLI, or Paper dependency enters the materializer.
 
 Later ExecPlan 0006 implementation tests will state the following guarantees:
 

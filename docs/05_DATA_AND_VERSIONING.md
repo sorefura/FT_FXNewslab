@@ -101,7 +101,21 @@ one Request, but Selection alone is not Pair artifact completion. M2-B4 adds
 Request. SELECTED atomically saves the derived Pair Signal, exact Feature/Observation
 lineage, one `PAIR_MATERIALIZATION` Store entry, one `PairSignalDerivation` with
 ordered Observation rows, and the Completion root last. NO_MATCH and AMBIGUOUS save
-only their artifact-free Completion. M2-B5 owns operational materializer composition.
+only their artifact-free Completion.
+
+M2-B5 adds no migration, table, mutable status, or new evidence root. The operational
+materializer composes the existing Claim, Selection, and Completion APIs as three
+independent short transactions. Its frozen `pair-signal-materializer-result-v1`
+return value groups the exact persisted Claim, Selection result, and Completion
+result and validates their Request, checkpoint, capture time, outcome, and artifact
+cardinality relations. It is not persisted and does not authorize the Pair Signal.
+
+The caller supplies one explicit Claim audit time and an optional conditional
+SELECTED materialization time. Retry may supply a later Claim time or omit the
+SELECTED time after Completion exists; persisted first-write times remain authority.
+NO_MATCH and AMBIGUOUS never receive the conditional materialization time. Failures
+remain exceptions, and retry is an explicit caller decision to replay the same
+Request rather than a mutable attempt record or internal loop.
 
 Only the first SELECTED completion accepts UTC `materialized_at`. That instant is
 both Pair Signal `created_at` and Store `stored_at`; it participates in deterministic

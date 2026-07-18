@@ -53,6 +53,10 @@ packages/fx_signal_store/src/fx_signal_store/migrations/
     0002_pair_materialization_persistence.sql
     0003_pair_signal_selection_evidence.sql
     0004_pair_signal_artifact_persistence.sql
+
+packages/fx_signal_store/src/fx_signal_store/materializer.py
+    three-operation Store Protocol, four operational outcomes, validated frozen
+    aggregate result, and Claim -> Selection -> Completion composition
 ```
 
 Moving `SignalLineage` to the persistence seam prevents a Store-to-contract circular
@@ -61,8 +65,9 @@ sequence, Specification, Request, and Claim tables. The 0003 migration adds only
 immutable Selection Snapshot, complete candidate inventory, and candidate
 Observation lineage tables. The 0004 migration adds Pair derivation scalar/ordered
 Observation evidence and the terminal Completion root while reusing existing Signal,
-Feature-lineage, and Store-entry tables for Pair artifacts. M2-B5 retains operational
-materializer composition. No Live application table is added.
+Feature-lineage, and Store-entry tables for Pair artifacts. M2-B5 adds operational
+materializer composition in the shared package without importing SQLite or either
+application. No Live application table is added.
 
 The actual migration remains incremental; files are moved only when the boundary is
 implemented. Paper infrastructure may depend on Live-owned approved-intent contracts
@@ -71,6 +76,7 @@ but cannot import or construct the real Broker Private transport. It cannot impo
 
 The shared Signal Store migrations are now `0001` through `0004`. The independently
 numbered Live migrations remain `0001` and `0002`; M2-A through M2-B4 add none there.
+M2-B5 also adds no migration or persistence table.
 Milestone 2-C/D use the next available Live additive numbers as their persistence is
 implemented. Paper persistence begins at the next available migration after that
 Strategy persistence and leaves the inline historical base schema unchanged. No

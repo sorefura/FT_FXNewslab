@@ -56,7 +56,8 @@ either the complete marked migration or no part of it.
 Migration backfills one Store entry per pre-0002 Signal in explicit
 `signals.created_at ASC, signals.id ASC` order with `LEGACY_BACKFILL` origin. This is
 a deterministic legacy catalog order, not recovered historical insertion order.
-Normal append uses `APPEND`; `PAIR_MATERIALIZATION` is reserved for M2-B4.
+Normal append uses `APPEND`; exact M2-B4 Pair artifacts use
+`PAIR_MATERIALIZATION`.
 
 One immutable Specification and Request are stored by full-content append-or-compare.
 The first Request Claim is written under `BEGIN IMMEDIATE` and freezes
@@ -94,15 +95,26 @@ Observation lineage are one transaction. Hydration rebuilds Signal content from 
 Signal, Feature, Observation, and Store-entry tables, reruns the shared inspector and
 resolver, and rejects missing, added, reordered, or altered evidence.
 
-`SELECTED`, `NO_MATCH`, and `AMBIGUOUS` are therefore persisted terminal outcomes for
-one Request, but `SELECTED` is not Pair artifact completion. M2-B4 must save the
-derived Pair Signal and Feature links, its Store sequence, `PairSignalDerivation`,
-and completion root in its separate exact transaction; M2-B5 owns operational
-materializer composition.
+`SELECTED`, `NO_MATCH`, and `AMBIGUOUS` are persisted terminal Selection outcomes for
+one Request, but Selection alone is not Pair artifact completion. M2-B4 adds
+`0004_pair_signal_artifact_persistence.sql` and writes one immutable Completion per
+Request. SELECTED atomically saves the derived Pair Signal, exact Feature/Observation
+lineage, one `PAIR_MATERIALIZATION` Store entry, one `PairSignalDerivation` with
+ordered Observation rows, and the Completion root last. NO_MATCH and AMBIGUOUS save
+only their artifact-free Completion. M2-B5 owns operational materializer composition.
+
+Only the first SELECTED completion accepts UTC `materialized_at`. That instant is
+both Pair Signal `created_at` and Store `stored_at`; it participates in deterministic
+Pair Signal identity and remains frozen on retry. Existing completion reuse hydrates
+every Signal field, Feature/Observation lineage, Store origin/sequence/time,
+Derivation scalar/ordered Observation evidence, and Completion reference, then reruns
+the shared transformation and relational derivation verifiers. A later caller time
+cannot rewrite the first result. Pair artifact rows without a Completion root are
+partial corruption, not reusable evidence.
 Existing `append_signal_if_absent()` retains its legacy ID-present `False` semantics
 and is not exact Pair persistence: reuse of one Signal ID requires full Signal,
-Feature/Observation lineage, selection, and derivation equality through a separate
-future API. Any conflict fails without partial records.
+Feature/Observation lineage, selection, and derivation equality through
+`complete_pair_signal_materialization()`. Any conflict fails without partial records.
 
 Deterministic Pair Signal identity is fixed before transformation from exact request,
 selection, BASE/QUOTE Signal IDs and content hashes, Observation group,

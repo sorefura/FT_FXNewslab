@@ -32,7 +32,7 @@ def test_shared_identity_imports_no_application_or_infrastructure_package() -> N
     )
 
 
-def test_milestone_2b3_store_imports_no_application_or_pair_transformer() -> None:
+def test_milestone_2b4_store_imports_no_application_or_pair_transformer() -> None:
     module = ROOT / "packages/fx_signal_store/src/fx_signal_store/store.py"
     imported_roots = {name.split(".")[0] for name in _imports(module)}
     source = module.read_text(encoding="utf-8")
@@ -42,7 +42,7 @@ def test_milestone_2b3_store_imports_no_application_or_pair_transformer() -> Non
     assert "resolve_pair_signal_selection" in source
 
 
-def test_milestone_2b3_adds_only_selection_migration_and_keeps_shared_lineage() -> None:
+def test_milestone_2b4_adds_exact_artifact_migration_and_keeps_shared_lineage() -> None:
     signal_fields = {item.name for item in fields(Signal)}
     assert "source_signal_ids" not in signal_fields
     migrations = {
@@ -55,10 +55,11 @@ def test_milestone_2b3_adds_only_selection_migration_and_keeps_shared_lineage() 
         "0001_signal_lineage.sql",
         "0002_pair_materialization_persistence.sql",
         "0003_pair_signal_selection_evidence.sql",
+        "0004_pair_signal_artifact_persistence.sql",
     }
 
 
-def test_milestone_2b1_adds_no_materializer_or_concrete_strategy() -> None:
+def test_milestone_2b4_adds_no_materializer_or_concrete_strategy() -> None:
     assert not (
         ROOT / "packages/fx_signal_store/src/fx_signal_store/materializer.py"
     ).exists()

@@ -93,9 +93,29 @@ connection, reconstructs source Signal/Feature/Observation lineage, reruns
 `inspect_source_candidate()` and `resolve_pair_signal_selection()`, and commits all
 three evidence tables only after exact hydration comparison. Retry reconstructs the
 same checkpoint-bounded universe and returns `REUSED_IDENTICAL` only for exact
-evidence. M2-B4 retains exact Pair Signal/derivation/completion persistence and M2-B5
-retains operational materializer composition. No Live application dependency is
-admitted into the shared package direction.
+evidence. M2-B4 adds exact Pair Signal/derivation/completion persistence while M2-B5
+retains operational materializer composition. No Live application dependency enters
+the shared package direction.
+
+Milestone 2-B4 now completes that exact artifact boundary without adding operational
+orchestration:
+
+```text
+authenticated persisted Selection
+    -> SELECTED: shared transformer -> Pair Signal + Feature/Observation lineage
+       -> PAIR_MATERIALIZATION Store entry -> PairSignalDerivation -> Completion
+    -> NO_MATCH / AMBIGUOUS: artifact-free Completion
+```
+
+`complete_pair_signal_materialization(request, materialized_at=...)` accepts neither
+Selection nor derived artifacts from its caller. One `BEGIN IMMEDIATE` transaction
+reconstructs the persisted Claim and Selection, writes the Completion root last, and
+hydrates the complete relation before commit. The first SELECTED writer freezes one
+UTC `materialized_at` as both Pair Signal `created_at` and Store `stored_at`; retry
+ignores a later caller time and returns `REUSED_IDENTICAL` only after shared-transformer
+and derivation revalidation. A Pair Signal, Store entry, or Derivation without its
+Completion is corruption and is never adopted. M2-B5 still owns claim/capture/
+completion orchestration.
 
 Position exit evaluation is content-addressed from exact typed evidence rather than
 only a business Position ID. `PositionExitPositionEvidence` self-describes the exact
@@ -177,11 +197,11 @@ after the approved intent and inside the active Step's frozen market window/due
 boundary. Research `ForwardResult` is forbidden as fill input.
 
 Current executable behavior remains the ExecPlan 0005 authorized shadow path: it
-reaches an approved intent and records `NOT_SUBMITTED`. M2-B2/M2-B3 change only the
-shared Signal Store Claim and Selection evidence boundaries. The M2-A production
-contracts are not connected to Portfolio, Risk, Execution, or persistence, and there
-is no Pair artifact completion/materializer, concrete production Strategy, Paper
-Gateway, Paper ledger, or operational daemon.
+reaches an approved intent and records `NOT_SUBMITTED`. M2-B2 through M2-B4 add only
+the shared Signal Store Claim, Selection, and exact Pair artifact completion
+boundaries. The M2-A production contracts are not connected to Portfolio, Risk,
+Execution, or persistence, and there is no operational Pair materializer, concrete
+production Strategy, Paper Gateway, Paper ledger, or operational daemon.
 
 ## Research-to-Live adoption boundary
 

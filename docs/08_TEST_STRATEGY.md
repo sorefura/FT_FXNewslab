@@ -1,6 +1,6 @@
 # Test Strategy
 
-## Production Strategy M2-A and Pair materialization M2-B1/B2/B3 tests
+## Production Strategy M2-A and Pair materialization M2-B1/B2/B3/B4 tests
 
 Milestone 2-A tests already state:
 
@@ -70,8 +70,8 @@ Milestone 2-B1 tests additionally state:
 
 Milestone 2-B2 tests additionally state:
 
-- fresh and legacy-0001 databases migrate through exactly 0001/0002/0003, and every legacy
-  Signal receives exactly one `LEGACY_BACKFILL` Store entry in explicit
+- fresh and legacy-0001 databases migrate through the current exact 0001-0004 set,
+  and every legacy Signal receives exactly one `LEGACY_BACKFILL` Store entry in explicit
   `created_at, SignalId` catalog order without claiming historical insertion order;
 - each migration body and marker commit in one `BEGIN IMMEDIATE` transaction;
   statement or marker failure leaves no partial DDL, DML/backfill, or marker, and
@@ -120,8 +120,35 @@ Milestone 2-B3 tests additionally state:
   selection rows; two Store instances converge to one Snapshot under
   `BEGIN IMMEDIATE`; and
 - all three Selection evidence tables reject UPDATE/DELETE, while Pair Signal,
-  derivation, completion, operational materializer, Strategy, and Paper persistence
-  remain absent.
+  derivation, and Completion remain absent through the B3 boundary.
+
+Milestone 2-B4 tests additionally state:
+
+- `expected_pair_signal()` returns the typed unchanged shared-transformer output and
+  rejects non-SELECTED evidence or a materialization time before Selection capture;
+- fresh and legacy-0003 databases migrate through exactly 0001-0004, marker failure
+  rolls back all 0004 objects, and the candidate/store composite foreign keys plus
+  derivation/Completion immutability triggers are present;
+- the public completion API accepts only the exact Request and optional first-write
+  SELECTED time; it never auto-claims, auto-captures, or accepts caller artifacts;
+- SELECTED writes one exact Pair Signal, canonical Feature/Observation lineage, one
+  `PAIR_MATERIALIZATION` Store entry, one relationally validated Derivation, and one
+  Completion in a single transaction;
+- NO_MATCH and AMBIGUOUS write one artifact-free Completion and reject a supplied
+  materialization time;
+- retry rehydrates all artifact fields and lineage, reruns the shared transformation
+  and derivation validators, and freezes the first Pair Signal/Store time and Store
+  sequence even when later data or a later caller time exists;
+- two Store instances converge to one SELECTED or non-selected Completion under
+  `BEGIN IMMEDIATE`, returning one `INSERTED` and one `REUSED_IDENTICAL` result;
+- failures at Signal, Feature-link, Store-entry, Derivation, ordered Observation,
+  Completion, or post-insert hydration boundaries roll back every artifact row;
+- orphan Pair Signals, Store entries, or Derivations are rejected rather than
+  adopted, while Signal/lineage/version, Store origin/time/sequence, Derivation, and
+  Completion corruption is rejected without repair; and
+- one completion call uses one connection and invokes no public nested Store API.
+  Operational materializer, concrete Strategy, Live Adoption composition, Portfolio,
+  Risk, Broker/Execution, scheduler/CLI, and Paper remain absent.
 
 Later ExecPlan 0006 implementation tests will state the following guarantees:
 

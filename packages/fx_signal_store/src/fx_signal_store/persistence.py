@@ -10,13 +10,19 @@ from fx_core.time import require_utc
 
 if TYPE_CHECKING:
     from .pair_materialization import (
+        PairSignalDerivation,
         PairSignalMaterializationRequest,
+        PairSignalSelectionOutcome,
         PairSignalSelectionSnapshot,
+        SignalContentSnapshot,
     )
 
 
 SIGNAL_STORE_ENTRY_VERSION = "signal-store-entry-v1"
 PAIR_SIGNAL_MATERIALIZATION_CLAIM_VERSION = "pair-signal-materialization-claim-v1"
+PAIR_SIGNAL_MATERIALIZATION_COMPLETION_VERSION = (
+    "pair-signal-materialization-completion-v1"
+)
 
 
 class PairMaterializationPersistenceConflict(ValueError):
@@ -34,6 +40,11 @@ class SignalStorageOrigin(StrEnum):
 
 
 class PairSignalSelectionPersistenceDisposition(StrEnum):
+    INSERTED = "INSERTED"
+    REUSED_IDENTICAL = "REUSED_IDENTICAL"
+
+
+class PairSignalMaterializationCompletionDisposition(StrEnum):
     INSERTED = "INSERTED"
     REUSED_IDENTICAL = "REUSED_IDENTICAL"
 
@@ -105,6 +116,104 @@ class PairSignalSelectionPersistenceResult:
         if not isinstance(self.selection_snapshot, PairSignalSelectionSnapshot):
             raise TypeError("selection_snapshot must be PairSignalSelectionSnapshot")
         self.selection_snapshot.validate_intrinsic_integrity()
+
+
+@dataclass(frozen=True, slots=True)
+class PairSignalMaterializationCompletion:
+    contract_version: str
+    request: PairSignalMaterializationRequest
+    selection_snapshot: PairSignalSelectionSnapshot
+    outcome: PairSignalSelectionOutcome
+    pair_signal_snapshot: SignalContentSnapshot | None
+    pair_signal_store_entry: SignalStoreEntry | None
+    derivation: PairSignalDerivation | None
+
+    def __post_init__(self) -> None:
+        self.validate_intrinsic_integrity()
+
+    def validate_intrinsic_integrity(self) -> None:
+        from .pair_materialization import (
+            PairSignalDerivation,
+            PairSignalMaterializationRequest,
+            PairSignalSelectionOutcome,
+            PairSignalSelectionSnapshot,
+            SignalContentSnapshot,
+            SignalTargetType,
+        )
+
+        if self.contract_version != PAIR_SIGNAL_MATERIALIZATION_COMPLETION_VERSION:
+            raise ValueError("unsupported Pair Signal materialization completion")
+        if not isinstance(self.request, PairSignalMaterializationRequest):
+            raise TypeError("request must be PairSignalMaterializationRequest")
+        if not isinstance(self.selection_snapshot, PairSignalSelectionSnapshot):
+            raise TypeError("selection_snapshot must be PairSignalSelectionSnapshot")
+        self.request.validate_intrinsic_integrity()
+        self.selection_snapshot.validate_intrinsic_integrity()
+        if self.selection_snapshot.request != self.request:
+            raise ValueError("selection Snapshot belongs to another Request")
+        if not isinstance(self.outcome, PairSignalSelectionOutcome):
+            raise TypeError("outcome must be PairSignalSelectionOutcome")
+        if self.outcome is not self.selection_snapshot.outcome:
+            raise ValueError("completion outcome differs from Selection")
+        if self.outcome is PairSignalSelectionOutcome.SELECTED:
+            if not isinstance(self.pair_signal_snapshot, SignalContentSnapshot):
+                raise TypeError("SELECTED completion requires a Pair Signal snapshot")
+            if not isinstance(self.pair_signal_store_entry, SignalStoreEntry):
+                raise TypeError("SELECTED completion requires a Signal Store entry")
+            if not isinstance(self.derivation, PairSignalDerivation):
+                raise TypeError("SELECTED completion requires a Pair Signal derivation")
+            self.pair_signal_snapshot.validate_intrinsic_integrity()
+            if (
+                self.pair_signal_snapshot.target_type is not SignalTargetType.PAIR
+                or self.pair_signal_snapshot.target_value != self.request.pair.symbol
+            ):
+                raise ValueError("Pair Signal snapshot does not target the exact Pair")
+            if (
+                self.pair_signal_store_entry.signal_id
+                != self.pair_signal_snapshot.signal_id
+            ):
+                raise ValueError("Signal Store entry belongs to another Signal")
+            if (
+                self.pair_signal_store_entry.storage_origin
+                is not SignalStorageOrigin.PAIR_MATERIALIZATION
+            ):
+                raise ValueError("Pair Signal Store entry has the wrong origin")
+            if (
+                self.pair_signal_store_entry.stored_at
+                != self.pair_signal_snapshot.created_at
+            ):
+                raise ValueError("Pair Signal Store time differs from materialization time")
+            self.derivation.validate_against(
+                self.pair_signal_snapshot,
+                self.selection_snapshot,
+            )
+        elif any(
+            artifact is not None
+            for artifact in (
+                self.pair_signal_snapshot,
+                self.pair_signal_store_entry,
+                self.derivation,
+            )
+        ):
+            raise ValueError("non-selected completion must not contain Pair artifacts")
+
+
+@dataclass(frozen=True, slots=True)
+class PairSignalMaterializationPersistenceResult:
+    disposition: PairSignalMaterializationCompletionDisposition
+    completion: PairSignalMaterializationCompletion
+
+    def __post_init__(self) -> None:
+        if not isinstance(
+            self.disposition,
+            PairSignalMaterializationCompletionDisposition,
+        ):
+            raise TypeError(
+                "disposition must be PairSignalMaterializationCompletionDisposition"
+            )
+        if not isinstance(self.completion, PairSignalMaterializationCompletion):
+            raise TypeError("completion must be PairSignalMaterializationCompletion")
+        self.completion.validate_intrinsic_integrity()
 
 
 def _require_positive_int(value: int, label: str) -> None:

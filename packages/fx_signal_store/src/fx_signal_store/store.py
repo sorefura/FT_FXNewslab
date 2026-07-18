@@ -30,6 +30,7 @@ from fx_core.time import require_utc
 from .pair_materialization import (
     PairSignalCandidateEligibility,
     PairSignalCandidateRejectionReason,
+    PairSignalDerivation,
     PairSignalMaterializationRequest,
     PairSignalMaterializationSpecification,
     PairSignalSelectionCandidate,
@@ -38,14 +39,21 @@ from .pair_materialization import (
     PairSignalSelectionSnapshot,
     SignalContentSnapshot,
     SourceSignalRole,
+    expected_pair_signal,
+    expected_pair_signal_snapshot,
     inspect_source_candidate,
     resolve_pair_signal_selection,
+    validate_pair_signal_transformation,
 )
 from .persistence import (
     PAIR_SIGNAL_MATERIALIZATION_CLAIM_VERSION,
+    PAIR_SIGNAL_MATERIALIZATION_COMPLETION_VERSION,
     SIGNAL_STORE_ENTRY_VERSION,
     PairMaterializationPersistenceConflict,
     PairSignalMaterializationClaim,
+    PairSignalMaterializationCompletion,
+    PairSignalMaterializationCompletionDisposition,
+    PairSignalMaterializationPersistenceResult,
     PairSignalSelectionPersistenceDisposition,
     PairSignalSelectionPersistenceResult,
     SignalLineage,
@@ -833,6 +841,596 @@ class SQLiteSignalStore:
             except Exception:
                 connection.rollback()
                 raise
+
+    def complete_pair_signal_materialization(
+        self,
+        request: PairSignalMaterializationRequest,
+        *,
+        materialized_at: datetime | None = None,
+    ) -> PairSignalMaterializationPersistenceResult:
+        request.validate_intrinsic_integrity()
+        if materialized_at is not None:
+            require_utc(materialized_at, "Pair Signal materialized_at")
+        with closing(self._connect()) as connection:
+            try:
+                connection.execute("BEGIN IMMEDIATE")
+                current_checkpoint = self._current_signal_checkpoint(connection)
+                claim = self._get_exact_materialization_claim(
+                    connection,
+                    request,
+                    current_checkpoint=current_checkpoint,
+                )
+                selection = self._get_exact_selection_for_completion(
+                    connection,
+                    claim,
+                )
+                if (
+                    selection.outcome is not PairSignalSelectionOutcome.SELECTED
+                    and materialized_at is not None
+                ):
+                    raise ValueError(
+                        "non-selected materialization does not accept materialized_at"
+                    )
+                existing = self._hydrate_materialization_completion(
+                    connection,
+                    request=request,
+                    selection=selection,
+                )
+                if existing is not None:
+                    self._validate_materialization_completion_relational_integrity(
+                        connection,
+                        existing,
+                    )
+                    connection.commit()
+                    return PairSignalMaterializationPersistenceResult(
+                        disposition=(
+                            PairSignalMaterializationCompletionDisposition.REUSED_IDENTICAL
+                        ),
+                        completion=existing,
+                    )
+
+                pair_signal: Signal | None = None
+                expected_signal_id: SignalId | None = None
+                if selection.outcome is PairSignalSelectionOutcome.SELECTED:
+                    if materialized_at is None:
+                        raise ValueError(
+                            "first SELECTED completion requires materialized_at"
+                        )
+                    pair_signal = expected_pair_signal(
+                        selection,
+                        materialized_at=materialized_at,
+                    )
+                    expected_signal_id = pair_signal.signal_id
+                self._reject_orphan_pair_artifacts(
+                    connection,
+                    request=request,
+                    selection=selection,
+                    expected_pair_signal_id=expected_signal_id,
+                )
+
+                if pair_signal is None:
+                    self._append_materialization_completion_exact(
+                        connection,
+                        request=request,
+                        selection=selection,
+                        pair_signal_store_entry=None,
+                        derivation=None,
+                    )
+                else:
+                    if materialized_at is None:
+                        raise AssertionError("SELECTED materialization time was lost")
+                    expected_snapshot = expected_pair_signal_snapshot(
+                        selection,
+                        materialized_at=materialized_at,
+                    )
+                    pair_signal_snapshot = SignalContentSnapshot.from_signal(
+                        pair_signal,
+                        SignalLineage(
+                            signal_id=pair_signal.signal_id,
+                            feature_ids=pair_signal.source_feature_ids,
+                            observation_ids=expected_snapshot.source_observation_ids,
+                        ),
+                    )
+                    if pair_signal_snapshot != expected_snapshot:
+                        raise SignalStoreIntegrityError(
+                            "Pair Signal helper and snapshot verifier disagree"
+                        )
+                    derivation = PairSignalDerivation.create(
+                        pair_signal_snapshot=pair_signal_snapshot,
+                        selection_snapshot=selection,
+                        materialized_at=materialized_at,
+                    )
+                    if not self._append_signal(connection, pair_signal):
+                        raise SignalStoreIntegrityError(
+                            "Pair Signal exact insert did not create one row"
+                        )
+                    self._append_signal_store_entry(
+                        connection,
+                        pair_signal.signal_id,
+                        materialized_at,
+                        SignalStorageOrigin.PAIR_MATERIALIZATION,
+                    )
+                    pair_signal_store_entry = self._get_signal_store_entry(
+                        connection,
+                        pair_signal.signal_id,
+                    )
+                    self._append_pair_signal_derivation_exact(connection, derivation)
+                    self._append_materialization_completion_exact(
+                        connection,
+                        request=request,
+                        selection=selection,
+                        pair_signal_store_entry=pair_signal_store_entry,
+                        derivation=derivation,
+                    )
+
+                persisted = self._hydrate_materialization_completion(
+                    connection,
+                    request=request,
+                    selection=selection,
+                )
+                if persisted is None:
+                    raise SignalStoreIntegrityError(
+                        "materialization Completion insert produced no persisted row"
+                    )
+                self._validate_materialization_completion_relational_integrity(
+                    connection,
+                    persisted,
+                )
+                connection.commit()
+                return PairSignalMaterializationPersistenceResult(
+                    disposition=PairSignalMaterializationCompletionDisposition.INSERTED,
+                    completion=persisted,
+                )
+            except sqlite3.IntegrityError as error:
+                connection.rollback()
+                raise SignalStoreIntegrityError(
+                    "Pair Signal materialization persistence constraint failed"
+                ) from error
+            except Exception:
+                connection.rollback()
+                raise
+
+    def _get_exact_selection_for_completion(
+        self,
+        connection: sqlite3.Connection,
+        claim: PairSignalMaterializationClaim,
+    ) -> PairSignalSelectionSnapshot:
+        candidates = self._capture_pair_signal_candidates(connection, claim)
+        expected = resolve_pair_signal_selection(
+            claim.request,
+            claim.checkpoint_sequence,
+            claim.captured_at,
+            candidates,
+        )
+        selection = self._get_selection_snapshot(
+            connection,
+            request_id=claim.request.request_id,
+            expected_selection_snapshot_id=expected.selection_snapshot_id,
+        )
+        if selection is None:
+            raise PairMaterializationPersistenceConflict(
+                "Selection Snapshot must exist before materialization completion"
+            )
+        self._validate_selection_snapshot_relational_integrity(
+            connection,
+            selection,
+            claim,
+        )
+        if selection != expected:
+            raise SignalStoreIntegrityError(
+                "persisted Selection differs from its source Store evidence"
+            )
+        return selection
+
+    @staticmethod
+    def _append_pair_signal_derivation_exact(
+        connection: sqlite3.Connection,
+        derivation: PairSignalDerivation,
+    ) -> None:
+        derivation.validate_intrinsic_integrity()
+        connection.execute(
+            """
+            INSERT INTO pair_signal_derivations(
+                derivation_id, contract_version, pair_signal_id,
+                pair_signal_content_hash, selection_snapshot_id,
+                materialization_request_id, pair, base_candidate_id,
+                base_signal_id, base_signal_content_hash, quote_candidate_id,
+                quote_signal_id, quote_signal_content_hash,
+                observation_group_identity, horizon, transformation_version,
+                specification_id, materialization_request_as_of,
+                base_signal_created_at, quote_signal_created_at, materialized_at
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            (
+                derivation.derivation_id,
+                derivation.contract_version,
+                derivation.pair_signal_id.value,
+                derivation.pair_signal_content_hash,
+                derivation.selection_snapshot_id,
+                derivation.materialization_request_id,
+                derivation.pair.symbol,
+                derivation.base_candidate_id,
+                derivation.base_signal_id.value,
+                derivation.base_signal_content_hash,
+                derivation.quote_candidate_id,
+                derivation.quote_signal_id.value,
+                derivation.quote_signal_content_hash,
+                derivation.observation_group_identity,
+                derivation.horizon.value,
+                derivation.transformation_version,
+                derivation.specification_id,
+                derivation.materialization_request_as_of.isoformat(),
+                derivation.base_signal_created_at.isoformat(),
+                derivation.quote_signal_created_at.isoformat(),
+                derivation.materialized_at.isoformat(),
+            ),
+        )
+        connection.executemany(
+            """
+            INSERT INTO pair_signal_derivation_observations(
+                derivation_id, observation_ordinal, observation_id
+            ) VALUES (?, ?, ?)
+            """,
+            (
+                (derivation.derivation_id, ordinal, observation_id.value)
+                for ordinal, observation_id in enumerate(derivation.observation_ids)
+            ),
+        )
+
+    @staticmethod
+    def _append_materialization_completion_exact(
+        connection: sqlite3.Connection,
+        *,
+        request: PairSignalMaterializationRequest,
+        selection: PairSignalSelectionSnapshot,
+        pair_signal_store_entry: SignalStoreEntry | None,
+        derivation: PairSignalDerivation | None,
+    ) -> None:
+        connection.execute(
+            """
+            INSERT INTO pair_signal_materialization_completions(
+                request_id, contract_version, selection_snapshot_id,
+                selection_outcome, pair_signal_id, pair_signal_store_sequence,
+                derivation_id
+            ) VALUES (?, ?, ?, ?, ?, ?, ?)
+            """,
+            (
+                request.request_id,
+                PAIR_SIGNAL_MATERIALIZATION_COMPLETION_VERSION,
+                selection.selection_snapshot_id,
+                selection.outcome.value,
+                None
+                if pair_signal_store_entry is None
+                else pair_signal_store_entry.signal_id.value,
+                None
+                if pair_signal_store_entry is None
+                else pair_signal_store_entry.store_sequence,
+                None if derivation is None else derivation.derivation_id,
+            ),
+        )
+
+    def _hydrate_pair_signal_derivation(
+        self,
+        connection: sqlite3.Connection,
+        derivation_id: str,
+    ) -> PairSignalDerivation:
+        rows = connection.execute(
+            "SELECT * FROM pair_signal_derivations WHERE derivation_id = ?",
+            (derivation_id,),
+        ).fetchall()
+        if len(rows) != 1:
+            raise SignalStoreIntegrityError(
+                "Pair Signal Completion does not reference one exact derivation"
+            )
+        observation_rows = connection.execute(
+            """
+            SELECT observation_ordinal, observation_id
+            FROM pair_signal_derivation_observations
+            WHERE derivation_id = ? ORDER BY observation_ordinal
+            """,
+            (derivation_id,),
+        ).fetchall()
+        ordinals = tuple(row["observation_ordinal"] for row in observation_rows)
+        if ordinals != tuple(range(len(observation_rows))):
+            raise SignalStoreIntegrityError(
+                "derivation Observation ordinals must be contiguous and canonical"
+            )
+        row = rows[0]
+        try:
+            return PairSignalDerivation(
+                derivation_id=row["derivation_id"],
+                contract_version=row["contract_version"],
+                pair_signal_id=SignalId(row["pair_signal_id"]),
+                pair_signal_content_hash=row["pair_signal_content_hash"],
+                selection_snapshot_id=row["selection_snapshot_id"],
+                materialization_request_id=row["materialization_request_id"],
+                pair=CurrencyPair.parse(row["pair"]),
+                base_candidate_id=row["base_candidate_id"],
+                base_signal_id=SignalId(row["base_signal_id"]),
+                base_signal_content_hash=row["base_signal_content_hash"],
+                quote_candidate_id=row["quote_candidate_id"],
+                quote_signal_id=SignalId(row["quote_signal_id"]),
+                quote_signal_content_hash=row["quote_signal_content_hash"],
+                observation_group_identity=row["observation_group_identity"],
+                observation_ids=tuple(
+                    ObservationId(item["observation_id"])
+                    for item in observation_rows
+                ),
+                horizon=Horizon(row["horizon"]),
+                transformation_version=row["transformation_version"],
+                specification_id=row["specification_id"],
+                materialization_request_as_of=datetime.fromisoformat(
+                    row["materialization_request_as_of"]
+                ),
+                base_signal_created_at=datetime.fromisoformat(
+                    row["base_signal_created_at"]
+                ),
+                quote_signal_created_at=datetime.fromisoformat(
+                    row["quote_signal_created_at"]
+                ),
+                materialized_at=datetime.fromisoformat(row["materialized_at"]),
+            )
+        except (TypeError, ValueError) as error:
+            raise SignalStoreIntegrityError(
+                "persisted Pair Signal derivation is invalid"
+            ) from error
+
+    def _hydrate_materialization_completion(
+        self,
+        connection: sqlite3.Connection,
+        *,
+        request: PairSignalMaterializationRequest,
+        selection: PairSignalSelectionSnapshot,
+    ) -> PairSignalMaterializationCompletion | None:
+        rows = connection.execute(
+            """
+            SELECT * FROM pair_signal_materialization_completions
+            WHERE request_id = ? OR selection_snapshot_id = ?
+            """,
+            (request.request_id, selection.selection_snapshot_id),
+        ).fetchall()
+        if not rows:
+            return None
+        if len(rows) != 1:
+            raise SignalStoreIntegrityError(
+                "one materialization Request maps to conflicting Completions"
+            )
+        row = rows[0]
+        artifact_values = (
+            row["pair_signal_id"],
+            row["pair_signal_store_sequence"],
+            row["derivation_id"],
+        )
+        artifacts_present = tuple(value is not None for value in artifact_values)
+        pair_signal_snapshot: SignalContentSnapshot | None = None
+        pair_signal_store_entry: SignalStoreEntry | None = None
+        derivation: PairSignalDerivation | None = None
+        if any(artifacts_present):
+            if not all(artifacts_present):
+                raise SignalStoreIntegrityError(
+                    "materialization Completion contains partial Pair artifacts"
+                )
+            try:
+                pair_signal_id = SignalId(row["pair_signal_id"])
+                pair_signal_snapshot = self._get_signal_snapshot(
+                    connection,
+                    pair_signal_id,
+                )
+                pair_signal_store_entry = self._get_signal_store_entry(
+                    connection,
+                    pair_signal_id,
+                )
+                derivation = self._hydrate_pair_signal_derivation(
+                    connection,
+                    row["derivation_id"],
+                )
+            except (KeyError, TypeError, ValueError) as error:
+                raise SignalStoreIntegrityError(
+                    "materialization Completion Pair artifacts cannot be hydrated"
+                ) from error
+            if pair_signal_store_entry.store_sequence != row["pair_signal_store_sequence"]:
+                raise SignalStoreIntegrityError(
+                    "Completion Store sequence differs from its exact Store entry"
+                )
+            if derivation.derivation_id != row["derivation_id"]:
+                raise SignalStoreIntegrityError(
+                    "Completion derivation reference differs from hydrated evidence"
+                )
+        try:
+            outcome = PairSignalSelectionOutcome(row["selection_outcome"])
+            completion = PairSignalMaterializationCompletion(
+                contract_version=row["contract_version"],
+                request=request,
+                selection_snapshot=selection,
+                outcome=outcome,
+                pair_signal_snapshot=pair_signal_snapshot,
+                pair_signal_store_entry=pair_signal_store_entry,
+                derivation=derivation,
+            )
+        except (TypeError, ValueError) as error:
+            raise SignalStoreIntegrityError(
+                "persisted Pair Signal materialization Completion is invalid"
+            ) from error
+        if row["request_id"] != request.request_id:
+            raise SignalStoreIntegrityError("Completion belongs to another Request")
+        if row["selection_snapshot_id"] != selection.selection_snapshot_id:
+            raise SignalStoreIntegrityError("Completion belongs to another Selection")
+        if pair_signal_snapshot is not None and (
+            row["pair_signal_id"] != pair_signal_snapshot.signal_id.value
+        ):
+            raise SignalStoreIntegrityError("Completion references another Pair Signal")
+        return completion
+
+    def _validate_materialization_completion_relational_integrity(
+        self,
+        connection: sqlite3.Connection,
+        completion: PairSignalMaterializationCompletion,
+    ) -> None:
+        try:
+            completion.validate_intrinsic_integrity()
+        except (TypeError, ValueError) as error:
+            raise SignalStoreIntegrityError(
+                "Pair Signal materialization Completion failed validation"
+            ) from error
+        completion_rows = connection.execute(
+            """
+            SELECT request_id, selection_snapshot_id
+            FROM pair_signal_materialization_completions
+            WHERE request_id = ? OR selection_snapshot_id = ?
+            """,
+            (
+                completion.request.request_id,
+                completion.selection_snapshot.selection_snapshot_id,
+            ),
+        ).fetchall()
+        if len(completion_rows) != 1 or tuple(completion_rows[0]) != (
+            completion.request.request_id,
+            completion.selection_snapshot.selection_snapshot_id,
+        ):
+            raise SignalStoreIntegrityError(
+                "materialization Completion root cardinality is invalid"
+            )
+        if completion.outcome is PairSignalSelectionOutcome.SELECTED:
+            pair_signal_snapshot = completion.pair_signal_snapshot
+            store_entry = completion.pair_signal_store_entry
+            derivation = completion.derivation
+            if (
+                pair_signal_snapshot is None
+                or store_entry is None
+                or derivation is None
+            ):
+                raise SignalStoreIntegrityError(
+                    "SELECTED Completion has incomplete Pair artifacts"
+                )
+            try:
+                expected_snapshot = expected_pair_signal_snapshot(
+                    completion.selection_snapshot,
+                    materialized_at=pair_signal_snapshot.created_at,
+                )
+                validate_pair_signal_transformation(
+                    pair_signal_snapshot,
+                    completion.selection_snapshot,
+                    materialized_at=pair_signal_snapshot.created_at,
+                )
+                derivation.validate_against(
+                    pair_signal_snapshot,
+                    completion.selection_snapshot,
+                )
+            except (TypeError, ValueError) as error:
+                raise SignalStoreIntegrityError(
+                    "persisted Pair Signal transformation evidence is invalid"
+                ) from error
+            if pair_signal_snapshot != expected_snapshot:
+                raise SignalStoreIntegrityError(
+                    "persisted Pair Signal differs from shared transformer output"
+                )
+            if self._get_signal_store_entry(
+                connection,
+                pair_signal_snapshot.signal_id,
+            ) != store_entry:
+                raise SignalStoreIntegrityError(
+                    "persisted Pair Signal Store entry differs from Completion"
+                )
+            derivation_rows = connection.execute(
+                """
+                SELECT derivation_id FROM pair_signal_derivations
+                WHERE materialization_request_id = ?
+                   OR selection_snapshot_id = ?
+                   OR pair_signal_id = ?
+                """,
+                (
+                    completion.request.request_id,
+                    completion.selection_snapshot.selection_snapshot_id,
+                    pair_signal_snapshot.signal_id.value,
+                ),
+            ).fetchall()
+            if len(derivation_rows) != 1 or derivation_rows[0][0] != derivation.derivation_id:
+                raise SignalStoreIntegrityError(
+                    "Pair Signal derivation cardinality is invalid"
+                )
+        else:
+            artifact = connection.execute(
+                """
+                SELECT derivation_id FROM pair_signal_derivations
+                WHERE materialization_request_id = ? OR selection_snapshot_id = ?
+                LIMIT 1
+                """,
+                (
+                    completion.request.request_id,
+                    completion.selection_snapshot.selection_snapshot_id,
+                ),
+            ).fetchone()
+            if artifact is not None:
+                raise SignalStoreIntegrityError(
+                    "non-selected Completion has a Pair derivation artifact"
+                )
+
+    @staticmethod
+    def _reject_orphan_pair_artifacts(
+        connection: sqlite3.Connection,
+        *,
+        request: PairSignalMaterializationRequest,
+        selection: PairSignalSelectionSnapshot,
+        expected_pair_signal_id: SignalId | None,
+    ) -> None:
+        completion = connection.execute(
+            """
+            SELECT request_id FROM pair_signal_materialization_completions
+            WHERE request_id = ? OR selection_snapshot_id = ? LIMIT 1
+            """,
+            (request.request_id, selection.selection_snapshot_id),
+        ).fetchone()
+        if completion is not None:
+            raise SignalStoreIntegrityError(
+                "materialization Completion exists outside exact hydration"
+            )
+        derivation = connection.execute(
+            """
+            SELECT derivation_id FROM pair_signal_derivations
+            WHERE materialization_request_id = ? OR selection_snapshot_id = ? LIMIT 1
+            """,
+            (request.request_id, selection.selection_snapshot_id),
+        ).fetchone()
+        if derivation is not None:
+            raise SignalStoreIntegrityError(
+                "orphan Pair Signal derivation exists without Completion"
+            )
+        unrooted_derivation = connection.execute(
+            """
+            SELECT d.derivation_id
+            FROM pair_signal_derivations AS d
+            LEFT JOIN pair_signal_materialization_completions AS c
+                ON c.derivation_id = d.derivation_id
+            WHERE c.request_id IS NULL LIMIT 1
+            """
+        ).fetchone()
+        if unrooted_derivation is not None:
+            raise SignalStoreIntegrityError(
+                "Signal Store contains an unrooted Pair Signal derivation"
+            )
+        unrooted_store_entry = connection.execute(
+            """
+            SELECT e.signal_id
+            FROM signal_store_entries AS e
+            LEFT JOIN pair_signal_materialization_completions AS c
+                ON c.pair_signal_id = e.signal_id
+            WHERE e.storage_origin = ? AND c.request_id IS NULL LIMIT 1
+            """,
+            (SignalStorageOrigin.PAIR_MATERIALIZATION.value,),
+        ).fetchone()
+        if unrooted_store_entry is not None:
+            raise SignalStoreIntegrityError(
+                "Signal Store contains an orphan Pair Signal Store entry"
+            )
+        if expected_pair_signal_id is not None:
+            signal = connection.execute(
+                "SELECT id FROM signals WHERE id = ?",
+                (expected_pair_signal_id.value,),
+            ).fetchone()
+            if signal is not None:
+                raise SignalStoreIntegrityError(
+                    "deterministic Pair Signal exists without Completion"
+                )
 
     def _get_exact_materialization_claim(
         self,

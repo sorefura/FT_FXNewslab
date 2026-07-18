@@ -65,6 +65,23 @@ def _create_0002_database(path: Path) -> None:
         )
 
 
+def _create_0003_database(path: Path) -> None:
+    _create_0002_database(path)
+    with sqlite3.connect(path) as connection:
+        connection.executescript(
+            (MIGRATIONS / "0003_pair_signal_selection_evidence.sql").read_text(
+                encoding="utf-8"
+            )
+        )
+        connection.execute(
+            "INSERT INTO schema_migrations(version, applied_at) VALUES (?, ?)",
+            (
+                "0003_pair_signal_selection_evidence.sql",
+                datetime(2026, 7, 18, tzinfo=UTC).isoformat(),
+            ),
+        )
+
+
 def _applied_migrations(path: Path) -> tuple[str, ...]:
     with sqlite3.connect(path) as connection:
         rows = connection.execute(
@@ -103,18 +120,20 @@ def _initialize_concurrently(path: Path) -> tuple[SQLiteSignalStore, SQLiteSigna
         return tuple(future.result() for future in futures)  # type: ignore[return-value]
 
 
-def test_fresh_database_applies_exactly_0001_through_0003(tmp_path: Path) -> None:
+def test_fresh_database_applies_exactly_0001_through_0004(tmp_path: Path) -> None:
     store = SQLiteSignalStore(tmp_path / "fresh.sqlite3")
 
     assert _applied_migrations(store.path) == (
         "0001_signal_lineage.sql",
         "0002_pair_materialization_persistence.sql",
         "0003_pair_signal_selection_evidence.sql",
+        "0004_pair_signal_artifact_persistence.sql",
     )
     assert tuple(path.name for path in sorted(MIGRATIONS.glob("*.sql"))) == (
         "0001_signal_lineage.sql",
         "0002_pair_materialization_persistence.sql",
         "0003_pair_signal_selection_evidence.sql",
+        "0004_pair_signal_artifact_persistence.sql",
     )
 
 
@@ -146,9 +165,9 @@ def test_0002_backfills_one_catalog_sequence_per_legacy_signal_in_explicit_order
     assert store.current_signal_checkpoint() == 3
 
 
-def test_legacy_0002_database_upgrades_to_0003_once_on_reopen(tmp_path: Path) -> None:
-    path = tmp_path / "legacy-0002.sqlite3"
-    _create_0002_database(path)
+def test_legacy_0003_database_upgrades_to_0004_once_on_reopen(tmp_path: Path) -> None:
+    path = tmp_path / "legacy-0003.sqlite3"
+    _create_0003_database(path)
 
     SQLiteSignalStore(path)
     SQLiteSignalStore(path)
@@ -157,6 +176,7 @@ def test_legacy_0002_database_upgrades_to_0003_once_on_reopen(tmp_path: Path) ->
         ("0001_signal_lineage.sql", 1),
         ("0002_pair_materialization_persistence.sql", 1),
         ("0003_pair_signal_selection_evidence.sql", 1),
+        ("0004_pair_signal_artifact_persistence.sql", 1),
     )
 
 
@@ -242,6 +262,23 @@ class _Failing0003MarkerStore(SQLiteSignalStore):
         )
 
 
+class _Failing0004MarkerStore(SQLiteSignalStore):
+    def _record_migration(
+        self,
+        connection: sqlite3.Connection,
+        *,
+        migration_name: str,
+        applied_at: datetime,
+    ) -> None:
+        if migration_name == "0004_pair_signal_artifact_persistence.sql":
+            raise RuntimeError("test 0004 marker failure")
+        super()._record_migration(
+            connection,
+            migration_name=migration_name,
+            applied_at=applied_at,
+        )
+
+
 def test_marker_failure_rolls_back_0002_schema_and_legacy_backfill(
     tmp_path: Path,
 ) -> None:
@@ -264,6 +301,7 @@ def test_marker_failure_rolls_back_0002_schema_and_legacy_backfill(
         "0001_signal_lineage.sql",
         "0002_pair_materialization_persistence.sql",
         "0003_pair_signal_selection_evidence.sql",
+        "0004_pair_signal_artifact_persistence.sql",
     )
 
 
@@ -290,6 +328,33 @@ def test_marker_failure_rolls_back_all_0003_selection_schema(tmp_path: Path) -> 
         "0001_signal_lineage.sql",
         "0002_pair_materialization_persistence.sql",
         "0003_pair_signal_selection_evidence.sql",
+        "0004_pair_signal_artifact_persistence.sql",
+    )
+
+
+def test_marker_failure_rolls_back_all_0004_artifact_schema(tmp_path: Path) -> None:
+    path = tmp_path / "marker-failure-0004.sqlite3"
+    _create_0003_database(path)
+
+    with pytest.raises(RuntimeError, match="0004 marker failure"):
+        _Failing0004MarkerStore(path)
+
+    assert _applied_migrations(path) == (
+        "0001_signal_lineage.sql",
+        "0002_pair_materialization_persistence.sql",
+        "0003_pair_signal_selection_evidence.sql",
+    )
+    assert _table_exists(path, "pair_signal_derivations") is False
+    assert _table_exists(path, "pair_signal_derivation_observations") is False
+    assert _table_exists(path, "pair_signal_materialization_completions") is False
+
+    SQLiteSignalStore(path)
+
+    assert _applied_migrations(path) == (
+        "0001_signal_lineage.sql",
+        "0002_pair_materialization_persistence.sql",
+        "0003_pair_signal_selection_evidence.sql",
+        "0004_pair_signal_artifact_persistence.sql",
     )
 
 
@@ -305,6 +370,7 @@ def test_concurrent_fresh_store_initialization_applies_each_migration_once(
         ("0001_signal_lineage.sql", 1),
         ("0002_pair_materialization_persistence.sql", 1),
         ("0003_pair_signal_selection_evidence.sql", 1),
+        ("0004_pair_signal_artifact_persistence.sql", 1),
     )
     assert _table_exists(path, "signal_store_entries") is True
 
@@ -324,6 +390,7 @@ def test_concurrent_legacy_upgrade_backfills_each_signal_once(tmp_path: Path) ->
         ("0001_signal_lineage.sql", 1),
         ("0002_pair_materialization_persistence.sql", 1),
         ("0003_pair_signal_selection_evidence.sql", 1),
+        ("0004_pair_signal_artifact_persistence.sql", 1),
     )
     with sqlite3.connect(path) as connection:
         entries = connection.execute(
@@ -388,7 +455,7 @@ def test_new_evidence_tables_reject_update_and_delete(tmp_path: Path) -> None:
             connection.execute(f"DELETE FROM {table} WHERE {predicate}")
 
 
-def test_0003_adds_selection_evidence_but_no_pair_artifact_tables(
+def test_0004_adds_pair_artifacts_but_no_operational_or_strategy_tables(
     tmp_path: Path,
 ) -> None:
     store = SQLiteSignalStore(tmp_path / "scope.sqlite3")
@@ -408,11 +475,77 @@ def test_0003_adds_selection_evidence_but_no_pair_artifact_tables(
         "pair_signal_selection_snapshots",
         "pair_signal_selection_candidates",
         "pair_signal_selection_candidate_observations",
+        "pair_signal_derivations",
+        "pair_signal_derivation_observations",
+        "pair_signal_materialization_completions",
     } <= tables
     assert {
-        "pair_signal_derivations",
-        "pair_signal_materialization_completions",
+        "pair_signal_materialization_jobs",
+        "strategy_evaluations",
+        "paper_orders",
+        "paper_fills",
     }.isdisjoint(tables)
+
+
+def test_0004_adds_exact_candidate_and_store_entry_composite_foreign_keys(
+    tmp_path: Path,
+) -> None:
+    store = SQLiteSignalStore(tmp_path / "artifact-keys.sqlite3")
+    with sqlite3.connect(store.path) as connection:
+        candidate_indexes = connection.execute(
+            "PRAGMA index_list(pair_signal_selection_candidates)"
+        ).fetchall()
+        candidate_unique_keys = {
+            tuple(
+                item[2]
+                for item in connection.execute(
+                    f"PRAGMA index_info('{row[1]}')"
+                ).fetchall()
+            )
+            for row in candidate_indexes
+            if row[2] == 1
+        }
+        derivation_foreign_keys = connection.execute(
+            "PRAGMA foreign_key_list(pair_signal_derivations)"
+        ).fetchall()
+        completion_foreign_keys = connection.execute(
+            "PRAGMA foreign_key_list(pair_signal_materialization_completions)"
+        ).fetchall()
+        triggers = {
+            row[0]
+            for row in connection.execute(
+                "SELECT name FROM sqlite_master WHERE type = 'trigger'"
+            )
+        }
+
+    assert ("selection_snapshot_id", "candidate_id") in candidate_unique_keys
+    derivation_candidate_columns = {
+        row[3]
+        for row in derivation_foreign_keys
+        if row[2] == "pair_signal_selection_candidates"
+    }
+    assert derivation_candidate_columns == {
+        "selection_snapshot_id",
+        "base_candidate_id",
+        "quote_candidate_id",
+    }
+    completion_store_columns = {
+        row[3]
+        for row in completion_foreign_keys
+        if row[2] == "signal_store_entries"
+    }
+    assert completion_store_columns == {
+        "pair_signal_id",
+        "pair_signal_store_sequence",
+    }
+    assert {
+        "pair_signal_derivations_no_update",
+        "pair_signal_derivations_no_delete",
+        "pair_signal_derivation_observations_no_update",
+        "pair_signal_derivation_observations_no_delete",
+        "pair_signal_materialization_completions_no_update",
+        "pair_signal_materialization_completions_no_delete",
+    } <= triggers
 
 
 def test_0003_candidate_foreign_key_uses_exact_signal_and_store_sequence(
@@ -449,7 +582,7 @@ def test_0003_candidate_foreign_key_uses_exact_signal_and_store_sequence(
     )
 
 
-def test_signal_storage_origin_reserves_pair_materialization_without_using_it() -> None:
+def test_signal_storage_origin_supports_pair_materialization() -> None:
     assert tuple(item.value for item in SignalStorageOrigin) == (
         "LEGACY_BACKFILL",
         "APPEND",

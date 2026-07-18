@@ -836,14 +836,23 @@ def expected_pair_signal_id(
     )
 
 
-def expected_pair_signal_snapshot(
+def expected_pair_signal(
     selection_snapshot: PairSignalSelectionSnapshot,
     *,
     materialized_at: datetime,
-) -> SignalContentSnapshot:
+) -> Signal:
     selection_snapshot.validate_intrinsic_integrity()
+    require_utc(materialized_at, "Pair Signal materialized_at")
     base, quote = _selected_candidates(selection_snapshot)
-    pair_signal = CurrencyPairSignalTransformer(
+    if materialized_at < selection_snapshot.as_of:
+        raise ValueError("Pair Signal cannot be materialized before request as_of")
+    if materialized_at < selection_snapshot.captured_at:
+        raise ValueError("Pair Signal cannot be materialized before selection capture")
+    if materialized_at < base.signal_snapshot.created_at:
+        raise ValueError("Pair Signal cannot predate BASE Signal")
+    if materialized_at < quote.signal_snapshot.created_at:
+        raise ValueError("Pair Signal cannot predate QUOTE Signal")
+    return CurrencyPairSignalTransformer(
         selection_snapshot.request.specification.output_transformation_version
     ).transform(
         _signal_from_content_snapshot(base.signal_snapshot),
@@ -856,6 +865,18 @@ def expected_pair_signal_snapshot(
         ),
         created_at=materialized_at,
     )
+
+
+def expected_pair_signal_snapshot(
+    selection_snapshot: PairSignalSelectionSnapshot,
+    *,
+    materialized_at: datetime,
+) -> SignalContentSnapshot:
+    pair_signal = expected_pair_signal(
+        selection_snapshot,
+        materialized_at=materialized_at,
+    )
+    base, _ = _selected_candidates(selection_snapshot)
     return SignalContentSnapshot.from_signal(
         pair_signal,
         SignalLineage(

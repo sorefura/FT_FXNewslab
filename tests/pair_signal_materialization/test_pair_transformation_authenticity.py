@@ -18,7 +18,9 @@ from fx_signal_store import (
     PairSignalDerivation,
     SignalContentSnapshot,
     SignalLineage,
+    expected_pair_signal,
     expected_pair_signal_snapshot,
+    resolve_pair_signal_selection,
     validate_pair_signal_transformation,
 )
 
@@ -155,6 +157,61 @@ def test_expected_pair_signal_is_exact_repeatable_shared_transformer_output() ->
     assert first.scorer_version == "fundamental-scorer-v1"
     assert first.transformation_version == "currency-pair-v1"
     assert derivation_first == derivation_second
+
+
+def test_expected_pair_signal_returns_typed_signal_matching_exact_snapshot() -> None:
+    selection = selected_snapshot()
+    materialized_at = NOW + timedelta(minutes=2)
+
+    pair_signal = expected_pair_signal(
+        selection,
+        materialized_at=materialized_at,
+    )
+    snapshot = SignalContentSnapshot.from_signal(
+        pair_signal,
+        SignalLineage(
+            signal_id=pair_signal.signal_id,
+            feature_ids=pair_signal.source_feature_ids,
+            observation_ids=selection.candidates[0].observation_ids,
+        ),
+    )
+
+    assert isinstance(pair_signal, Signal)
+    assert snapshot == expected_pair_signal_snapshot(
+        selection,
+        materialized_at=materialized_at,
+    )
+    assert pair_signal.direction.value == 0.8999999999999999
+    assert pair_signal.source_feature_ids == (
+        FeatureId("feature-base-1"),
+        FeatureId("feature-quote-1"),
+    )
+
+
+def test_expected_pair_signal_rejects_time_before_selection_capture() -> None:
+    selection = selected_snapshot()
+
+    with pytest.raises(ValueError, match="before selection capture"):
+        expected_pair_signal(
+            selection,
+            materialized_at=selection.captured_at - timedelta(microseconds=1),
+        )
+
+
+def test_expected_pair_signal_rejects_non_selected_snapshot() -> None:
+    materialization_request = request()
+    no_match = resolve_pair_signal_selection(
+        materialization_request,
+        0,
+        NOW + timedelta(minutes=1),
+        (),
+    )
+
+    with pytest.raises(ValueError, match="SELECTED"):
+        expected_pair_signal(
+            no_match,
+            materialized_at=NOW + timedelta(minutes=2),
+        )
 
 
 @pytest.mark.parametrize(

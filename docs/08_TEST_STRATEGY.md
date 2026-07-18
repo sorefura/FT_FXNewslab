@@ -1,6 +1,6 @@
 # Test Strategy
 
-## Production Strategy M2-A and Pair materialization M2-B1/B2-A tests
+## Production Strategy M2-A and Pair materialization M2-B1/B2/B3 tests
 
 Milestone 2-A tests already state:
 
@@ -68,9 +68,9 @@ Milestone 2-B1 tests additionally state:
   intrinsic identity, while no migration, Store query, materializer, concrete
   Strategy, or Paper code exists.
 
-Milestone 2-B2-A tests additionally state:
+Milestone 2-B2 tests additionally state:
 
-- fresh and legacy-0001 databases migrate to exactly 0001/0002, and every legacy
+- fresh and legacy-0001 databases migrate through exactly 0001/0002/0003, and every legacy
   Signal receives exactly one `LEGACY_BACKFILL` Store entry in explicit
   `created_at, SignalId` catalog order without claiming historical insertion order;
 - each migration body and marker commit in one `BEGIN IMMEDIATE` transaction;
@@ -98,9 +98,30 @@ Milestone 2-B2-A tests additionally state:
   current maximum or no longer references an exact Store boundary;
 - Claim and `list_signals()` use connection-scoped helpers without opening a nested
   connection; and
-- Store entry, Specification, Request, and Claim tables reject UPDATE/DELETE, while
-  selection snapshot, candidate, Pair Signal derivation/completion, materializer,
-  Strategy, and Paper persistence remain absent.
+- Store entry, Specification, Request, and Claim tables reject UPDATE/DELETE.
+
+Milestone 2-B3 tests additionally state:
+
+- capture fails closed without one exact persisted Request/Claim and never accepts a
+  caller candidate list, checkpoint, capture time, outcome, reason, or selected IDs;
+- every Store Signal through the frozen checkpoint produces exactly one BASE and one
+  QUOTE candidate, including target/version/time/staleness-ineligible evidence;
+- canonical candidate and Observation ordinals are contiguous and independent of
+  query/insertion ordering;
+- the existing inspector and full-inventory resolver exclusively derive eligibility,
+  terminal outcome, reason, and selected lineage;
+- `SELECTED`, `NO_MATCH`, and `AMBIGUOUS` Snapshot/candidate/Observation evidence
+  round-trips exactly, while `SELECTED` creates no Pair Signal;
+- retry rebuilds source Signal/Feature/Observation/Store evidence and returns
+  `REUSED_IDENTICAL` only when every row is exact;
+- missing, added, reordered, or altered candidates, Observations, selected fields,
+  checkpoint/capture time, and source lineage fail closed without repair;
+- Snapshot, candidate, Observation, and post-insert hydration failures roll back all
+  selection rows; two Store instances converge to one Snapshot under
+  `BEGIN IMMEDIATE`; and
+- all three Selection evidence tables reject UPDATE/DELETE, while Pair Signal,
+  derivation, completion, operational materializer, Strategy, and Paper persistence
+  remain absent.
 
 Later ExecPlan 0006 implementation tests will state the following guarantees:
 

@@ -28,15 +28,26 @@ from fx_core import (
 from fx_core.time import require_utc
 
 from .pair_materialization import (
+    PairSignalCandidateEligibility,
+    PairSignalCandidateRejectionReason,
     PairSignalMaterializationRequest,
     PairSignalMaterializationSpecification,
+    PairSignalSelectionCandidate,
+    PairSignalSelectionOutcome,
+    PairSignalSelectionReason,
+    PairSignalSelectionSnapshot,
     SignalContentSnapshot,
+    SourceSignalRole,
+    inspect_source_candidate,
+    resolve_pair_signal_selection,
 )
 from .persistence import (
     PAIR_SIGNAL_MATERIALIZATION_CLAIM_VERSION,
     SIGNAL_STORE_ENTRY_VERSION,
     PairMaterializationPersistenceConflict,
     PairSignalMaterializationClaim,
+    PairSignalSelectionPersistenceDisposition,
+    PairSignalSelectionPersistenceResult,
     SignalLineage,
     SignalStorageOrigin,
     SignalStoreEntry,
@@ -510,9 +521,40 @@ class SQLiteSignalStore:
         connection: sqlite3.Connection,
         signal_id: SignalId,
     ) -> SignalContentSnapshot:
+        signal = self._get_signal(connection, signal_id)
+        lineage = self._get_lineage(connection, signal_id)
+        missing_feature = connection.execute(
+            """
+            SELECT ss.feature_id
+            FROM signal_sources AS ss
+            LEFT JOIN features AS f ON f.id = ss.feature_id
+            WHERE ss.signal_id = ? AND f.id IS NULL
+            LIMIT 1
+            """,
+            (signal_id.value,),
+        ).fetchone()
+        if missing_feature is not None:
+            raise SignalStoreIntegrityError(
+                f"Signal {signal_id.value} references an absent Feature"
+            )
+        missing_observation = connection.execute(
+            """
+            SELECT fs.observation_id
+            FROM signal_sources AS ss
+            JOIN feature_sources AS fs ON fs.feature_id = ss.feature_id
+            LEFT JOIN observations AS o ON o.id = fs.observation_id
+            WHERE ss.signal_id = ? AND o.id IS NULL
+            LIMIT 1
+            """,
+            (signal_id.value,),
+        ).fetchone()
+        if missing_observation is not None:
+            raise SignalStoreIntegrityError(
+                f"Signal {signal_id.value} references an absent Observation"
+            )
         return SignalContentSnapshot.from_signal(
-            self._get_signal(connection, signal_id),
-            self._get_lineage(connection, signal_id),
+            signal,
+            lineage,
         )
 
     def get_signal_store_entry(self, signal_id: SignalId) -> SignalStoreEntry:
@@ -718,6 +760,438 @@ class SQLiteSignalStore:
         if row is None or row[0] != 1:
             raise SignalStoreIntegrityError(
                 "materialization Claim checkpoint does not reference a Store entry"
+            )
+
+    def capture_pair_signal_selection(
+        self,
+        request: PairSignalMaterializationRequest,
+    ) -> PairSignalSelectionPersistenceResult:
+        request.validate_intrinsic_integrity()
+        with closing(self._connect()) as connection:
+            try:
+                connection.execute("BEGIN IMMEDIATE")
+                current_checkpoint = self._current_signal_checkpoint(connection)
+                claim = self._get_exact_materialization_claim(
+                    connection,
+                    request,
+                    current_checkpoint=current_checkpoint,
+                )
+                candidates = self._capture_pair_signal_candidates(connection, claim)
+                expected = resolve_pair_signal_selection(
+                    claim.request,
+                    claim.checkpoint_sequence,
+                    claim.captured_at,
+                    candidates,
+                )
+                existing = self._get_selection_snapshot(
+                    connection,
+                    request_id=request.request_id,
+                    expected_selection_snapshot_id=expected.selection_snapshot_id,
+                )
+                if existing is not None:
+                    self._validate_selection_snapshot_relational_integrity(
+                        connection,
+                        existing,
+                        claim,
+                    )
+                    if existing != expected:
+                        raise SignalStoreIntegrityError(
+                            "persisted selection evidence differs from its source Store"
+                        )
+                    connection.commit()
+                    return PairSignalSelectionPersistenceResult(
+                        disposition=(
+                            PairSignalSelectionPersistenceDisposition.REUSED_IDENTICAL
+                        ),
+                        selection_snapshot=existing,
+                    )
+
+                self._append_selection_snapshot_exact(connection, expected)
+                persisted = self._get_selection_snapshot(
+                    connection,
+                    request_id=request.request_id,
+                    expected_selection_snapshot_id=expected.selection_snapshot_id,
+                )
+                if persisted is None:
+                    raise SignalStoreIntegrityError(
+                        "selection evidence insert produced no persisted Snapshot"
+                    )
+                self._validate_selection_snapshot_relational_integrity(
+                    connection,
+                    persisted,
+                    claim,
+                )
+                if persisted != expected:
+                    raise SignalStoreIntegrityError(
+                        "selection evidence did not round-trip exactly"
+                    )
+                connection.commit()
+                return PairSignalSelectionPersistenceResult(
+                    disposition=PairSignalSelectionPersistenceDisposition.INSERTED,
+                    selection_snapshot=persisted,
+                )
+            except Exception:
+                connection.rollback()
+                raise
+
+    def _get_exact_materialization_claim(
+        self,
+        connection: sqlite3.Connection,
+        request: PairSignalMaterializationRequest,
+        *,
+        current_checkpoint: int,
+    ) -> PairSignalMaterializationClaim:
+        persisted_request = self._get_request(connection, request.request_id)
+        if persisted_request is None:
+            raise PairMaterializationPersistenceConflict(
+                "materialization Request must be persisted before selection capture"
+            )
+        if persisted_request != request:
+            raise PairMaterializationPersistenceConflict(
+                "supplied materialization Request differs from persisted content"
+            )
+        claim = self._get_materialization_claim(connection, request.request_id)
+        if claim is None:
+            raise PairMaterializationPersistenceConflict(
+                "materialization Claim must exist before selection capture"
+            )
+        self._validate_materialization_claim_checkpoint(
+            connection,
+            claim,
+            current_checkpoint=current_checkpoint,
+        )
+        return claim
+
+    def _capture_pair_signal_candidates(
+        self,
+        connection: sqlite3.Connection,
+        claim: PairSignalMaterializationClaim,
+    ) -> tuple[PairSignalSelectionCandidate, ...]:
+        candidates: list[PairSignalSelectionCandidate] = []
+        for entry in self._list_signal_store_entries_through_checkpoint(
+            connection,
+            claim.checkpoint_sequence,
+        ):
+            try:
+                snapshot = self._get_signal_snapshot(connection, entry.signal_id)
+                for role in (SourceSignalRole.BASE, SourceSignalRole.QUOTE):
+                    candidates.append(
+                        inspect_source_candidate(
+                            claim.request,
+                            role,
+                            snapshot,
+                            entry.store_sequence,
+                        )
+                    )
+            except (KeyError, TypeError, ValueError) as error:
+                raise SignalStoreIntegrityError(
+                    f"Signal {entry.signal_id.value} cannot be captured as selection evidence"
+                ) from error
+        return tuple(candidates)
+
+    def _list_signal_store_entries_through_checkpoint(
+        self,
+        connection: sqlite3.Connection,
+        checkpoint_sequence: int,
+    ) -> tuple[SignalStoreEntry, ...]:
+        rows = connection.execute(
+            "SELECT * FROM signal_store_entries "
+            "WHERE store_sequence <= ? ORDER BY store_sequence",
+            (checkpoint_sequence,),
+        ).fetchall()
+        return tuple(self._signal_store_entry_from_row(row) for row in rows)
+
+    @staticmethod
+    def _append_selection_snapshot_exact(
+        connection: sqlite3.Connection,
+        snapshot: PairSignalSelectionSnapshot,
+    ) -> None:
+        snapshot.validate_intrinsic_integrity()
+        connection.execute(
+            """
+            INSERT INTO pair_signal_selection_snapshots(
+                selection_snapshot_id, contract_version, request_id,
+                checkpoint_sequence, captured_at, candidate_set_hash, outcome,
+                reason, selected_base_candidate_id, selected_quote_candidate_id,
+                selected_base_signal_id, selected_quote_signal_id,
+                selected_observation_group_identity
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            (
+                snapshot.selection_snapshot_id,
+                snapshot.contract_version,
+                snapshot.request_id,
+                snapshot.checkpoint_sequence,
+                snapshot.captured_at.isoformat(),
+                snapshot.candidate_set_hash,
+                snapshot.outcome.value,
+                snapshot.reason.value,
+                snapshot.selected_base_candidate_id,
+                snapshot.selected_quote_candidate_id,
+                None
+                if snapshot.selected_base_signal_id is None
+                else snapshot.selected_base_signal_id.value,
+                None
+                if snapshot.selected_quote_signal_id is None
+                else snapshot.selected_quote_signal_id.value,
+                snapshot.selected_observation_group_identity,
+            ),
+        )
+        for candidate_ordinal, candidate in enumerate(snapshot.candidates):
+            connection.execute(
+                """
+                INSERT INTO pair_signal_selection_candidates(
+                    candidate_id, selection_snapshot_id, candidate_ordinal,
+                    contract_version, request_id, role, signal_id,
+                    signal_content_hash, store_sequence,
+                    observation_group_identity, eligibility, rejection_reason
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    candidate.candidate_id,
+                    snapshot.selection_snapshot_id,
+                    candidate_ordinal,
+                    candidate.contract_version,
+                    candidate.request_id,
+                    candidate.role.value,
+                    candidate.signal_snapshot.signal_id.value,
+                    candidate.signal_snapshot.signal_content_hash,
+                    candidate.store_sequence,
+                    candidate.observation_group_identity,
+                    candidate.eligibility.value,
+                    None
+                    if candidate.rejection_reason is None
+                    else candidate.rejection_reason.value,
+                ),
+            )
+            connection.executemany(
+                """
+                INSERT INTO pair_signal_selection_candidate_observations(
+                    candidate_id, observation_ordinal, observation_id
+                ) VALUES (?, ?, ?)
+                """,
+                (
+                    (candidate.candidate_id, ordinal, observation_id.value)
+                    for ordinal, observation_id in enumerate(candidate.observation_ids)
+                ),
+            )
+
+    def _get_selection_snapshot(
+        self,
+        connection: sqlite3.Connection,
+        *,
+        request_id: str,
+        expected_selection_snapshot_id: str,
+    ) -> PairSignalSelectionSnapshot | None:
+        rows = connection.execute(
+            """
+            SELECT * FROM pair_signal_selection_snapshots
+            WHERE request_id = ? OR selection_snapshot_id = ?
+            """,
+            (request_id, expected_selection_snapshot_id),
+        ).fetchall()
+        if not rows:
+            return None
+        if len(rows) != 1:
+            raise SignalStoreIntegrityError(
+                "one materialization Request maps to conflicting selection Snapshots"
+            )
+        row = rows[0]
+        request = self._get_request(connection, row["request_id"])
+        if request is None:
+            raise SignalStoreIntegrityError(
+                "selection Snapshot has no materialization Request"
+            )
+        candidates = self._hydrate_selection_candidates(
+            connection,
+            selection_snapshot_id=row["selection_snapshot_id"],
+            request=request,
+        )
+        try:
+            snapshot = PairSignalSelectionSnapshot(
+                selection_snapshot_id=row["selection_snapshot_id"],
+                contract_version=row["contract_version"],
+                request=request,
+                checkpoint_sequence=row["checkpoint_sequence"],
+                captured_at=datetime.fromisoformat(row["captured_at"]),
+                candidates=candidates,
+                candidate_set_hash=row["candidate_set_hash"],
+                outcome=PairSignalSelectionOutcome(row["outcome"]),
+                reason=PairSignalSelectionReason(row["reason"]),
+                selected_base_candidate_id=row["selected_base_candidate_id"],
+                selected_quote_candidate_id=row["selected_quote_candidate_id"],
+                selected_base_signal_id=(
+                    None
+                    if row["selected_base_signal_id"] is None
+                    else SignalId(row["selected_base_signal_id"])
+                ),
+                selected_quote_signal_id=(
+                    None
+                    if row["selected_quote_signal_id"] is None
+                    else SignalId(row["selected_quote_signal_id"])
+                ),
+                selected_observation_group_identity=(
+                    row["selected_observation_group_identity"]
+                ),
+            )
+        except (TypeError, ValueError) as error:
+            raise SignalStoreIntegrityError(
+                "persisted Pair Signal selection Snapshot is invalid"
+            ) from error
+        return snapshot
+
+    def _hydrate_selection_candidates(
+        self,
+        connection: sqlite3.Connection,
+        *,
+        selection_snapshot_id: str,
+        request: PairSignalMaterializationRequest,
+    ) -> tuple[PairSignalSelectionCandidate, ...]:
+        rows = connection.execute(
+            """
+            SELECT * FROM pair_signal_selection_candidates
+            WHERE selection_snapshot_id = ? ORDER BY candidate_ordinal
+            """,
+            (selection_snapshot_id,),
+        ).fetchall()
+        ordinals = tuple(row["candidate_ordinal"] for row in rows)
+        if ordinals != tuple(range(len(rows))):
+            raise SignalStoreIntegrityError(
+                "selection candidate ordinals must be contiguous and canonical"
+            )
+        candidates: list[PairSignalSelectionCandidate] = []
+        for row in rows:
+            try:
+                signal_id = SignalId(row["signal_id"])
+                role = SourceSignalRole(row["role"])
+                persisted_eligibility = PairSignalCandidateEligibility(
+                    row["eligibility"]
+                )
+                persisted_reason = (
+                    None
+                    if row["rejection_reason"] is None
+                    else PairSignalCandidateRejectionReason(row["rejection_reason"])
+                )
+            except (TypeError, ValueError) as error:
+                raise SignalStoreIntegrityError(
+                    "persisted Pair Signal selection candidate is invalid"
+                ) from error
+            try:
+                entry = self._get_signal_store_entry(connection, signal_id)
+            except KeyError as error:
+                raise SignalStoreIntegrityError(
+                    "selection candidate references an absent source Signal"
+                ) from error
+            if entry.store_sequence != row["store_sequence"]:
+                raise SignalStoreIntegrityError(
+                    "selection candidate does not reference its exact Store entry"
+                )
+            try:
+                signal_snapshot = self._get_signal_snapshot(connection, signal_id)
+                expected = inspect_source_candidate(
+                    request,
+                    role,
+                    signal_snapshot,
+                    entry.store_sequence,
+                )
+            except (KeyError, TypeError, ValueError) as error:
+                raise SignalStoreIntegrityError(
+                    "selection candidate source Signal cannot be reconstructed"
+                ) from error
+            observation_rows = connection.execute(
+                """
+                SELECT observation_ordinal, observation_id
+                FROM pair_signal_selection_candidate_observations
+                WHERE candidate_id = ? ORDER BY observation_ordinal
+                """,
+                (row["candidate_id"],),
+            ).fetchall()
+            observation_ordinals = tuple(
+                item["observation_ordinal"] for item in observation_rows
+            )
+            if observation_ordinals != tuple(range(len(observation_rows))):
+                raise SignalStoreIntegrityError(
+                    "candidate Observation ordinals must be contiguous and canonical"
+                )
+            try:
+                persisted_observations = tuple(
+                    ObservationId(item["observation_id"])
+                    for item in observation_rows
+                )
+            except (TypeError, ValueError) as error:
+                raise SignalStoreIntegrityError(
+                    "persisted candidate Observation lineage is invalid"
+                ) from error
+            persisted_values = (
+                row["candidate_id"],
+                row["contract_version"],
+                row["request_id"],
+                role,
+                signal_id,
+                row["signal_content_hash"],
+                row["store_sequence"],
+                row["observation_group_identity"],
+                persisted_observations,
+                persisted_eligibility,
+                persisted_reason,
+            )
+            expected_values = (
+                expected.candidate_id,
+                expected.contract_version,
+                expected.request_id,
+                expected.role,
+                expected.signal_snapshot.signal_id,
+                expected.signal_snapshot.signal_content_hash,
+                expected.store_sequence,
+                expected.observation_group_identity,
+                expected.observation_ids,
+                expected.eligibility,
+                expected.rejection_reason,
+            )
+            if persisted_values != expected_values:
+                raise SignalStoreIntegrityError(
+                    "persisted selection candidate differs from reconstructed evidence"
+                )
+            candidates.append(expected)
+        return tuple(candidates)
+
+    def _validate_selection_snapshot_relational_integrity(
+        self,
+        connection: sqlite3.Connection,
+        snapshot: PairSignalSelectionSnapshot,
+        claim: PairSignalMaterializationClaim,
+    ) -> None:
+        snapshot.validate_intrinsic_integrity()
+        claim.validate_intrinsic_integrity()
+        persisted_claim = self._get_materialization_claim(
+            connection,
+            claim.request.request_id,
+        )
+        if persisted_claim != claim:
+            raise SignalStoreIntegrityError(
+                "selection Snapshot authority differs from the persisted Claim"
+            )
+        if snapshot.request != claim.request:
+            raise SignalStoreIntegrityError(
+                "selection Snapshot does not belong to its materialization Claim"
+            )
+        if snapshot.checkpoint_sequence != claim.checkpoint_sequence:
+            raise SignalStoreIntegrityError(
+                "selection Snapshot checkpoint differs from its Claim"
+            )
+        if snapshot.captured_at != claim.captured_at:
+            raise SignalStoreIntegrityError(
+                "selection Snapshot captured_at differs from its Claim"
+            )
+        expected = resolve_pair_signal_selection(
+            claim.request,
+            claim.checkpoint_sequence,
+            claim.captured_at,
+            snapshot.candidates,
+        )
+        if snapshot != expected:
+            raise SignalStoreIntegrityError(
+                "selection Snapshot differs from the shared resolver result"
             )
 
     def _append_or_compare_specification(

@@ -9,7 +9,10 @@ from fx_core import FeatureId, ObservationId, SignalId
 from fx_core.time import require_utc
 
 if TYPE_CHECKING:
-    from .pair_materialization import PairSignalMaterializationRequest
+    from .pair_materialization import (
+        PairSignalMaterializationRequest,
+        PairSignalSelectionSnapshot,
+    )
 
 
 SIGNAL_STORE_ENTRY_VERSION = "signal-store-entry-v1"
@@ -28,6 +31,11 @@ class SignalStorageOrigin(StrEnum):
     LEGACY_BACKFILL = "LEGACY_BACKFILL"
     APPEND = "APPEND"
     PAIR_MATERIALIZATION = "PAIR_MATERIALIZATION"
+
+
+class PairSignalSelectionPersistenceDisposition(StrEnum):
+    INSERTED = "INSERTED"
+    REUSED_IDENTICAL = "REUSED_IDENTICAL"
 
 
 @dataclass(frozen=True, slots=True)
@@ -78,6 +86,25 @@ class PairSignalMaterializationClaim:
         require_utc(self.captured_at, "materialization claim captured_at")
         if self.captured_at < self.request.as_of:
             raise ValueError("materialization claim captured_at cannot be before request as_of")
+
+
+@dataclass(frozen=True, slots=True)
+class PairSignalSelectionPersistenceResult:
+    disposition: PairSignalSelectionPersistenceDisposition
+    selection_snapshot: PairSignalSelectionSnapshot
+
+    def __post_init__(self) -> None:
+        from .pair_materialization import PairSignalSelectionSnapshot
+
+        if not isinstance(
+            self.disposition, PairSignalSelectionPersistenceDisposition
+        ):
+            raise TypeError(
+                "disposition must be PairSignalSelectionPersistenceDisposition"
+            )
+        if not isinstance(self.selection_snapshot, PairSignalSelectionSnapshot):
+            raise TypeError("selection_snapshot must be PairSignalSelectionSnapshot")
+        self.selection_snapshot.validate_intrinsic_integrity()
 
 
 def _require_positive_int(value: int, label: str) -> None:

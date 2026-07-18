@@ -1239,6 +1239,18 @@ ExecPlan 0006 is complete only when all of the following are true:
 - [x] (2026-07-19) Passed M2-B5 through the full local Python 3.11/3.14 test, Ruff,
   strict mypy, public-import, focused operational/recovery/concurrency, migration,
   and diff-check matrix with no migration or Adoption/Strategy/Paper integration.
+- [x] (2026-07-19) Milestone 2-B5 review correction - authenticated each Store
+  stage return before advancing to the next independently committed stage; rejected
+  malformed Claim returns before Selection, malformed Selection returns before
+  Completion or conditional-time routing, and malformed Completion returns without
+  issuing an operational result.
+- [x] (2026-07-19) Retained aggregate result validation as defense in depth,
+  preserved Store-thrown exception identity and no-auto-retry behavior, and proved
+  that healthy replay reauthenticates a valid Completion transaction after a
+  malformed adapter return.
+- [x] (2026-07-19) Passed the M2-B5 review correction through full local Python
+  3.11/3.14 tests, Ruff, strict mypy, import smoke, focused stage-integrity tests,
+  migration/scope inspection, and diff check.
 - [x] Milestone 2-B2 - Signal Store sequence and materialization Request Claim.
 - [x] Milestone 2-B3 - Selection Evidence Persistence.
 - [x] Milestone 2-B4 - Pair Artifact Exact Persistence and completion root.
@@ -1562,6 +1574,22 @@ ExecPlan 0006 is complete only when all of the following are true:
   failing boundary and duplicate the caller's operational retry policy.
   Resolution: call each stage at most once, propagate its original exception, and
   require an explicit caller replay of the same Request.
+- Observation: final aggregate validation is too late to protect a following stage
+  whose Store transaction commits independently.
+  Resolution: validate each successful return immediately and advance only with the
+  canonical validated object; keep aggregate validation as a final defense.
+- Observation: structural Protocol conformance proves that methods exist, not that
+  an adapter's successful return contains authentic evidence.
+  Resolution: malformed Claim, Selection, and Completion returns fail closed with a
+  stage-labelled `SignalStoreIntegrityError`.
+- Observation: Selection outcome controls conditional materialization-time routing.
+  Resolution: authenticate its intrinsic terminal resolution and exact Claim
+  relationship before reading the outcome for branching.
+- Observation: rejecting a malformed Completion return cannot undo an already valid
+  completed transaction.
+  Resolution: preserve append-only evidence and use healthy replay to reauthenticate
+  the persisted root as `REUSED_IDENTICAL`; staged durability requires staged return
+  validation rather than repair.
 - Observation: a persisted Pair Signal remains an immutable hypothesis artifact and
   is not a Live authority envelope.
   Resolution: M2-B5 imports no Adoption or Strategy type and leaves
@@ -1745,6 +1773,20 @@ ExecPlan 0006 is complete only when all of the following are true:
   of nested persisted Evidence, not Signal authorization or another persistence root.
 - 2026-07-19: Leave Live Adoption, concrete Strategy, recurring operation, and Paper
   integration to M2-C and later milestones.
+- 2026-07-19: Validate a Claim return before calling Selection, including its exact
+  Request and existing intrinsic contract.
+- 2026-07-19: Validate a Selection return against Claim before reading outcome or
+  routing conditional materialization time.
+- 2026-07-19: Validate a Completion return against the validated Selection before
+  constructing an operational outcome.
+- 2026-07-19: Convert malformed successful Store returns to stage-labelled
+  `SignalStoreIntegrityError`, while preserving Store-thrown exceptions unwrapped.
+- 2026-07-19: Retain `PairSignalMaterializerResult` intrinsic validation as the final
+  defense after all staged checks succeed.
+- 2026-07-19: Recover a valid Completion followed by malformed return evidence only
+  through healthy exact replay; do not repair or delete committed evidence.
+- 2026-07-19: Add no long transaction, migration, run-status persistence, automatic
+  retry, M2-C Adoption/Strategy composition, or Paper behavior for this correction.
 - 2026-07-17: Paper persistence begins at the next available additive Live migration
   after Milestone 2 Strategy persistence; `0003` is neither reserved nor created by
   Milestone 2-A.
@@ -2176,3 +2218,35 @@ Milestone 2-B5 Operational Pair Materializer completed locally on 2026-07-19:
   changed.
 - Hosted CI has not been run for this unpushed M2-B5 commit; only local validation is
   claimed.
+
+Milestone 2-B5 staged-return review correction completed locally on 2026-07-19:
+
+- Python 3.11.9: `743 passed, 5 skipped`; Python 3.14.6:
+  `743 passed, 5 skipped`. The five skips remain opt-in external-provider smoke
+  tests. Full pytest used distinct workspace basetemp roots with cache disabled.
+- Focused operational/architecture validation passed as `47 passed` on both
+  versions. Invalid Claim returns produced call trace `Claim` only and left no
+  Selection or Completion. Invalid Selection returns produced
+  `Claim -> Selection`, never called Completion, and never routed conditional
+  materialization time for either forged SELECTED-to-NO_MATCH or
+  NO_MATCH-to-SELECTED evidence.
+- Invalid Completion returns produced `Claim -> Selection -> Completion` and no
+  operational result. When the underlying valid Completion had committed, healthy
+  replay returned `REUSED_IDENTICAL` with one unchanged Pair Signal, Store entry,
+  Derivation, and Completion. Non-selected artifact forgery was also rejected.
+- Existing Store-exception probes retained the exact original conflict, integrity,
+  and SQLite error objects; each failing stage ran once, no following stage ran, and
+  no automatic retry occurred.
+- Ruff passed on Python 3.11 and 3.14. Strict mypy passed for 73 source files on both
+  versions. Both requested public import smoke commands passed on both versions.
+- Shared Signal Store migrations remain exactly
+  `0001_signal_lineage.sql`, `0002_pair_materialization_persistence.sql`,
+  `0003_pair_signal_selection_evidence.sql`, and
+  `0004_pair_signal_artifact_persistence.sql`. No migration, SQL, `store.py`, or
+  `persistence.py` change was made.
+- `git diff --check` passed. The six changed files are limited to the Store-neutral
+  Materializer, its operational tests, and four living documents. No Live Adoption,
+  concrete Strategy, Portfolio, Risk, Broker/Execution, Paper, scheduler/CLI, or
+  ExecPlan 0007 implementation changed.
+- Hosted CI has not been run for this unpushed review-correction commit; only local
+  validation is claimed.

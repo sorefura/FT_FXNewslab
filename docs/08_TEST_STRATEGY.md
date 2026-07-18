@@ -160,6 +160,12 @@ Milestone 2-B5 tests additionally state:
 - the frozen operational result revalidates Request, Claim checkpoint/capture time,
   Selection, Completion, artifact cardinality, and the exact four-value outcome
   mapping;
+- malformed Claim success returns stop before Selection; malformed Selection success
+  returns stop before Completion and before conditional-time routing; malformed
+  Completion success returns produce no operational result;
+- stage validation reuses the existing intrinsic contracts, checks exact cross-stage
+  Request/checkpoint/capture/Selection relations, and maps malformed returns to a
+  stage-labelled `SignalStoreIntegrityError`;
 - first SELECTED completion is `MATERIALIZED`, exact SELECTED replay is
   `REUSED_IDENTICAL`, NO_MATCH is `NO_SELECTION`, and AMBIGUOUS remains
   `AMBIGUOUS` with its detailed Selection reason intact;
@@ -167,6 +173,9 @@ Milestone 2-B5 tests additionally state:
   the same Request, while missing first SELECTED time leaves durable recovery anchors;
 - conflicts, corruption, and database errors propagate unchanged after one failing
   stage call; no following stage, sleep, backoff, or automatic retry occurs;
+- a valid Completion transaction followed by a malformed adapter return remains
+  immutable, and healthy replay reauthenticates it as `REUSED_IDENTICAL` without a
+  duplicate artifact;
 - Signals appended or old-created backfilled after Claim cannot cross its checkpoint,
   and Signals appended after Selection cannot change Completion or retry artifacts;
 - concurrent materializers converge on one Claim, Selection, Completion, and

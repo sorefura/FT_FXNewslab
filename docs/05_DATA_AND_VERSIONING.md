@@ -108,7 +108,13 @@ materializer composes the existing Claim, Selection, and Completion APIs as thre
 independent short transactions. Its frozen `pair-signal-materializer-result-v1`
 return value groups the exact persisted Claim, Selection result, and Completion
 result and validates their Request, checkpoint, capture time, outcome, and artifact
-cardinality relations. It is not persisted and does not authorize the Pair Signal.
+cardinality relations. Because each API commits independently, the materializer also
+authenticates Claim before Selection, Selection before reading its outcome or calling
+Completion, and Completion before constructing an operational outcome. A malformed
+successful adapter return cannot authorize the next durable write. It fails as a
+stage-labelled `SignalStoreIntegrityError`, while an exception raised by the Store
+operation itself remains unwrapped. The aggregate validation remains defense in
+depth; it is not persisted and does not authorize the Pair Signal.
 
 The caller supplies one explicit Claim audit time and an optional conditional
 SELECTED materialization time. Retry may supply a later Claim time or omit the
@@ -116,6 +122,10 @@ SELECTED time after Completion exists; persisted first-write times remain author
 NO_MATCH and AMBIGUOUS never receive the conditional materialization time. Failures
 remain exceptions, and retry is an explicit caller decision to replay the same
 Request rather than a mutable attempt record or internal loop.
+If Completion committed but an adapter returned malformed success evidence, the
+materializer does not rewrite or delete that immutable transaction. A healthy replay
+reauthenticates the persisted Completion and converges through
+`REUSED_IDENTICAL`.
 
 Only the first SELECTED completion accepts UTC `materialized_at`. That instant is
 both Pair Signal `created_at` and Store `stored_at`; it participates in deterministic

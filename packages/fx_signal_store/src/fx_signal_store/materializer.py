@@ -19,6 +19,7 @@ from .persistence import (
     PairSignalMaterializationPersistenceResult,
     PairSignalSelectionPersistenceDisposition,
     PairSignalSelectionPersistenceResult,
+    SignalStoreIntegrityError,
 )
 
 PAIR_SIGNAL_MATERIALIZER_RESULT_VERSION = "pair-signal-materializer-result-v1"
@@ -171,7 +172,12 @@ class OperationalPairSignalMaterializer:
             request,
             captured_at=claim_captured_at,
         )
-        selection_result = self.store.capture_pair_signal_selection(request)
+        claim = _validate_claim_stage(request, claim)
+        selection_result = _validate_selection_stage(
+            request,
+            claim,
+            self.store.capture_pair_signal_selection(request),
+        )
         if (
             selection_result.selection_snapshot.outcome
             is PairSignalSelectionOutcome.SELECTED
@@ -182,6 +188,11 @@ class OperationalPairSignalMaterializer:
             )
         else:
             completion_result = self.store.complete_pair_signal_materialization(request)
+        completion_result = _validate_completion_stage(
+            request,
+            selection_result,
+            completion_result,
+        )
         outcome = _operational_outcome(
             selection_result.selection_snapshot.outcome,
             completion_result.disposition,
@@ -194,6 +205,86 @@ class OperationalPairSignalMaterializer:
             selection_result=selection_result,
             completion_result=completion_result,
         )
+
+
+def _validate_claim_stage(
+    request: PairSignalMaterializationRequest,
+    claim: object,
+) -> PairSignalMaterializationClaim:
+    try:
+        if not isinstance(claim, PairSignalMaterializationClaim):
+            raise TypeError("Claim result must be PairSignalMaterializationClaim")
+        claim.validate_intrinsic_integrity()
+        if claim.request != request:
+            raise ValueError("Claim belongs to another materialization Request")
+    except (TypeError, ValueError) as error:
+        raise SignalStoreIntegrityError(
+            "materializer Claim stage returned invalid evidence"
+        ) from error
+    return claim
+
+
+def _validate_selection_stage(
+    request: PairSignalMaterializationRequest,
+    claim: PairSignalMaterializationClaim,
+    selection_result: object,
+) -> PairSignalSelectionPersistenceResult:
+    try:
+        if not isinstance(selection_result, PairSignalSelectionPersistenceResult):
+            raise TypeError(
+                "Selection result must be PairSignalSelectionPersistenceResult"
+            )
+        validated = PairSignalSelectionPersistenceResult(
+            disposition=selection_result.disposition,
+            selection_snapshot=selection_result.selection_snapshot,
+        )
+        if validated != selection_result:
+            raise ValueError("Selection result differs after intrinsic validation")
+        selection = validated.selection_snapshot
+        if selection.request != request:
+            raise ValueError("Selection belongs to another materialization Request")
+        if selection.checkpoint_sequence != claim.checkpoint_sequence:
+            raise ValueError("Selection checkpoint differs from Claim")
+        if selection.captured_at != claim.captured_at:
+            raise ValueError("Selection captured_at differs from Claim")
+    except (TypeError, ValueError) as error:
+        raise SignalStoreIntegrityError(
+            "materializer Selection stage returned invalid evidence"
+        ) from error
+    return validated
+
+
+def _validate_completion_stage(
+    request: PairSignalMaterializationRequest,
+    selection_result: PairSignalSelectionPersistenceResult,
+    completion_result: object,
+) -> PairSignalMaterializationPersistenceResult:
+    try:
+        if not isinstance(
+            completion_result,
+            PairSignalMaterializationPersistenceResult,
+        ):
+            raise TypeError(
+                "Completion result must be PairSignalMaterializationPersistenceResult"
+            )
+        validated = PairSignalMaterializationPersistenceResult(
+            disposition=completion_result.disposition,
+            completion=completion_result.completion,
+        )
+        if validated != completion_result:
+            raise ValueError("Completion result differs after intrinsic validation")
+        completion = validated.completion
+        if completion.request != request:
+            raise ValueError("Completion belongs to another materialization Request")
+        if completion.selection_snapshot != selection_result.selection_snapshot:
+            raise ValueError("Completion belongs to another Selection")
+        if completion.outcome is not selection_result.selection_snapshot.outcome:
+            raise ValueError("Completion outcome differs from Selection")
+    except (TypeError, ValueError) as error:
+        raise SignalStoreIntegrityError(
+            "materializer Completion stage returned invalid evidence"
+        ) from error
+    return validated
 
 
 def _operational_outcome(

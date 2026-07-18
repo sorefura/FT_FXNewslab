@@ -1,4 +1,5 @@
 import sqlite3
+from collections.abc import Callable
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import FrozenInstanceError, fields, replace
 from datetime import datetime, timedelta, timezone
@@ -22,6 +23,7 @@ from fx_signal_store import (
     PairSignalSelectionOutcome,
     PairSignalSelectionPersistenceDisposition,
     PairSignalSelectionPersistenceResult,
+    PairSignalSelectionReason,
     SignalStoreIntegrityError,
     SourceSignalRole,
     SQLiteSignalStore,
@@ -285,6 +287,55 @@ class _FailingStageStore:
             item,
             materialized_at=materialized_at,
         )
+
+
+class _MalformedReturnStore:
+    def __init__(
+        self,
+        store: SQLiteSignalStore,
+        stage: str,
+        alter: Callable[[object], object],
+    ) -> None:
+        self.store = store
+        self.stage = stage
+        self.alter = alter
+        self.calls: list[str] = []
+        self.completion_keyword_arguments: list[dict[str, datetime | None]] = []
+
+    def _returned(self, stage: str, result: object) -> object:
+        return self.alter(result) if self.stage == stage else result
+
+    def claim_pair_signal_materialization(
+        self,
+        item: PairSignalMaterializationRequest,
+        *,
+        captured_at: datetime,
+    ) -> PairSignalMaterializationClaim:
+        self.calls.append("claim")
+        result = self.store.claim_pair_signal_materialization(
+            item,
+            captured_at=captured_at,
+        )
+        return self._returned("claim", result)  # type: ignore[return-value]
+
+    def capture_pair_signal_selection(
+        self,
+        item: PairSignalMaterializationRequest,
+    ) -> PairSignalSelectionPersistenceResult:
+        self.calls.append("selection")
+        result = self.store.capture_pair_signal_selection(item)
+        return self._returned("selection", result)  # type: ignore[return-value]
+
+    def complete_pair_signal_materialization(
+        self,
+        item: PairSignalMaterializationRequest,
+        *args: object,
+        **kwargs: datetime | None,
+    ) -> PairSignalMaterializationPersistenceResult:
+        self.calls.append("completion")
+        self.completion_keyword_arguments.append(dict(kwargs))
+        result = self.store.complete_pair_signal_materialization(item, **kwargs)
+        return self._returned("completion", result)  # type: ignore[return-value]
 
 
 class _AppendAfterStageStore:
@@ -585,6 +636,153 @@ def test_input_validation_happens_before_any_store_operation(tmp_path: Path) -> 
     assert recording.calls == []
 
 
+@pytest.mark.parametrize("forgery", ("other-request", "contract", "wrong-type"))
+def test_invalid_claim_return_stops_before_selection(
+    tmp_path: Path,
+    forgery: str,
+) -> None:
+    path = tmp_path / f"invalid-claim-{forgery}.sqlite3"
+
+    def alter(value: object) -> object:
+        assert isinstance(value, PairSignalMaterializationClaim)
+        if forgery == "other-request":
+            return replace(value, request=request(as_of=NOW - timedelta(seconds=1)))
+        if forgery == "contract":
+            return _clone_without_validation(value, contract_version="forged-claim-v2")
+        return "not-a-claim"
+
+    malformed = _MalformedReturnStore(_selected_store(path), "claim", alter)
+
+    with pytest.raises(SignalStoreIntegrityError, match="Claim stage"):
+        OperationalPairSignalMaterializer(malformed).materialize(
+            request(),
+            claim_captured_at=CLAIMED_AT,
+            materialized_at_if_selected=MATERIALIZED_AT,
+        )
+
+    assert malformed.calls == ["claim"]
+    assert _stage_counts(path) == (1, 0, 0)
+    assert _artifact_counts(path) == (0, 0, 0, 0)
+
+
+@pytest.mark.parametrize(
+    "forgery",
+    (
+        "other-request",
+        "checkpoint",
+        "captured-at",
+        "wrong-result-type",
+        "wrong-disposition-type",
+        "forged-outcome",
+    ),
+)
+def test_invalid_selection_return_stops_before_completion(
+    tmp_path: Path,
+    forgery: str,
+) -> None:
+    path = tmp_path / f"invalid-selection-{forgery}.sqlite3"
+
+    def alter(value: object) -> object:
+        assert isinstance(value, PairSignalSelectionPersistenceResult)
+        snapshot = value.selection_snapshot
+        if forgery == "other-request":
+            forged_snapshot = _clone_without_validation(
+                snapshot,
+                request=request(as_of=NOW - timedelta(seconds=1)),
+            )
+        elif forgery == "checkpoint":
+            forged_snapshot = resolve_pair_signal_selection(
+                snapshot.request,
+                snapshot.checkpoint_sequence + 1,
+                snapshot.captured_at,
+                snapshot.candidates,
+            )
+        elif forgery == "captured-at":
+            forged_snapshot = resolve_pair_signal_selection(
+                snapshot.request,
+                snapshot.checkpoint_sequence,
+                snapshot.captured_at + timedelta(seconds=1),
+                snapshot.candidates,
+            )
+        elif forgery == "wrong-result-type":
+            return "not-a-selection-result"
+        elif forgery == "wrong-disposition-type":
+            return _clone_without_validation(value, disposition="INSERTED")
+        else:
+            forged_snapshot = _clone_without_validation(
+                snapshot,
+                outcome=PairSignalSelectionOutcome.NO_MATCH,
+                reason=PairSignalSelectionReason.NO_ELIGIBLE_BASE_SIGNAL,
+                selected_base_candidate_id=None,
+                selected_quote_candidate_id=None,
+                selected_base_signal_id=None,
+                selected_quote_signal_id=None,
+                selected_observation_group_identity=None,
+            )
+        return _clone_without_validation(value, selection_snapshot=forged_snapshot)
+
+    malformed = _MalformedReturnStore(_selected_store(path), "selection", alter)
+
+    with pytest.raises(SignalStoreIntegrityError, match="Selection stage"):
+        OperationalPairSignalMaterializer(malformed).materialize(
+            request(),
+            claim_captured_at=CLAIMED_AT,
+            materialized_at_if_selected=MATERIALIZED_AT,
+        )
+
+    assert malformed.calls == ["claim", "selection"]
+    assert malformed.completion_keyword_arguments == []
+    assert _stage_counts(path) == (1, 1, 0)
+    assert _artifact_counts(path) == (0, 0, 0, 0)
+
+
+@pytest.mark.parametrize(
+    ("actual", "forged"),
+    (
+        (PairSignalSelectionOutcome.SELECTED, PairSignalSelectionOutcome.NO_MATCH),
+        (PairSignalSelectionOutcome.NO_MATCH, PairSignalSelectionOutcome.SELECTED),
+    ),
+)
+def test_forged_selection_outcome_never_controls_materialization_time_routing(
+    tmp_path: Path,
+    actual: PairSignalSelectionOutcome,
+    forged: PairSignalSelectionOutcome,
+) -> None:
+    path = tmp_path / f"routing-{actual.value}-{forged.value}.sqlite3"
+    store = (
+        _selected_store(path)
+        if actual is PairSignalSelectionOutcome.SELECTED
+        else _outcome_store(path, actual)
+    )
+
+    def alter(value: object) -> object:
+        assert isinstance(value, PairSignalSelectionPersistenceResult)
+        snapshot = value.selection_snapshot
+        forged_snapshot = _clone_without_validation(
+            snapshot,
+            outcome=forged,
+            reason=(
+                PairSignalSelectionReason.NO_ELIGIBLE_BASE_SIGNAL
+                if forged is PairSignalSelectionOutcome.NO_MATCH
+                else PairSignalSelectionReason.SELECTED_EXACT_GROUP
+            ),
+        )
+        return _clone_without_validation(value, selection_snapshot=forged_snapshot)
+
+    malformed = _MalformedReturnStore(store, "selection", alter)
+
+    with pytest.raises(SignalStoreIntegrityError, match="Selection stage"):
+        OperationalPairSignalMaterializer(malformed).materialize(
+            request(),
+            claim_captured_at=CLAIMED_AT,
+            materialized_at_if_selected=MATERIALIZED_AT,
+        )
+
+    assert malformed.calls == ["claim", "selection"]
+    assert malformed.completion_keyword_arguments == []
+    assert _stage_counts(path) == (1, 1, 0)
+
+
 def test_first_selected_run_calls_each_stage_once_in_order_and_materializes(
     tmp_path: Path,
 ) -> None:
@@ -804,6 +1002,157 @@ def test_stage_exception_is_propagated_once_without_retry_or_following_stage(
     assert raised.value is error
     assert failing.calls == expected_calls
     assert all(failing.calls.count(item) == 1 for item in failing.calls)
+
+
+@pytest.mark.parametrize(
+    "forgery",
+    (
+        "other-request",
+        "other-selection",
+        "outcome",
+        "wrong-result-type",
+        "wrong-disposition-type",
+        "missing-selected-artifact",
+    ),
+)
+def test_invalid_completion_return_produces_no_operational_result(
+    tmp_path: Path,
+    forgery: str,
+) -> None:
+    path = tmp_path / f"invalid-completion-{forgery}.sqlite3"
+
+    def alter(value: object) -> object:
+        assert isinstance(value, PairSignalMaterializationPersistenceResult)
+        completion = value.completion
+        if forgery == "other-request":
+            other_request = request(as_of=NOW - timedelta(seconds=1))
+            other_selection = resolve_pair_signal_selection(
+                other_request,
+                completion.selection_snapshot.checkpoint_sequence,
+                completion.selection_snapshot.captured_at,
+                (),
+            )
+            forged_completion = _clone_without_validation(
+                completion,
+                request=other_request,
+                selection_snapshot=other_selection,
+                outcome=PairSignalSelectionOutcome.NO_MATCH,
+                pair_signal_snapshot=None,
+                pair_signal_store_entry=None,
+                derivation=None,
+            )
+        elif forgery == "other-selection":
+            other_selection = resolve_pair_signal_selection(
+                completion.request,
+                completion.selection_snapshot.checkpoint_sequence,
+                completion.selection_snapshot.captured_at,
+                (),
+            )
+            forged_completion = _clone_without_validation(
+                completion,
+                selection_snapshot=other_selection,
+                outcome=PairSignalSelectionOutcome.NO_MATCH,
+                pair_signal_snapshot=None,
+                pair_signal_store_entry=None,
+                derivation=None,
+            )
+        elif forgery == "outcome":
+            forged_completion = _clone_without_validation(
+                completion,
+                outcome=PairSignalSelectionOutcome.NO_MATCH,
+            )
+        elif forgery == "wrong-result-type":
+            return "not-a-completion-result"
+        elif forgery == "wrong-disposition-type":
+            return _clone_without_validation(value, disposition="INSERTED")
+        else:
+            forged_completion = _clone_without_validation(
+                completion,
+                pair_signal_snapshot=None,
+            )
+        return _clone_without_validation(value, completion=forged_completion)
+
+    malformed = _MalformedReturnStore(_selected_store(path), "completion", alter)
+
+    with pytest.raises(SignalStoreIntegrityError, match="Completion stage"):
+        OperationalPairSignalMaterializer(malformed).materialize(
+            request(),
+            claim_captured_at=CLAIMED_AT,
+            materialized_at_if_selected=MATERIALIZED_AT,
+        )
+
+    assert malformed.calls == ["claim", "selection", "completion"]
+    assert _stage_counts(path) == (1, 1, 1)
+    assert _artifact_counts(path) == (1, 1, 1, 1)
+
+
+def test_invalid_non_selected_completion_artifact_is_rejected(tmp_path: Path) -> None:
+    selected = OperationalPairSignalMaterializer(
+        _selected_store(tmp_path / "artifact-source.sqlite3")
+    ).materialize(
+        request(),
+        claim_captured_at=CLAIMED_AT,
+        materialized_at_if_selected=MATERIALIZED_AT,
+    )
+    path = tmp_path / "invalid-non-selected-completion.sqlite3"
+
+    def alter(value: object) -> object:
+        assert isinstance(value, PairSignalMaterializationPersistenceResult)
+        forged_completion = _clone_without_validation(
+            value.completion,
+            pair_signal_snapshot=selected.pair_signal_snapshot,
+        )
+        return _clone_without_validation(value, completion=forged_completion)
+
+    malformed = _MalformedReturnStore(
+        _outcome_store(path, PairSignalSelectionOutcome.NO_MATCH),
+        "completion",
+        alter,
+    )
+
+    with pytest.raises(SignalStoreIntegrityError, match="Completion stage"):
+        OperationalPairSignalMaterializer(malformed).materialize(
+            request(),
+            claim_captured_at=CLAIMED_AT,
+            materialized_at_if_selected=MATERIALIZED_AT,
+        )
+
+    assert malformed.calls == ["claim", "selection", "completion"]
+    assert _stage_counts(path) == (1, 1, 1)
+    assert _artifact_counts(path) == (0, 0, 0, 1)
+
+
+def test_healthy_retry_reauthenticates_completion_after_malformed_return(
+    tmp_path: Path,
+) -> None:
+    path = tmp_path / "malformed-completion-recovery.sqlite3"
+    store = _selected_store(path)
+    malformed = _MalformedReturnStore(
+        store,
+        "completion",
+        lambda _value: "not-a-completion-result",
+    )
+
+    with pytest.raises(SignalStoreIntegrityError, match="Completion stage"):
+        OperationalPairSignalMaterializer(malformed).materialize(
+            request(),
+            claim_captured_at=CLAIMED_AT,
+            materialized_at_if_selected=MATERIALIZED_AT,
+        )
+
+    recovered = OperationalPairSignalMaterializer(store).materialize(
+        request(),
+        claim_captured_at=CLAIMED_AT + timedelta(minutes=5),
+        materialized_at_if_selected=MATERIALIZED_AT + timedelta(minutes=5),
+    )
+
+    assert malformed.calls == ["claim", "selection", "completion"]
+    assert recovered.outcome is PairSignalMaterializerOutcome.REUSED_IDENTICAL
+    assert recovered.completion_result.disposition is (
+        PairSignalMaterializationCompletionDisposition.REUSED_IDENTICAL
+    )
+    assert _stage_counts(path) == (1, 1, 1)
+    assert _artifact_counts(path) == (1, 1, 1, 1)
 
 
 @pytest.mark.parametrize("backfilled", (False, True))

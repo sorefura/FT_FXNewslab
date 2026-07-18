@@ -122,8 +122,11 @@ Milestone 2-B5 now exposes that orchestration through a Store-neutral boundary:
 ```text
 exact PairSignalMaterializationRequest
     -> Claim transaction
+    -> authenticate Claim return
     -> Selection transaction
+    -> authenticate Selection return before reading outcome
     -> Completion transaction
+    -> authenticate Completion return
     -> validated operational result
 ```
 
@@ -134,9 +137,13 @@ retry failures. Claim-only and Claim-plus-Selection remain durable recovery anch
 the caller recovers by replaying the same Request. SELECTED maps first Completion to
 `MATERIALIZED` and exact reuse to `REUSED_IDENTICAL`; NO_MATCH maps to
 `NO_SELECTION`, while AMBIGUOUS remains `AMBIGUOUS`. The aggregate result validates
-the exact nested Claim, Selection, and Completion but is neither new persisted
-evidence nor Signal authorization. Conditional `materialized_at` is forwarded only
-for SELECTED, so non-selected Completion semantics remain artifact-free.
+the exact nested Claim, Selection, and Completion as a final defense, but each Store
+return is authenticated before the following independently committed stage starts.
+In particular, Selection outcome cannot route conditional `materialized_at` until
+its Request, Claim checkpoint/capture time, disposition, complete inventory, and
+terminal resolution are valid. Malformed successful returns fail closed as
+`SignalStoreIntegrityError`; Store-thrown exceptions keep their identity. The result
+is neither new persisted evidence nor Signal authorization.
 
 Position exit evaluation is content-addressed from exact typed evidence rather than
 only a business Position ID. `PositionExitPositionEvidence` self-describes the exact

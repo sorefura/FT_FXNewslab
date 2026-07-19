@@ -116,6 +116,14 @@ stage-labelled `SignalStoreIntegrityError`, while an exception raised by the Sto
 operation itself remains unwrapped. The aggregate validation remains defense in
 depth; it is not persisted and does not authorize the Pair Signal.
 
+This return boundary is deliberately non-polymorphic. Every versioned Evidence root
+and nested root used by orchestration must have its exact supported runtime type
+before the base contract validator is invoked. Reconstructing only an outer
+persistence result is insufficient because a nested Snapshot, Candidate,
+Completion, Store entry, or Derivation subclass could otherwise suppress its own
+validation. Missing-field exact objects and validator-overriding subclasses are
+corruption, not forward-compatible Evidence.
+
 The caller supplies one explicit Claim audit time and an optional conditional
 SELECTED materialization time. Retry may supply a later Claim time or omit the
 SELECTED time after Completion exists; persisted first-write times remain authority.

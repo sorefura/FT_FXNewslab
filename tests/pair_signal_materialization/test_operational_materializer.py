@@ -13,17 +13,24 @@ from fx_signal_store import (
     PAIR_SIGNAL_MATERIALIZER_RESULT_VERSION,
     OperationalPairSignalMaterializer,
     PairMaterializationPersistenceConflict,
+    PairSignalDerivation,
     PairSignalMaterializationClaim,
+    PairSignalMaterializationCompletion,
     PairSignalMaterializationCompletionDisposition,
     PairSignalMaterializationPersistenceResult,
     PairSignalMaterializationRequest,
+    PairSignalMaterializationSpecification,
     PairSignalMaterializationStore,
     PairSignalMaterializerOutcome,
     PairSignalMaterializerResult,
+    PairSignalSelectionCandidate,
     PairSignalSelectionOutcome,
     PairSignalSelectionPersistenceDisposition,
     PairSignalSelectionPersistenceResult,
     PairSignalSelectionReason,
+    PairSignalSelectionSnapshot,
+    SignalContentSnapshot,
+    SignalStoreEntry,
     SignalStoreIntegrityError,
     SourceSignalRole,
     SQLiteSignalStore,
@@ -41,6 +48,69 @@ from tests.pair_signal_materialization.factories import (
 
 CLAIMED_AT = NOW + timedelta(minutes=1)
 MATERIALIZED_AT = NOW + timedelta(minutes=2)
+
+
+class _ForgedSpecification(PairSignalMaterializationSpecification):
+    __slots__ = ()
+
+    def validate_intrinsic_integrity(self) -> None:
+        pass
+
+
+class _ForgedRequest(PairSignalMaterializationRequest):
+    __slots__ = ()
+
+    def validate_intrinsic_integrity(self) -> None:
+        pass
+
+
+class _ForgedClaim(PairSignalMaterializationClaim):
+    __slots__ = ()
+
+    def validate_intrinsic_integrity(self) -> None:
+        pass
+
+
+class _ForgedSelectionSnapshot(PairSignalSelectionSnapshot):
+    __slots__ = ()
+
+    def validate_intrinsic_integrity(self) -> None:
+        pass
+
+
+class _ForgedCandidate(PairSignalSelectionCandidate):
+    __slots__ = ()
+
+    def validate_intrinsic_integrity(self) -> None:
+        pass
+
+
+class _ForgedSignalSnapshot(SignalContentSnapshot):
+    __slots__ = ()
+
+    def validate_intrinsic_integrity(self) -> None:
+        pass
+
+
+class _ForgedCompletion(PairSignalMaterializationCompletion):
+    __slots__ = ()
+
+    def validate_intrinsic_integrity(self) -> None:
+        pass
+
+
+class _ForgedStoreEntry(SignalStoreEntry):
+    __slots__ = ()
+
+    def __post_init__(self) -> None:
+        pass
+
+
+class _ForgedDerivation(PairSignalDerivation):
+    __slots__ = ()
+
+    def validate_intrinsic_integrity(self) -> None:
+        pass
 
 
 def _append_source(
@@ -412,6 +482,18 @@ def _clone_without_validation(instance: object, **changes: object) -> object:
     return clone
 
 
+def _clone_as(
+    instance: object,
+    target_type: type[object],
+    **changes: object,
+) -> object:
+    clone = object.__new__(target_type)
+    for field in fields(instance):  # type: ignore[arg-type]
+        value = changes.get(field.name, getattr(instance, field.name))
+        object.__setattr__(clone, field.name, value)
+    return clone
+
+
 def test_store_protocol_requires_exactly_three_operations_and_sqlite_conforms(
     tmp_path: Path,
 ) -> None:
@@ -601,6 +683,23 @@ def test_result_rejects_selected_and_non_selected_artifact_cardinality_forgery(
         )
 
 
+def test_aggregate_result_rejects_polymorphic_nested_evidence(tmp_path: Path) -> None:
+    result = OperationalPairSignalMaterializer(
+        _selected_store(tmp_path / "aggregate-polymorphism.sqlite3")
+    ).materialize(
+        request(),
+        claim_captured_at=CLAIMED_AT,
+        materialized_at_if_selected=MATERIALIZED_AT,
+    )
+    forged_claim = _clone_as(result.claim, _ForgedClaim)
+
+    with pytest.raises(TypeError, match="exact supported contract type"):
+        replace(
+            result,
+            claim=forged_claim,  # type: ignore[arg-type]
+        )
+
+
 def test_input_validation_happens_before_any_store_operation(tmp_path: Path) -> None:
     recording = _RecordingStore(_selected_store(tmp_path / "inputs.sqlite3"))
     materializer = OperationalPairSignalMaterializer(recording)
@@ -634,6 +733,155 @@ def test_input_validation_happens_before_any_store_operation(tmp_path: Path) -> 
             materialized_at_if_selected=MATERIALIZED_AT.replace(tzinfo=None),
         )
     assert recording.calls == []
+
+
+@pytest.mark.parametrize("forgery", ("request-subclass", "specification-subclass"))
+def test_polymorphic_request_contract_is_rejected_before_store_call(
+    tmp_path: Path,
+    forgery: str,
+) -> None:
+    path = tmp_path / f"forged-input-{forgery}.sqlite3"
+    valid = request()
+    if forgery == "request-subclass":
+        supplied = _clone_as(
+            valid,
+            _ForgedRequest,
+            contract_version="forged-request-v2",
+        )
+    else:
+        forged_specification = _clone_as(
+            valid.specification,
+            _ForgedSpecification,
+            contract_version="forged-specification-v2",
+        )
+        supplied = _clone_without_validation(
+            valid,
+            specification=forged_specification,
+        )
+    recording = _RecordingStore(_selected_store(path))
+
+    with pytest.raises(SignalStoreIntegrityError, match="supplied Request"):
+        OperationalPairSignalMaterializer(recording).materialize(
+            supplied,  # type: ignore[arg-type]
+            claim_captured_at=CLAIMED_AT,
+            materialized_at_if_selected=MATERIALIZED_AT,
+        )
+
+    assert recording.calls == []
+    assert _stage_counts(path) == (0, 0, 0)
+
+
+def test_polymorphic_claim_is_rejected_even_when_relational_fields_match(
+    tmp_path: Path,
+) -> None:
+    path = tmp_path / "forged-claim-subclass.sqlite3"
+
+    def alter(value: object) -> object:
+        assert isinstance(value, PairSignalMaterializationClaim)
+        return _clone_as(
+            value,
+            _ForgedClaim,
+            contract_version="forged-claim-v2",
+        )
+
+    malformed = _MalformedReturnStore(_selected_store(path), "claim", alter)
+
+    with pytest.raises(SignalStoreIntegrityError, match="Claim stage"):
+        OperationalPairSignalMaterializer(malformed).materialize(
+            request(),
+            claim_captured_at=CLAIMED_AT,
+            materialized_at_if_selected=MATERIALIZED_AT,
+        )
+
+    assert malformed.calls == ["claim"]
+    assert _stage_counts(path) == (1, 0, 0)
+
+
+@pytest.mark.parametrize("forgery", ("contract-version", "terminal-outcome"))
+def test_polymorphic_selection_snapshot_stops_before_outcome_routing(
+    tmp_path: Path,
+    forgery: str,
+) -> None:
+    path = tmp_path / f"forged-selection-subclass-{forgery}.sqlite3"
+
+    def alter(value: object) -> object:
+        assert isinstance(value, PairSignalSelectionPersistenceResult)
+        changes: dict[str, object] = {}
+        if forgery == "contract-version":
+            changes["contract_version"] = "forged-selection-v2"
+        else:
+            changes.update(
+                outcome=PairSignalSelectionOutcome.NO_MATCH,
+                reason=PairSignalSelectionReason.NO_ELIGIBLE_BASE_SIGNAL,
+                selected_base_candidate_id=None,
+                selected_quote_candidate_id=None,
+                selected_base_signal_id=None,
+                selected_quote_signal_id=None,
+                selected_observation_group_identity=None,
+            )
+        forged_snapshot = _clone_as(
+            value.selection_snapshot,
+            _ForgedSelectionSnapshot,
+            **changes,
+        )
+        return _clone_without_validation(value, selection_snapshot=forged_snapshot)
+
+    malformed = _MalformedReturnStore(_selected_store(path), "selection", alter)
+
+    with pytest.raises(SignalStoreIntegrityError, match="Selection stage"):
+        OperationalPairSignalMaterializer(malformed).materialize(
+            request(),
+            claim_captured_at=CLAIMED_AT,
+            materialized_at_if_selected=MATERIALIZED_AT,
+        )
+
+    assert malformed.calls == ["claim", "selection"]
+    assert malformed.completion_keyword_arguments == []
+    assert _stage_counts(path) == (1, 1, 0)
+    assert _artifact_counts(path) == (0, 0, 0, 0)
+
+
+@pytest.mark.parametrize("forgery", ("candidate", "signal-snapshot"))
+def test_polymorphic_selection_inventory_stops_before_completion(
+    tmp_path: Path,
+    forgery: str,
+) -> None:
+    path = tmp_path / f"forged-selection-inventory-{forgery}.sqlite3"
+
+    def alter(value: object) -> object:
+        assert isinstance(value, PairSignalSelectionPersistenceResult)
+        snapshot = value.selection_snapshot
+        original = snapshot.candidates[0]
+        if forgery == "candidate":
+            forged_candidate = _clone_as(original, _ForgedCandidate)
+        else:
+            forged_signal = _clone_as(
+                original.signal_snapshot,
+                _ForgedSignalSnapshot,
+            )
+            forged_candidate = _clone_without_validation(
+                original,
+                signal_snapshot=forged_signal,
+            )
+        candidates = (forged_candidate,) + snapshot.candidates[1:]
+        forged_snapshot = _clone_without_validation(
+            snapshot,
+            candidates=candidates,
+        )
+        return _clone_without_validation(value, selection_snapshot=forged_snapshot)
+
+    malformed = _MalformedReturnStore(_selected_store(path), "selection", alter)
+
+    with pytest.raises(SignalStoreIntegrityError, match="Selection stage"):
+        OperationalPairSignalMaterializer(malformed).materialize(
+            request(),
+            claim_captured_at=CLAIMED_AT,
+            materialized_at_if_selected=MATERIALIZED_AT,
+        )
+
+    assert malformed.calls == ["claim", "selection"]
+    assert malformed.completion_keyword_arguments == []
+    assert _stage_counts(path) == (1, 1, 0)
 
 
 @pytest.mark.parametrize("forgery", ("other-request", "contract", "wrong-type"))
@@ -1084,6 +1332,126 @@ def test_invalid_completion_return_produces_no_operational_result(
     assert malformed.calls == ["claim", "selection", "completion"]
     assert _stage_counts(path) == (1, 1, 1)
     assert _artifact_counts(path) == (1, 1, 1, 1)
+
+
+def test_polymorphic_completion_is_rejected_and_healthy_replay_reuses_root(
+    tmp_path: Path,
+) -> None:
+    path = tmp_path / "forged-completion-subclass.sqlite3"
+    store = _selected_store(path)
+
+    def alter(value: object) -> object:
+        assert isinstance(value, PairSignalMaterializationPersistenceResult)
+        forged_completion = _clone_as(
+            value.completion,
+            _ForgedCompletion,
+            contract_version="forged-completion-v2",
+            pair_signal_snapshot=None,
+        )
+        return _clone_without_validation(value, completion=forged_completion)
+
+    malformed = _MalformedReturnStore(store, "completion", alter)
+
+    with pytest.raises(SignalStoreIntegrityError, match="Completion stage"):
+        OperationalPairSignalMaterializer(malformed).materialize(
+            request(),
+            claim_captured_at=CLAIMED_AT,
+            materialized_at_if_selected=MATERIALIZED_AT,
+        )
+
+    recovered = OperationalPairSignalMaterializer(store).materialize(
+        request(),
+        claim_captured_at=CLAIMED_AT + timedelta(minutes=5),
+        materialized_at_if_selected=MATERIALIZED_AT + timedelta(minutes=5),
+    )
+
+    assert malformed.calls == ["claim", "selection", "completion"]
+    assert recovered.outcome is PairSignalMaterializerOutcome.REUSED_IDENTICAL
+    assert _stage_counts(path) == (1, 1, 1)
+    assert _artifact_counts(path) == (1, 1, 1, 1)
+
+
+@pytest.mark.parametrize(
+    ("artifact", "target_type"),
+    (
+        ("signal-snapshot", _ForgedSignalSnapshot),
+        ("store-entry", _ForgedStoreEntry),
+        ("derivation", _ForgedDerivation),
+    ),
+)
+def test_polymorphic_completion_artifact_is_rejected(
+    tmp_path: Path,
+    artifact: str,
+    target_type: type[object],
+) -> None:
+    path = tmp_path / f"forged-completion-{artifact}.sqlite3"
+
+    def alter(value: object) -> object:
+        assert isinstance(value, PairSignalMaterializationPersistenceResult)
+        completion = value.completion
+        field_name = {
+            "signal-snapshot": "pair_signal_snapshot",
+            "store-entry": "pair_signal_store_entry",
+            "derivation": "derivation",
+        }[artifact]
+        original = getattr(completion, field_name)
+        assert original is not None
+        forged_artifact = _clone_as(original, target_type)
+        forged_completion = _clone_without_validation(
+            completion,
+            **{field_name: forged_artifact},
+        )
+        return _clone_without_validation(value, completion=forged_completion)
+
+    malformed = _MalformedReturnStore(_selected_store(path), "completion", alter)
+
+    with pytest.raises(SignalStoreIntegrityError, match="Completion stage"):
+        OperationalPairSignalMaterializer(malformed).materialize(
+            request(),
+            claim_captured_at=CLAIMED_AT,
+            materialized_at_if_selected=MATERIALIZED_AT,
+        )
+
+    assert malformed.calls == ["claim", "selection", "completion"]
+    assert _stage_counts(path) == (1, 1, 1)
+    assert _artifact_counts(path) == (1, 1, 1, 1)
+
+
+@pytest.mark.parametrize(
+    ("stage", "expected_calls", "expected_counts"),
+    (
+        ("claim", ["claim"], (1, 0, 0)),
+        ("selection", ["claim", "selection"], (1, 1, 0)),
+        ("completion", ["claim", "selection", "completion"], (1, 1, 1)),
+    ),
+)
+def test_missing_field_exact_return_becomes_stage_integrity_error(
+    tmp_path: Path,
+    stage: str,
+    expected_calls: list[str],
+    expected_counts: tuple[int, int, int],
+) -> None:
+    path = tmp_path / f"missing-field-{stage}.sqlite3"
+    missing_type: type[object] = {
+        "claim": PairSignalMaterializationClaim,
+        "selection": PairSignalSelectionPersistenceResult,
+        "completion": PairSignalMaterializationPersistenceResult,
+    }[stage]
+    malformed = _MalformedReturnStore(
+        _selected_store(path),
+        stage,
+        lambda _value: object.__new__(missing_type),
+    )
+
+    with pytest.raises(SignalStoreIntegrityError, match=f"{stage.title()} stage"):
+        OperationalPairSignalMaterializer(malformed).materialize(
+            request(),
+            claim_captured_at=CLAIMED_AT,
+            materialized_at_if_selected=MATERIALIZED_AT,
+        )
+
+    assert malformed.calls == expected_calls
+    assert _stage_counts(path) == expected_counts
 
 
 def test_invalid_non_selected_completion_artifact_is_rejected(tmp_path: Path) -> None:

@@ -143,7 +143,12 @@ In particular, Selection outcome cannot route conditional `materialized_at` unti
 its Request, Claim checkpoint/capture time, disposition, complete inventory, and
 terminal resolution are valid. Malformed successful returns fail closed as
 `SignalStoreIntegrityError`; Store-thrown exceptions keep their identity. The result
-is neither new persisted evidence nor Signal authorization.
+is neither new persisted evidence nor Signal authorization. Operational trust
+boundaries accept exact supported versioned contract types rather than arbitrary
+subclasses: Request/Specification, Claim, Selection Snapshot/Candidate/Signal
+Snapshot, and Completion/Signal Snapshot/Store entry/Derivation trees are fixed
+before base validators run. A subclass cannot replace validation through dynamic
+dispatch while preserving relational fields.
 
 Position exit evaluation is content-addressed from exact typed evidence rather than
 only a business Position ID. `PositionExitPositionEvidence` self-describes the exact

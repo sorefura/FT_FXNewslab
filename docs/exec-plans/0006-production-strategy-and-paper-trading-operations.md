@@ -1251,6 +1251,14 @@ ExecPlan 0006 is complete only when all of the following are true:
 - [x] (2026-07-19) Passed the M2-B5 review correction through full local Python
   3.11/3.14 tests, Ruff, strict mypy, import smoke, focused stage-integrity tests,
   migration/scope inspection, and diff check.
+- [x] (2026-07-19) Milestone 2-B5 exact-contract review correction - rejected
+  validator-overriding subclasses at every operational trust boundary; validated
+  exact Request, Specification, Claim, Selection, Candidate, Signal Snapshot,
+  Completion, Store-entry, and Derivation contract roots.
+- [x] (2026-07-19) Prevented polymorphic Evidence from reaching a following durable
+  stage or conditional-time routing; converted missing-field and override-bypass
+  returns to stage-labelled `SignalStoreIntegrityError`; retained exact-type
+  aggregate defense, Store exception identity, and healthy replay.
 - [x] Milestone 2-B2 - Signal Store sequence and materialization Request Claim.
 - [x] Milestone 2-B3 - Selection Evidence Persistence.
 - [x] Milestone 2-B4 - Pair Artifact Exact Persistence and completion root.
@@ -1590,6 +1598,19 @@ ExecPlan 0006 is complete only when all of the following are true:
   Resolution: preserve append-only evidence and use healthy replay to reauthenticate
   the persisted root as `REUSED_IDENTICAL`; staged durability requires staged return
   validation rather than repair.
+- Observation: `isinstance()` plus an instance-method validator does not authenticate
+  a versioned Evidence contract when subclasses may override validation.
+  Resolution: require exact supported contract roots and invoke base validators only
+  after the complete nested type tree is fixed.
+- Observation: reconstructing only an outer persistence result does not authenticate
+  its nested Snapshot or Completion, and relational equality cannot replace intrinsic
+  contract authentication.
+  Resolution: validate nested Request/Specification, Candidate/Signal Snapshot, and
+  Completion artifact roots before outer reconstruction or semantic use.
+- Observation: a malformed subclass can preserve every relational field while
+  changing contract version or artifact cardinality.
+  Resolution: treat immutable Evidence boundaries as non-polymorphic; missing-field
+  exact objects and validator overrides both fail closed.
 - Observation: a persisted Pair Signal remains an immutable hypothesis artifact and
   is not a Live authority envelope.
   Resolution: M2-B5 imports no Adoption or Strategy type and leaves
@@ -1787,6 +1808,17 @@ ExecPlan 0006 is complete only when all of the following are true:
   through healthy exact replay; do not repair or delete committed evidence.
 - 2026-07-19: Add no long transaction, migration, run-status persistence, automatic
   retry, M2-C Adoption/Strategy composition, or Paper behavior for this correction.
+- 2026-07-19: Operational trust boundaries accept exact supported versioned Evidence
+  contracts, not validator-overriding subclasses.
+- 2026-07-19: Check nested Selection and Completion Evidence type trees before any
+  outcome routing, artifact use, or outer result reconstruction.
+- 2026-07-19: Apply the same non-polymorphic validation to the supplied
+  Request/Specification and final aggregate result.
+- 2026-07-19: Convert malformed exact-type objects with missing fields to the
+  applicable input/stage integrity error while leaving Store-thrown exceptions
+  untouched.
+- 2026-07-19: Add no persistence schema, transaction boundary, retry, M2-C, or Paper
+  change for exact-contract validation.
 - 2026-07-17: Paper persistence begins at the next available additive Live migration
   after Milestone 2 Strategy persistence; `0003` is neither reserved nor created by
   Milestone 2-A.
@@ -2004,6 +2036,42 @@ completed locally on 2026-07-17:
   Strategy, Adoption-gate call, Portfolio, Risk, Execution, Broker, Paper, scheduler,
   CLI, or ExecPlan 0007 implementation was added or changed.
 - Hosted CI has not been run for this unpushed review-correction commit; only local
+  validation is claimed.
+
+Milestone 2-B5 exact-contract review correction completed locally on 2026-07-19:
+
+- Python 3.11.9: `758 passed, 5 skipped`; Python 3.14.6:
+  `758 passed, 5 skipped`. The five skips remain opt-in external-provider smoke
+  tests. Full pytest used distinct workspace basetemp roots with cache disabled.
+- Focused operational/architecture validation passed as `62 passed` on both
+  versions. Forged Request and Specification subclasses produced zero Store calls.
+  Forged Claim produced `Claim` only; forged Selection Snapshot, Candidate, Signal
+  Snapshot, and terminal outcome produced `Claim -> Selection` without Completion
+  or conditional-time routing.
+- Forged Completion, Pair Signal Snapshot, Store entry, and Derivation subclasses
+  produced `Claim -> Selection -> Completion` and no operational result. Healthy
+  replay after the committed forged-return case returned `REUSED_IDENTICAL` with no
+  duplicate artifact or repaired row.
+- Missing-field exact Claim, Selection result, and Completion result objects became
+  their stage-labelled `SignalStoreIntegrityError`; no raw `AttributeError` escaped
+  and no following stage ran. Aggregate result construction independently rejected
+  polymorphic nested Evidence.
+- Existing Store-exception probes retained the exact original conflict, integrity,
+  and SQLite error objects; each failing stage ran once with no automatic retry.
+  Healthy first SELECTED, exact retry, NO_MATCH, AMBIGUOUS, crash recovery,
+  late/backfilled exclusion, and concurrent convergence tests all passed.
+- Ruff passed on Python 3.11 and 3.14. Strict mypy passed for 73 source files on both
+  versions. Both requested public import smoke commands passed on both versions.
+- Shared Signal Store migrations remain exactly
+  `0001_signal_lineage.sql`, `0002_pair_materialization_persistence.sql`,
+  `0003_pair_signal_selection_evidence.sql`, and
+  `0004_pair_signal_artifact_persistence.sql`. No migration, SQL, `store.py`,
+  `persistence.py`, or `pair_materialization.py` change was made.
+- `git diff --check` passed. The six changed files are limited to the Store-neutral
+  Materializer, its operational tests, and four living documents. No Live Adoption,
+  concrete Strategy, Portfolio, Risk, Broker/Execution, Paper, scheduler/CLI, or
+  ExecPlan 0007 implementation changed.
+- Hosted CI has not been run for this unpushed exact-contract correction; only local
   validation is claimed.
 
 Milestone 2-B1 source-Signal identity final review correction completed locally on

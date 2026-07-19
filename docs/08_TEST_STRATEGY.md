@@ -166,6 +166,12 @@ Milestone 2-B5 tests additionally state:
 - stage validation reuses the existing intrinsic contracts, checks exact cross-stage
   Request/checkpoint/capture/Selection relations, and maps malformed returns to a
   stage-labelled `SignalStoreIntegrityError`;
+- supplied Request/Specification and every returned Claim, Selection result,
+  Snapshot, Candidate, Signal Snapshot, Completion result, Completion, Store entry,
+  and Derivation root must use the exact supported runtime contract type;
+- validator-overriding subclasses and exact-type objects missing required fields are
+  rejected before semantic use or a following durable stage, while aggregate result
+  validation repeats the exact-contract defense;
 - first SELECTED completion is `MATERIALIZED`, exact SELECTED replay is
   `REUSED_IDENTICAL`, NO_MATCH is `NO_SELECTION`, and AMBIGUOUS remains
   `AMBIGUOUS` with its detailed Selection reason intact;

@@ -264,23 +264,26 @@ def _verify_frozen_at_head(repo: Path, relatives: list[str]) -> None:
 
 
 def _snapshot(repo: Path) -> dict[str, str]:
+    tracked_runs = _run(
+        repo,
+        ["git", "ls-files", "--", RUNS_RELATIVE.as_posix()],
+    ).stdout.strip()
+    if tracked_runs:
+        raise GateError(".phase-runs must remain untracked")
+    ignored_probe = (RUNS_RELATIVE / ".phase-gate-ignore-probe").as_posix()
+    ignored = _run(
+        repo,
+        ["git", "check-ignore", "-q", "--", ignored_probe],
+        check=False,
+    )
+    if ignored.returncode != 0:
+        raise GateError(".phase-runs must be ignored before snapshotting")
     with tempfile.TemporaryDirectory(prefix="phase-gate-") as temporary:
         index = Path(temporary) / "index"
         env = os.environ.copy()
         env["GIT_INDEX_FILE"] = str(index)
         _run(repo, ["git", "read-tree", "HEAD"], env=env)
-        _run(
-            repo,
-            [
-                "git",
-                "add",
-                "-A",
-                "--",
-                ".",
-                ":(exclude).phase-runs/**",
-            ],
-            env=env,
-        )
+        _run(repo, ["git", "add", "-A", "--", "."], env=env)
         tree = _run(repo, ["git", "write-tree"], env=env).stdout.strip()
     return {"tree": tree}
 

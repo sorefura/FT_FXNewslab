@@ -107,7 +107,9 @@ def main() -> int:
             ),
             encoding="utf-8",
         )
-        (repo / ".gitignore").write_text("ignored-spec.md\n", encoding="utf-8")
+        (repo / ".gitignore").write_text(
+            "ignored-spec.md\n.phase-runs/\n", encoding="utf-8"
+        )
         _run(repo, ["git", "add", "."])
         _run(repo, ["git", "commit", "-m", "freeze design"])
 

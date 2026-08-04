@@ -1292,6 +1292,14 @@ ExecPlan 0006 is complete only when all of the following are true:
     Strategy config/results, authorization, Swap evidence/resolutions, rejecting
     comparison-overriding subclasses.
 - [ ] Milestone 2-D - ordinary close Portfolio/Risk path.
+  - [x] (2026-08-04) Froze the M2-D design as five ordered units: operational exit
+    evidence/evaluation, close-specific Portfolio/Risk contracts, evaluation
+    persistence, atomic no-overclose reservation, and one-Position composition.
+  - [ ] B1 - operational exit evidence and deterministic evaluator.
+  - [ ] B2 - close-specific Portfolio and Risk contracts.
+  - [ ] B3 - exit evaluation persistence in Live migration `0005`.
+  - [ ] B4 - atomic Portfolio/Risk decision and capacity reservation.
+  - [ ] B5 - one-Position ordinary-close application composition.
 - [ ] Milestone 2 - Production Strategy Implementation.
 - [ ] Milestone 3 - Paper Broker and Ledger.
 - [ ] Milestone 4 - Operational Paper Cycle.

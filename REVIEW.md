@@ -6,28 +6,37 @@ reviewerはfrozen design、生成されたimmutable bundle、差分、実ログ�
 ## Identity and evidence rules
 
 - attemptごとに新しいreviewer threadを作り、過去のreviewerへfollow-upしない。
-- reviewerは原則read-onlyとし、live repositoryや過去会話を渡さない。
+- reviewerはread-onlyとし、live repositoryや過去会話を渡さない。
 - `.agents/skills/run-phase-loop/references/reviewer-contract.md`の形式に従う。
 - `REVIEW_NONCE`、reviewed tree、bundle hash、test log hash、実thread IDを照合する。
 - PASSログがあっても、差分から保証できない主張は未証明として扱う。
 - blockerはfrozen acceptanceに対する具体的P1/P2だけとし、任意のpolishを混ぜない。
 
-## M2-C adversarial checklist
+## M2-D adversarial checklist
 
-- exact-type/base-class validationをsubclass overrideや欠落fieldで迂回できないか。
-- materializer返却値がwork itemのRequest、Pair、Claim時刻、該当するmaterialization時刻へ
-  結び付いているか。不一致時にAdoption/B4へ進まないか。
-- authorization、approval、research evidence、policy、Swap、config、evaluation、Candidateの
-  全lineageがexact ID/contentで再構成・再検証されるか。
-- persisted corruptionを通常のSKIP、missing、reuse、repairへ変換していないか。
-- B4のSwap/config/evaluation/Candidateが一つの短いtransactionでatomicか。
-- restart、migration upgrade/failure/retry、concurrent writer、exact replayで収束するか。
-- `evaluated_at`をfrozen authority instantとして使い、後日のexpiry/revocationで過去replayを
-  壊していないか。
-- real two-Pair integrationが実M2-B5 materializer、Live Adoption、B4 SQLite storeを通るか。
-- `live_candidates`、Portfolio、Risk、Execution、Paper、Brokerへの新規write/callがないか。
-- 2 Pairの結果を順序どおり保持し、失敗時に自動retryや次Pair継続をしていないか。
-- migration番号、architecture、README、ExecPlan、test strategyが実差分と一致するか。
+- accepted M2-A/M2-C identityを変更またはsilent reinterpretしていないか。
+- opaque checkpoint/decision IDだけでAdoption、Signal、Swap terminal outcomeを
+  「証明」していないか。additive typed resolutionとexact parent contentを検証するか。
+- Position capacityがPosition IDだけでなくevidence ID、Pair、Side、observed time、
+  source/checkpoint、BASE_UNITS、positive finite Decimal quantityへ結び付くか。
+- Strategyがquantityを決めていないか。Portfolio以外がquantityを拡大・置換していないか。
+- threshold/freshness/effective-window/holding-age equalityとtrigger precedenceが
+  frozen specどおりか。future evidenceを通常KEEPへ変換していないか。
+- exact-type/base-class validationをsubclass override、欠落field、比較override文字列で
+  迂回できないか。outcome routingやwriteより前に拒否するか。
+- identical replayが後発reservationを再計算せず元のsemantic chainを返すか。
+- distinct concurrent writerが同一Positionをcapacity IDの差替えでover-reserveできないか。
+  B4のreservation読取、
+  Portfolio、Risk、Intent appendが一つの`BEGIN IMMEDIATE`境界か。
+- reservation snapshotが実際に使った全prior Intent ID/quantityを順序付きでcommitするか。
+- corruption/missing parentをREJECT、reuse、repair、retryへ変換していないか。
+- KEEP/CLOSE、Portfolio/Risk、Intentのcardinalityが全transaction failureで保たれるか。
+- DecimalをREAL/floatへ落とさず、lossless textでno-overcloseを証明するか。
+- ordinary close型/tableがentry decisionや`ApprovedLiquidationIntent`へunion、inheritance、
+  action string、legacy writeで接続されていないか。
+- `LIVE`がStrategy/storeより前に拒否され、Execution/Paper/Broker/Private callがないか。
+- migration `0005`、fresh/upgrade/reopen/failure/retry/concurrency、architecture、README、
+  ExecPlan、test strategyが実差分と一致するか。
 
 ## Approval threshold
 

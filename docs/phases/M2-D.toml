@@ -1,0 +1,37 @@
+schema_version = 1
+phase = "M2-D"
+spec_files = ["docs/phases/M2-D/spec.md"]
+acceptance_files = ["docs/phases/M2-D/acceptance.md"]
+units = ["B1", "B2", "B3", "B4", "B5"]
+
+reviewer_agent = "phase_reviewer"
+final_reviewer_agent = "phase_final_reviewer"
+implementer_agent = "phase_implementer"
+escalated_implementer_agent = "phase_implementer_escalated"
+escalate_after_rejections = 2
+
+[[checks]]
+name = "pytest"
+scope = "all"
+argv = ["python", "-m", "pytest", "-q"]
+
+[[checks]]
+name = "ruff"
+scope = "all"
+argv = ["python", "-m", "ruff", "check", "."]
+
+[[checks]]
+name = "mypy"
+scope = "all"
+argv = [
+  "python", "-m", "mypy",
+  "packages/fx_core/src",
+  "packages/fx_signal_store/src",
+  "apps/fx_research/src",
+  "apps/swap_bot/src",
+]
+
+[[checks]]
+name = "diff-check"
+scope = "all"
+argv = ["git", "diff", "--check"]

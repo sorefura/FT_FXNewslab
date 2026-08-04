@@ -2,32 +2,34 @@
 
 ## Fixed objective
 
-Milestone 2-C (`concrete NewsFilteredCarryStrategy and persistence`) を
-`run-phase-loop` に従って完了し、検証済みの変更をローカルcommitとして保存する。
-push、merge、deployは行わない。
+Milestone 2-D (`ordinary close Portfolio/Risk path`) のscope、B分割、受入条件を
+`run-phase-loop` に従って凍結する。今回は設計baselineのcommitとPhase Gate初期化までとし、
+B1実装は開始しない。push、merge、deployは行わない。
 
 ## Authoritative scope
 
-次のfrozen filesが今回の設計・受入条件の正本であり、変更してはならない。
+baseline commit後、次のfrozen filesがM2-Dの設計・受入条件の正本となり、Phase中は
+変更してはならない。
 
-- `docs/phases/M2-C.toml`
-- `docs/phases/M2-C/spec.md`
-- `docs/phases/M2-C/acceptance.md`
+- `docs/phases/M2-D.toml`
+- `docs/phases/M2-D/spec.md`
+- `docs/phases/M2-D/acceptance.md`
 
 実行手順の正本は `.agents/skills/run-phase-loop/SKILL.md`、機械状態の正本は
-`.phase-runs/M2-C/state.json` と `phase_gate.py status --phase M2-C` である。
+`.phase-runs/M2-D/state.json` と `phase_gate.py status --phase M2-D` である。
 この文書や会話履歴と矛盾する場合は、frozen filesとPhase Gateを優先する。
 
-## Required completion
+## Required completion for this task
 
-- B1からB5を順番に実装・検査し、各attemptを別のreviewer identityで審査する。
-- final reviewも新規の5.6 Sol reviewerが、生成bundleだけを審査する。
-- `phase_gate.py assert-complete --phase M2-C`を成功させる。
-- repository textがUTF-8 BOMなしで、日本語を含むWindowsパスから読めることを確認する。
-- full pytest、Ruff、strict mypy、`git diff --check`を成功させる。
-- user許可済みのローカルcommitまで行い、pushしない。
+- M2-C完了commitとclean worktreeを独立確認する。
+- M2-Dの不足契約、数量authority、no-overclose競合境界を現行コードから調査する。
+- 新規5.6 Sol設計reviewを1回行い、P1/P2相当の曖昧さを凍結前に解消する。
+- M2-D manifest、spec、acceptanceとcross-session handoffをUTF-8 BOMなしで保存する。
+- manifest/self-test、文字コード、Git差分を検証する。
+- user許可済みのローカルdesign baseline commitとPhase Gate `init`まで行う。
+- B1実装へ進まず、凍結した作業方針をuserへ説明して停止する。
 
 ## Non-goals
 
-M2-D、Portfolio、Risk、Execution、Paper/Broker連携、scheduler、daemon、CLI、
-外部Swap provider、production default configは今回追加しない。
+M2-Dの実装、既存accepted contractの変更、Paper/Broker/Execution、emergency
+liquidation変更、scheduler、daemon、CLI、push、merge、deployは今回行わない。

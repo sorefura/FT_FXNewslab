@@ -1,0 +1,4 @@
+interface:
+  display_name: "Run Phase Loop"
+  short_description: "Automate frozen phase implementation and review gates"
+  default_prompt: "Use $run-phase-loop to execute the next frozen phase unit through implementation, tests, and independent review."

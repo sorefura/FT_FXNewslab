@@ -15,6 +15,33 @@
 
 関連Skillがある場合は `.agents/skills/` のSkillを使用すること。
 
+## Phase Goal workflow
+
+MilestoneをM単位で設計し、B単位で実装・テスト・独立レビューする作業では
+`.agents/skills/run-phase-loop/` を使用する。
+
+- `/goal` のprimary agentは進行管理を担当する。
+- 書き込み可能な実装agentは同時に一つだけとする。
+- 各review attemptでは新しいread-only reviewer threadを作成する。
+- 以前のreviewerへfollow-upして再利用しない。
+- frozen design、phase state、review bundleを手作業で変更しない。
+- `phase_gate.py assert-complete`が成功するまでGoalを完了扱いにしない。
+- commit、push、merge、deployは明示的な許可なしに行わない。
+
+## Windows Unicode path and encoding
+
+このリポジトリは日本語を含むWindowsパスに置かれる場合がある。
+
+- PowerShellではパスを文字列連結せず、-LiteralPathを優先する。
+- subprocess、Git、Pythonへ渡すパスをASCII限定と仮定しない。
+- PowerShellのコンソール入出力は明示的にUTF-8へ合わせる。
+- repository textは原則UTF-8とし、BOMは消費側契約に合わせる。
+  Python、TOML、JSONへ一律にBOMを付けない。Windows PowerShell 5.1で直接
+  実行する非ASCII入り.ps1など、BOMが必要なconsumerにはUTF-8 BOMを使う。
+- 仮想環境launcherが埋め込み日本語パスを扱えない場合、失敗をテスト失敗と
+  混同せず、依存関係を確認したUnicode対応Python runtimeを使う。
+- 生成物は文字コード、先頭BOM、Unicodeパスからのread/parse/executeを確認する。
+
 ## Core boundaries
 
 データフローは原則として次を守る。

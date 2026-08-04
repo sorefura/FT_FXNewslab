@@ -11,3 +11,4 @@ __pycache__/
 *.log
 .env
 config/secrets.yaml
+.phase-runs/

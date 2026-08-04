@@ -1,5 +1,13 @@
 # Design Index
 
+## Codex Phase Goal workflow
+
+- `09_CODEX_PHASE_WORKFLOW.md`
+  - M単位の設計凍結、B単位の実装・テスト、新規上位reviewerによる反復review、
+    deterministic phase gate、Goal完了条件。
+- `phases/phase.example.toml`
+  - Phase manifestのcheck、agent、escalation設定例。
+
 ## ExecPlan 0006 production Strategy and Paper operations
 
 - `exec-plans/0006-production-strategy-and-paper-trading-operations.md`

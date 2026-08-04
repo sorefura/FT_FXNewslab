@@ -175,6 +175,13 @@ evidence; no float conversion participates in validation or identity. The suppor
 v1 Candidate contract, Pair transformation, and Pair Signal type are explicit config
 identity dimensions and unsupported values cannot enter a valid config.
 
+Live migrations `0003` and `0004` add immutable operational Swap evidence and the
+News Filtered Carry config, production entry evaluation, and optional production
+Candidate roots. B4 holds a short `BEGIN IMMEDIATE`, rehydrates persisted Adoption
+authority at `evaluated_at`, reruns the Strategy, and append-compares all rows in one
+transaction. Pair Signal Request ID/content hash and lossless score/confidence JSON
+remain part of the durable lineage. M2-D therefore starts with Live migration `0005`.
+
 The following Paper records remain target contracts:
 
 ```text

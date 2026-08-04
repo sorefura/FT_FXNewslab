@@ -584,6 +584,23 @@ class SignalAuthorization:
             _require_text(value, "Signal authorization identity")
         require_utc(self.authorized_at, "authorization authorized_at")
 
+    @property
+    def expected_authorization_id(self) -> str:
+        return "signal-authorization-" + digest(
+            {
+                "signal_id": self.signal_id,
+                "adoption_decision_id": self.adoption_decision_id,
+                "strategy_id": self.strategy_id,
+                "strategy_version": self.strategy_version,
+                "runtime_mode": self.runtime_mode.value,
+            }
+        )
+
+    def validate_intrinsic_identity(self) -> None:
+        SignalAuthorization.__post_init__(self)
+        if self.authorization_id != self.expected_authorization_id:
+            raise ValueError("Signal authorization ID does not match intrinsic authority")
+
 
 @dataclass(frozen=True, slots=True)
 class AuthorizedSignal:
@@ -678,7 +695,9 @@ def digest(payload: object) -> str:
 
 
 def _require_text(value: str | None, label: str) -> None:
-    if not isinstance(value, str) or not value.strip():
+    if type(value) is not str:
+        raise TypeError(f"{label} must be exact str")
+    if not value.strip():
         raise ValueError(f"{label} must not be blank")
 
 
@@ -688,7 +707,7 @@ def _optional_text(value: str | None, label: str) -> None:
 
 
 def _text(value: object) -> str:
-    if not isinstance(value, str):
+    if type(value) is not str:
         raise TypeError("value must be text")
     return value
 
@@ -698,7 +717,7 @@ def _nullable_text(value: object) -> str | None:
 
 
 def _datetime(value: object, label: str) -> datetime:
-    if not isinstance(value, str):
+    if type(value) is not str:
         raise TypeError(f"{label} must be an ISO datetime string")
     parsed = datetime.fromisoformat(value.replace("Z", "+00:00"))
     require_utc(parsed, label)

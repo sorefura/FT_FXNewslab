@@ -8,9 +8,11 @@ availability semantics, and an authorized shadow cycle that records `NOT_SUBMITT
 Milestone 2-A additionally provides production Strategy config/identity, typed entry
 and exit Ports/results, lossless `ProductionTradeCandidate`, versioned
 `OperationalSwapEvidence`, `PositionCloseCandidate`, and execution-authority mapping.
-It has no concrete production Strategy, operational Signal/Swap adapter, production
-Candidate persistence, ordinary close Portfolio/Risk path, Paper Gateway, fill
-engine, account/PnL ledger, scheduler, or daemon.
+Milestone 2-C now provides the concrete deterministic entry Strategy, authenticated
+Pair materialization bridge, exact operational Swap persistence, atomic
+config/evaluation/optional-Candidate persistence, and the ordered two-Pair entry
+application root. It still has no ordinary close Portfolio/Risk path, Paper Gateway,
+fill engine, account/PnL ledger, scheduler, or daemon.
 
 Milestone 2-B1 now provides the upstream Pair materialization contracts in
 `fx_signal_store`, not in `swap_bot`. One Pair/as-of/specification creates one stable
@@ -21,11 +23,10 @@ Signal identity, exact shared-transformer output verification, and relational
 `PairSignalDerivation` validation retain the exact ordered source roles without
 adding Live semantics to `fx_core.Signal`.
 
-No operational Signal query, checkpoint persistence, materializer, or Adoption-gate
-call is implemented yet. The shared transformer is invoked only by a pure expected-
-content verifier, not by an operational materializer. M2-C composition must prove that the Strategy
-config eligible Pair exactly matches the materialization Specification Pair; neither
-contract silently supplies a Pair whitelist for the other.
+Operational Pair materialization authenticates its complete M2-B5 result before the
+Adoption gate. M2-C composition must prove that the Strategy config eligible Pair
+exactly matches the materialization Specification Pair; neither contract silently
+supplies a Pair whitelist for the other.
 
 Accepted 0005 `TradeCandidate` remains entry-only and unchanged.
 `ApprovedLiquidationIntent` is created only for the

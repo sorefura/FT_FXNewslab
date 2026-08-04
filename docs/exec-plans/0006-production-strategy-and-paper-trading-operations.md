@@ -101,17 +101,17 @@ Milestone 2-B5 implementation started from clean, synchronized `main` at
 
 | Area | Current implementation | Gap carried into this plan |
 |---|---|---|
-| Strategy Port | Accepted 0005 `Strategy.evaluate(...)` remains unchanged. Milestone 2-A adds separate `ProductionEntryStrategy` and `ProductionPositionExitStrategy` Ports over typed inputs/results. | No concrete production Strategy, Signal selector, or operational cycle exists. |
-| Candidate | Accepted 0005 `TradeCandidate` remains unchanged. Milestone 2-A adds lossless `ProductionTradeCandidate` with separate `PairScore` and confidence plus a typed `PositionCloseCandidate`. | Production Candidate/evaluation persistence and Portfolio/Risk integration remain Milestone 2-C/2-D work. |
+| Strategy Port | Accepted 0005 `Strategy.evaluate(...)` remains unchanged. Milestone 2-A adds separate `ProductionEntryStrategy` and `ProductionPositionExitStrategy` Ports over typed inputs/results; Milestone 2-C implements the concrete `NewsFilteredCarryStrategy` entry Port. | Ordinary close Portfolio/Risk composition remains Milestone 2-D work. |
+| Candidate | Accepted 0005 `TradeCandidate` remains unchanged. Milestone 2-A adds lossless `ProductionTradeCandidate` with separate `PairScore` and confidence plus a typed `PositionCloseCandidate`; Milestone 2-C durably persists entry evaluation/Candidate evidence. | Portfolio/Risk integration remains Milestone 2-D work. |
 | Entry/exit | Milestone 2-A separates production entry evaluation, ordinary reduce-only close Candidate, and existing Risk `ApprovedLiquidationIntent`. | No close quantity, ordinary approved close intent, Portfolio/Risk close decision, or Execution/Gateway close path exists. |
-| Swap | Existing `SwapQuote` remains unchanged. Milestone 2-A adds immutable, versioned, content-addressed `OperationalSwapEvidence` with unit, currency, source/version, provider/receipt, and effective-time semantics. | No operational Swap adapter or persistence exists. Rollover/accrual evidence remains later work. |
+| Swap | Existing `SwapQuote` remains unchanged. Milestone 2-A adds immutable, versioned, content-addressed `OperationalSwapEvidence`; Milestone 2-C adds typed operational resolution and exact append-or-reuse persistence. | Rollover/accrual evidence remains later work. |
 | Position/account | `PositionSnapshot` has Pair, side, quantity, current price, and observation time. `AccountSnapshot` has only margin ratio and observation time. | No cash, realized/unrealized PnL, accrued swap, equity, used/available margin, gross exposure, open order, lot, or ledger contract. |
 | Broker boundary | `BrokerGateway.submit(ApprovedExecutionIntent) -> OrderResult`. `GmoPrivatePostTransport.post_once` requires configuration plus `LIVE_TRADING_ARMED=YES` and does not retry. | No Paper Gateway exists. The low-level Private transport is not a complete Broker adapter and must remain outside paper composition. |
 | Execution | `ExecutionService` accepts only `ApprovedExecutionIntent`, persistently claims its key, and always returns `NOT_SUBMITTED`; it never calls its injected Broker Gateway. | A boolean dry-run cannot represent fictional execution. Paper needs a distinct adapter, domain, result status, and authority. |
 | Idempotency | Execution intent carries a caller-supplied string. SQLite has a unique intent key and a separate claimed-key table. | There is no canonical operational cycle identity or deterministic Paper order/fill identity. |
-| Persistence | Live base tables and numbered Live migrations `0001`/`0002` remain unchanged. Shared Signal Store migrations `0002` through `0004` separately add Store/Claim, Selection, and exact Pair artifact Completion evidence. Signal append, Claim, Selection capture, and Completion use explicit atomic boundaries and exact hydration. | Paper begins only after later Strategy persistence, not at a reserved Live `0003`. |
+| Persistence | Live base tables and numbered Live migrations `0001`/`0002` remain unchanged. Shared Signal Store migrations `0002` through `0004` add exact Pair materialization evidence. Live `0003`/`0004` add operational Swap and atomic Strategy config/evaluation/Candidate persistence with immutable authorization commitments. | Paper begins after completed Strategy persistence at the next available additive Live migration. |
 | Signal source | `fx_signal_store` can read immutable Signals, freeze one Request Claim, capture every checkpoint Signal in both BASE/QUOTE roles, persist a selected Pair Signal/lineage/Store/Derivation/Completion atomically, and compose those three public boundaries through a Store-neutral operational Materializer. Non-selected outcomes persist artifact-free Completion roots. Adoption runtime still consumes a supplied Signal and never reads Research evaluation state. | There is no Live-owned Signal-source/Adoption composition or recurring materialization cycle. |
-| Pair transformation | `fx_core.CurrencyPairSignalTransformer` persists `currency-pair-v1` semantics. M2-B1 fixes identity/verifier contracts; M2-B2 freezes Store/Claim authority; M2-B3 persists terminal selection evidence; M2-B4 persists and reauthenticates exact Pair artifacts; M2-B5 composes exact replay without duplicating transformation logic. | Live Adoption and concrete Strategy integration remain M2-C work. |
+| Pair transformation | `fx_core.CurrencyPairSignalTransformer` persists `currency-pair-v1` semantics. M2-B1 through B5 implement exact durable materialization; M2-C composes it with Live Adoption, Swap, Strategy, and Candidate persistence for both configured Pairs. | Recurring operation remains a later milestone. |
 | Modes | Adoption keeps `RuntimeMode.SHADOW/LIVE`. Milestone 2-A adds distinct `ExecutionAuthorityMode`, maps Shadow/Paper to Adoption Shadow and Live to Adoption Live, and makes the 0006 authority guard reject Live. | No operational composition persists or exercises Paper authority yet. |
 | Operations | CLI supports one offline fixture cycle and one-shot approve/revoke commands. | No production one-shot cycle, scheduler/daemon, overlap lock, checkpoint, health signal, restart recovery, reconciliation, or burn-in report exists. |
 | Pair/config values | M2-A config contract enforces the ordered exact Pair scope `USD_JPY`, `MXN_JPY` and requires every threshold, duration, version, and exit flag explicitly. Test values remain fixtures. | No reviewed production config instance or runtime settings source exists. Fixture and Research defaults are never promoted implicitly. |
@@ -320,9 +320,9 @@ source/output Signal types, Horizon, producer/model/prompt/scorer/source and out
 transformation versions, source freshness, exact Observation group policy, and
 selection policy. Its content ID includes every semantic field and integer
 microseconds for the freshness duration. It has no current-time or Pair/config
-default. M2-C composition must later require its Pair to equal the Strategy config's
-eligible Pair being evaluated; neither contract copies or silently supplies the
-other's whitelist.
+default. M2-C composition requires its Pair to equal the Strategy config's eligible
+Pair being evaluated; neither contract copies or silently supplies the other's
+whitelist.
 
 One `PairSignalMaterializationRequest` is exactly one Pair/as-of/Specification. Its
 stable ID deliberately excludes selected base/quote Signal IDs, Observation IDs,
@@ -873,9 +873,11 @@ all four are complete:
     typed operational outcome/result validation; durable staged recovery; concurrent
     convergence; and exact exception propagation without reimplementing selection,
     transformation, SQL, or persistence transactions.
-- **2-C Entry Strategy (pending):** concrete `NewsFilteredCarryStrategy`, operational
-  Swap adapter, evaluation/Candidate persistence, and persistence-boundary recheck of
-  the approval's exact `strategy_config_identity`.
+- **2-C Entry Strategy and persistence (complete):** B1 implements the deterministic
+  `NewsFilteredCarryStrategy`; B2 adds exact typed execution-boundary inputs; B3 adds
+  operational Swap resolution/persistence; B4 atomically authenticates and persists
+  Strategy config, evaluation, and Candidate evidence; B5 composes ordered two-Pair
+  materialization, Adoption, Swap, Strategy, and replay with fail-closed propagation.
 - **2-D Ordinary Close Path (pending):** close evaluation persistence and separate
   typed Portfolio/Risk reduce-only/no-overclose decisions. Risk emergency liquidation
   remains a different authority.
@@ -891,9 +893,9 @@ Deliverables:
 - Operational Pair Signal production via `CurrencyPairSignalTransformer`, never a
   duplicate formula in `swap_bot`.
 - Exact AuthorizedSignal input and deterministic entry Candidate/structured skip
-  contracts for `USD_JPY` and `MXN_JPY` only. (2-A complete; algorithm 2-C pending)
+  contracts for `USD_JPY` and `MXN_JPY` only. (2-C complete)
 - Fresh positive received-carry gate with exact `OperationalSwapEvidence` lineage.
-  (2-A evidence contract complete; 2-C gate pending)
+  (2-C complete)
 - Explicit resolution of Candidate PairScore evidence without clamping. (2-A
   complete)
 - Separate ordinary close Candidate, structured exit reasons, exact typed input
@@ -1060,9 +1062,10 @@ python -m swap_bot paper-burn-in-report --config <paper-config>
   Store migrations `0002_pair_materialization_persistence.sql` and
   `0003_pair_signal_selection_evidence.sql` are independently numbered after
   `0001_signal_lineage.sql`; they backfill Store catalog sequence and add immutable
-  Selection evidence without rewriting Signal content. Milestone 2-C/D use the next
-  available Live additive numbers in implementation order. Paper persistence then
-  begins at the next available Live migration; Live `0003` is not reserved for Paper.
+  Selection evidence without rewriting Signal content. Milestone 2-C uses additive
+  Live `0003_operational_swap_evidence.sql` and
+  `0004_production_entry_strategy.sql`. Paper persistence begins at the next available
+  Live migration; Live `0003` was not reserved for Paper.
 - Paper tables are additive and use append-only guards. Paper projections can be
   rebuilt from their evidence records.
 - The fixture-only `shadow-once` command remains characterization evidence until a
@@ -1264,7 +1267,30 @@ ExecPlan 0006 is complete only when all of the following are true:
 - [x] Milestone 2-B4 - Pair Artifact Exact Persistence and completion root.
 - [x] Milestone 2-B5 - Operational Pair Signal Materializer.
 - [x] Milestone 2-B - exact Pair Signal materialization and selection.
-- [ ] Milestone 2-C - concrete entry Strategy and persistence.
+- [x] Milestone 2-C - concrete entry Strategy and persistence.
+  - [x] (2026-08-04) B1 - added the pure deterministic
+    `NewsFilteredCarryStrategy`, explicit evaluated-Pair entry identity, exact
+    candidate-Pair authorization matching, and exhaustive Strategy branch/time
+    boundary tests.
+  - [x] (2026-08-04) B2 - added exact typed production-entry work/evidence contracts
+    and explicit Shadow/Paper-to-Adoption authority mapping with fail-closed Live guard.
+  - [x] (2026-08-04) B3 - added typed operational Swap resolution and exact immutable
+    SQLite append/reuse behavior for evidence, missing, and malformed outcomes.
+  - [x] (2026-08-04) B4 - added additive Strategy persistence migration and one atomic
+    authorization recheck, Strategy re-evaluation, config/evaluation/Candidate append
+    boundary with corruption detection and identical replay convergence.
+  - [x] (2026-08-04) B5 - added ordered two-Pair application composition across real
+    Materializer, Adoption, Swap, Strategy, and persistence boundaries; preserved typed
+    pre-evaluation outcomes, first-failure propagation, and exact replay lineage.
+  - [x] (2026-08-04) Final-review correction - bound each exact materializer return to
+    the originating immutable work item's Request, Claim time, and supplied SELECTED
+    materialization time before Adoption or B4; selected results require a non-None
+    committed time, while non-selected results require `None`, with negative tests for
+    both absence/presence directions and every mismatch.
+  - [x] (2026-08-04) Final-review exact-string correction - required exact `str`
+    identity/version fields before content comparisons for work items, Pair results,
+    Strategy config/results, authorization, Swap evidence/resolutions, rejecting
+    comparison-overriding subclasses.
 - [ ] Milestone 2-D - ordinary close Portfolio/Risk path.
 - [ ] Milestone 2 - Production Strategy Implementation.
 - [ ] Milestone 3 - Paper Broker and Ledger.
@@ -1618,6 +1644,9 @@ ExecPlan 0006 is complete only when all of the following are true:
 
 ## Decision log
 
+- 2026-08-04: Treat a valid M2-B5 aggregate as untrusted at the M2-C application
+  boundary until its exact Request, Claim time, and caller-supplied applicable
+  materialization time match the immutable `ProductionEntryWorkItem`.
 - 2026-07-16: Add ExecPlan 0006 for production Strategy plus Paper operations and
   reserve ExecPlan 0007 exclusively for Controlled Live execution rollout.
 - 2026-07-16: Treat `SHADOW_NOT_SUBMITTED`, `PAPER`, and `LIVE` as distinct execution

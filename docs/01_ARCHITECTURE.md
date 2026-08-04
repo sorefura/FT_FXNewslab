@@ -2,11 +2,12 @@
 
 ## Production Strategy contract foundation and Paper target
 
-Milestone 2-A now implements the immutable production Strategy config,
-`OperationalSwapEvidence`, typed entry/exit evaluation and Candidate contracts,
-production Strategy Ports, and the separate execution-authority mapping/guard. It
-does not implement a concrete Strategy, Signal selection/materialization,
-Portfolio/Risk integration, persistence, or Paper runtime.
+Milestone 2-C now composes the immutable production Strategy config and evidence
+contracts through deterministic Pair materialization, Adoption authorization,
+operational Swap resolution, the concrete News Filtered Carry Strategy, and atomic
+evaluation/optional-Candidate persistence. The application root processes exactly
+`USD_JPY` then `MXN_JPY`, preserves both typed results, and rejects LIVE before any
+operational call. Portfolio/Risk integration and Paper runtime remain later work.
 
 Milestone 2-B1 now implements the package-neutral identity, immutable selection,
 and transformation-authenticity foundation that precedes operational Pair Signal

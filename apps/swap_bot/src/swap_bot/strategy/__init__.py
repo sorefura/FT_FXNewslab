@@ -20,6 +20,7 @@ from .contracts import (
     ProductionPositionExitStrategy,
     ProductionTradeCandidate,
 )
+from .news_filtered_carry import NewsFilteredCarryStrategy
 from .swap_evidence import OperationalSwapEvidence
 from .versions import (
     ENTRY_EVALUATION_CONTRACT_VERSION,
@@ -41,6 +42,7 @@ __all__ = [
     "EntryEvaluationOutcome",
     "EntrySkipReason",
     "NewsFilteredCarryStrategyConfig",
+    "NewsFilteredCarryStrategy",
     "OperationalSwapEvidence",
     "PositionCloseCandidate",
     "PositionCloseEvidenceLineage",

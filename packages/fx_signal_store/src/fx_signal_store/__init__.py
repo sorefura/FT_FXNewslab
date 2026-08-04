@@ -38,6 +38,7 @@ from .pair_materialization import (
     inspect_source_candidate,
     observation_group_identity,
     pair_signal_identity_payload,
+    reconstruct_materialized_pair_signal,
     resolve_pair_signal_selection,
     validate_pair_signal_transformation,
 )
@@ -112,6 +113,7 @@ __all__ = [
     "inspect_source_candidate",
     "observation_group_identity",
     "pair_signal_identity_payload",
+    "reconstruct_materialized_pair_signal",
     "resolve_pair_signal_selection",
     "validate_pair_signal_transformation",
 ]

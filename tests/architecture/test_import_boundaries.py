@@ -101,9 +101,9 @@ def test_production_strategy_contracts_do_not_import_forbidden_layers() -> None:
         ), f"forbidden Live-layer import in {path}"
 
 
-def test_milestone_2a_adds_no_strategy_implementation_or_migration() -> None:
+def test_milestone_2c_uses_only_its_four_additive_live_migrations() -> None:
     strategy_root = ROOT / "apps/swap_bot/src/swap_bot/strategy"
-    assert not (strategy_root / "news_filtered_carry.py").exists()
+    assert (strategy_root / "news_filtered_carry.py").exists()
     migrations = {
         path.name
         for path in (ROOT / "apps/swap_bot/src/swap_bot/migrations").glob("*.sql")
@@ -111,4 +111,14 @@ def test_milestone_2a_adds_no_strategy_implementation_or_migration() -> None:
     assert migrations == {
         "0001_validated_signal_live_adoption.sql",
         "0002_candidate_authorization_integrity.sql",
+        "0003_operational_swap_evidence.sql",
+        "0004_production_entry_strategy.sql",
     }
+
+
+def test_milestone_2c_entry_root_does_not_import_downstream_trading_layers() -> None:
+    imports = _imports(ROOT / "apps/swap_bot/src/swap_bot/production_entry.py")
+    imported_modules = {name.split(".")[-1] for name in imports}
+    assert {"portfolio", "risk", "execution", "paper", "broker", "ports"}.isdisjoint(
+        imported_modules
+    )

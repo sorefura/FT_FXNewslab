@@ -887,6 +887,81 @@ def expected_pair_signal_snapshot(
     )
 
 
+def reconstruct_materialized_pair_signal(result: object) -> Signal:
+    """Reconstruct the exact selected Pair Signal from authenticated M2-B5 evidence."""
+    from .materializer import PairSignalMaterializerOutcome, PairSignalMaterializerResult
+
+    if type(result) is not PairSignalMaterializerResult:
+        raise TypeError("materializer result must use the exact supported contract type")
+    PairSignalMaterializerResult.validate_intrinsic_integrity(result)
+    if result.outcome not in (
+        PairSignalMaterializerOutcome.MATERIALIZED,
+        PairSignalMaterializerOutcome.REUSED_IDENTICAL,
+    ):
+        raise ValueError("only selected materialized Pair Signal artifacts can be reconstructed")
+    selection = result.selection_snapshot
+    completion = result.completion
+    if selection.outcome is not PairSignalSelectionOutcome.SELECTED:
+        raise ValueError("selected materialization outcome requires a selected snapshot")
+    snapshot = completion.pair_signal_snapshot
+    if type(snapshot) is not SignalContentSnapshot:
+        raise TypeError("selected completion must contain the exact Pair Signal snapshot")
+    SignalContentSnapshot.validate_intrinsic_integrity(snapshot)
+    expected_snapshot = expected_pair_signal_snapshot(
+        selection, materialized_at=snapshot.created_at
+    )
+    _require_exact_snapshot_semantics(snapshot, expected_snapshot)
+    signal = expected_pair_signal(selection, materialized_at=snapshot.created_at)
+    _require_signal_snapshot_semantics(signal, snapshot)
+    return signal
+
+
+def _require_exact_snapshot_semantics(
+    actual: SignalContentSnapshot, expected: SignalContentSnapshot
+) -> None:
+    for field in (
+        "signal_id", "target_type", "target_value", "signal_type", "direction_type",
+        "direction_value", "strength", "confidence", "horizon", "observed_at",
+        "created_at", "producer_version", "model_version", "prompt_version",
+        "scorer_version", "transformation_version", "source_feature_ids",
+        "source_observation_ids", "signal_content_hash",
+    ):
+        if getattr(actual, field) != getattr(expected, field):
+            raise ValueError(f"materialized Pair Signal snapshot mismatch: {field}")
+
+
+def _require_signal_snapshot_semantics(signal: Signal, snapshot: SignalContentSnapshot) -> None:
+    if (
+        not isinstance(signal.target, PairTarget)
+        or snapshot.target_type is not SignalTargetType.PAIR
+    ):
+        raise TypeError("reconstructed Signal must be an exact Pair Signal")
+    fields: tuple[tuple[str, object, object], ...] = (
+        ("signal_id", signal.signal_id, snapshot.signal_id),
+        ("pair", signal.target.pair.symbol, snapshot.target_value),
+        ("signal_type", signal.signal_type, snapshot.signal_type),
+        ("direction", signal.direction.value, snapshot.direction_value),
+        ("strength", signal.strength.value, snapshot.strength),
+        ("confidence", signal.confidence.value, snapshot.confidence),
+        ("horizon", signal.horizon, snapshot.horizon),
+        ("observed_at", signal.observed_at, snapshot.observed_at),
+        ("created_at", signal.created_at, snapshot.created_at),
+        ("producer_version", signal.versions.producer_version, snapshot.producer_version),
+        ("model_version", signal.versions.model_version, snapshot.model_version),
+        ("prompt_version", signal.versions.prompt_version, snapshot.prompt_version),
+        ("scorer_version", signal.versions.scorer_version, snapshot.scorer_version),
+        (
+            "transformation_version",
+            signal.versions.transformation_version,
+            snapshot.transformation_version,
+        ),
+        ("source_feature_ids", signal.source_feature_ids, snapshot.source_feature_ids),
+    )
+    for label, actual, expected in fields:
+        if actual != expected:
+            raise ValueError(f"reconstructed Pair Signal mismatch: {label}")
+
+
 def validate_pair_signal_transformation(
     pair_signal_snapshot: SignalContentSnapshot,
     selection_snapshot: PairSignalSelectionSnapshot,

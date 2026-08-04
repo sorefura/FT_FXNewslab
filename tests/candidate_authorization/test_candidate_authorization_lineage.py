@@ -1,3 +1,4 @@
+from dataclasses import replace
 from datetime import timedelta
 from decimal import Decimal
 from pathlib import Path
@@ -187,6 +188,10 @@ def test_pre_approval_signal_authorization_cannot_create_a_candidate(
         runtime_mode=RuntimeMode.SHADOW,
         authorized_at=NOW,
     )
+    stale_authorization = replace(
+        stale_authorization,
+        authorization_id=stale_authorization.expected_authorization_id,
+    )
     adoption_store.append_authorization(stale_authorization)
     stale = AuthorizedSignal(stale_signal, stale_authorization)
     candidate = _candidate(
@@ -220,6 +225,10 @@ def test_pre_authority_authorization_cannot_create_a_candidate(
         adoption_mode=approval.adoption_mode,
         runtime_mode=RuntimeMode.SHADOW,
         authorized_at=NOW - timedelta(seconds=1),
+    )
+    stale_authorization = replace(
+        stale_authorization,
+        authorization_id=stale_authorization.expected_authorization_id,
     )
     adoption_store.append_authorization(stale_authorization)
     stale = AuthorizedSignal(signal, stale_authorization)

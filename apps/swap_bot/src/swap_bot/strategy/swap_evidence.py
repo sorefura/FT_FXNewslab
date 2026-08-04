@@ -103,6 +103,16 @@ class OperationalSwapEvidence:
         return "swap-evidence-" + digest(self.identity_payload)
 
     def validate_intrinsic_integrity(self) -> None:
+        for value, label in (
+            (self.swap_evidence_id, "swap_evidence_id"),
+            (self.evidence_contract_version, "evidence_contract_version"),
+            (self.source, "source"),
+            (self.source_version, "source_version"),
+        ):
+            if type(value) is not str:
+                raise TypeError(f"{label} must be exact str")
+        if self.unit_basis is not None and type(self.unit_basis) is not str:
+            raise TypeError("unit_basis must be exact str or None")
         if self.evidence_contract_version != OPERATIONAL_SWAP_EVIDENCE_VERSION:
             raise ValueError("unsupported OperationalSwapEvidence contract")
         if not self.source.strip() or not self.source_version.strip():

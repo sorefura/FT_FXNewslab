@@ -1,3 +1,4 @@
+from dataclasses import replace
 from datetime import UTC, datetime, timedelta
 from decimal import Decimal
 
@@ -68,12 +69,13 @@ def strategy_config(**changes: object) -> NewsFilteredCarryStrategyConfig:
 def authorized_pair_signal(
     *,
     signal_id: str = "signal-pair-1",
-    authorization_id: str = "signal-authorization-1",
+    authorization_id: str | None = None,
     adoption_decision_id: str = "adoption-approval-1",
     evidence_snapshot_id: str = "research-evidence-1",
     pair: CurrencyPair = PAIR,
     strategy_id: str = "news-filtered-carry",
     strategy_version: str = "strategy-v1",
+    runtime_mode: RuntimeMode = RuntimeMode.SHADOW,
     signal_created_at: datetime = NOW - timedelta(minutes=1),
     authorized_at: datetime = NOW,
 ) -> AuthorizedSignal:
@@ -97,7 +99,7 @@ def authorized_pair_signal(
         ),
     )
     authorization = SignalAuthorization(
-        authorization_id=authorization_id,
+        authorization_id=authorization_id or "pending-authorization-id",
         signal_id=signal.signal_id.value,
         adoption_decision_id=adoption_decision_id,
         evidence_snapshot_id=evidence_snapshot_id,
@@ -105,9 +107,14 @@ def authorized_pair_signal(
         strategy_id=strategy_id,
         strategy_version=strategy_version,
         adoption_mode=AdoptionMode.SHADOW_ONLY,
-        runtime_mode=RuntimeMode.SHADOW,
+        runtime_mode=runtime_mode,
         authorized_at=authorized_at,
     )
+    if authorization_id is None:
+        authorization = replace(
+            authorization,
+            authorization_id=authorization.expected_authorization_id,
+        )
     return AuthorizedSignal(signal, authorization)
 
 
@@ -135,6 +142,7 @@ def entry_input(**changes: object) -> ProductionEntryEvaluationInput:
     values: dict[str, object] = {
         "authorized_pair_signal": authorized_pair_signal(),
         "approved_strategy_config_identity": strategy_config().strategy_config_identity,
+        "evaluated_pair": PAIR,
         "swap_evidence": swap_evidence(),
         "evaluated_at": NOW + timedelta(seconds=1),
     }

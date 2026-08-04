@@ -35,7 +35,21 @@ Milestone 2-A tests already state:
 - v1 config rejects unsupported Candidate contract, Pair transformation, and Pair
   Signal type at construction; and
 - the strategy package imports no Research, AI/LLM, Execution, Portfolio, Risk, or
-  Broker module, while no concrete production Strategy or migration exists yet.
+  Broker module.
+
+Milestone 2-C B4 tests additionally require exact `EVIDENCE` Swap resolution,
+persisted Adoption authority reconstruction, inclusive authority-start/equality
+ordering, exclusive expiry, evaluation-time revocation semantics, one Candidate for
+CANDIDATE and none for SKIP, lossless score/confidence, atomic rollback on conflict,
+and one insert plus one identical reuse under concurrent writers. Legacy Candidate,
+Portfolio, and Risk roots remain untouched.
+
+Milestone 2-C B5 tests prevalidate exactly one immutable work item for each configured
+Pair before the first operational call, reject LIVE for the entire batch, distinguish
+non-selection/ambiguity and missing/malformed Swap as content-addressed typed results,
+and preserve both Pair results in config order. Integration coverage replays two
+selected Pairs through real Adoption and B4 stores and converges to identical reuse
+without writing legacy Candidate rows.
 
 Milestone 2-B1 tests additionally state:
 

@@ -59,12 +59,9 @@ def test_milestone_2b5_keeps_exact_artifact_migrations_and_shared_lineage() -> N
     }
 
 
-def test_milestone_2b5_adds_materializer_without_concrete_strategy() -> None:
+def test_milestone_2b5_adds_operational_materializer() -> None:
     assert (
         ROOT / "packages/fx_signal_store/src/fx_signal_store/materializer.py"
-    ).exists()
-    assert not (
-        ROOT / "apps/swap_bot/src/swap_bot/strategy/news_filtered_carry.py"
     ).exists()
 
 

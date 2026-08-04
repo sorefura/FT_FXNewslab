@@ -87,7 +87,7 @@ def _input_with_change(name: str) -> ProductionPositionExitEvaluationInput:
     if name == "authorization_id":
         return position_exit_input(
             authorized_pair_signal=authorized_pair_signal(
-                authorization_id="signal-authorization-2"
+                adoption_decision_id="adoption-approval-authorization-2",
             )
         )
     if name == "adoption_decision_id":
@@ -337,7 +337,10 @@ def test_keep_and_close_retain_the_exact_typed_input_lineage() -> None:
         is evaluation_input.existing_position_side
     )
     assert lineage.signal_id == authorized_pair_signal().signal.signal_id
-    assert lineage.authorization_id == "signal-authorization-1"
+    assert (
+        lineage.authorization_id
+        == authorized_pair_signal().authorization.authorization_id
+    )
     assert lineage.current_adoption_decision_id == "adoption-approval-1"
     assert lineage.swap_evidence_id == swap_evidence().swap_evidence_id
     assert (

@@ -17,12 +17,11 @@
   - Paper order/fill evidence is operational simulation and never grants real Broker
     authority.
 
-ExecPlan 0006 Milestone 2-A has implemented the production Strategy domain contract
-foundation. Milestone 2-B1 has additionally fixed package-neutral canonical identity,
-stable Pair/as-of/specification requests, exact Signal/Observation/candidate selection
-snapshots, deterministic Pair Signal identity, and exact BASE/QUOTE derivation contracts.
-Checkpoint persistence, operational Pair Signal materialization, the concrete Strategy,
-production persistence/Portfolio/Risk integration, and all Paper modules remain pending.
+ExecPlan 0006 Milestones 2-A through 2-C are complete. They provide the production
+Strategy domain contracts, exact durable Pair Signal materialization, operational Swap
+resolution, the concrete deterministic entry Strategy, atomic evaluation/Candidate
+persistence, and ordered two-Pair application composition with replay convergence.
+Ordinary close Portfolio/Risk integration and all Paper modules remain pending.
 ExecPlan 0007 is reserved for Controlled Live execution rollout.
 
 ## ExecPlan 0005 adoption boundary
@@ -116,4 +115,5 @@ ExecPlan 0007 is reserved for Controlled Live execution rollout.
 - `docs/exec-plans/0005-validated-signal-live-adoption.md`: exact Research evidence、
   explicit Strategy adoption、authorization lineage、shadow proof。
 - `docs/exec-plans/0006-production-strategy-and-paper-trading-operations.md`:
-  production StrategyとPaper operationsのplanning/architecture milestone。実装は未着手。
+  production StrategyとPaper operationsのliving plan。Milestones 2-A〜2-Cは実装済みで、
+  ordinary close Portfolio/Risk以降のMilestones 2-D〜5は未着手。

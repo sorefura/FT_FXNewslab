@@ -85,6 +85,20 @@ class LiveAdoptionGate:
             reason = _dominant_reason(rejected_reasons)
             self._reject(reason, "no exact approval is currently eligible")
         approval = active[0]
+        existing = self._store.find_authorization(
+            signal_id=signal.signal_id.value,
+            adoption_decision_id=approval.adoption_decision_id,
+            strategy_id=strategy_id,
+            strategy_version=strategy_version,
+            runtime_mode=runtime_mode,
+        )
+        if existing is not None:
+            existing.validate_intrinsic_identity()
+            if existing.authorized_at != authorized_at:
+                raise ValueError(
+                    "Signal was already authorized at a different semantic instant"
+                )
+            return AuthorizedSignal(signal=signal, authorization=existing)
         authorization = SignalAuthorization(
             authorization_id="signal-authorization-"
             + digest(
@@ -106,10 +120,19 @@ class LiveAdoptionGate:
             runtime_mode=runtime_mode,
             authorized_at=authorized_at,
         )
+        authorization.validate_intrinsic_identity()
         if not self._store.append_authorization(authorization):
-            authorization = self._store.get_authorization(
-                authorization.authorization_id
+            concurrent_authorization = self._store.find_authorization(
+                signal_id=signal.signal_id.value,
+                adoption_decision_id=approval.adoption_decision_id,
+                strategy_id=strategy_id,
+                strategy_version=strategy_version,
+                runtime_mode=runtime_mode,
             )
+            if concurrent_authorization is None:
+                raise RuntimeError("concurrent Signal authorization was not found")
+            concurrent_authorization.validate_intrinsic_identity()
+            authorization = concurrent_authorization
         return AuthorizedSignal(signal=signal, authorization=authorization)
 
     def _ineligible_reason(

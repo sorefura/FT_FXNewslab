@@ -39,6 +39,8 @@ class NewsFilteredCarryStrategyConfig:
     maximum_holding_age: timedelta | None
 
     def __post_init__(self) -> None:
+        if type(self.config_contract_version) is not str:
+            raise TypeError("config_contract_version must be exact str")
         if self.config_contract_version != NEWS_FILTERED_CARRY_CONFIG_VERSION:
             raise ValueError("unsupported NewsFilteredCarryStrategy config contract")
         for value, label in (
@@ -50,6 +52,8 @@ class NewsFilteredCarryStrategyConfig:
             (self.exit_policy_version, "exit_policy_version"),
             (self.candidate_contract_version, "candidate_contract_version"),
         ):
+            if type(value) is not str:
+                raise TypeError(f"{label} must be exact str")
             if not value.strip():
                 raise ValueError(f"{label} must not be blank")
         if self.eligible_pairs != INITIAL_ELIGIBLE_PAIRS:

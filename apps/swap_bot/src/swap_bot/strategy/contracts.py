@@ -4,15 +4,28 @@ from enum import StrEnum
 from typing import Protocol
 
 from fx_core import (
+    Currency,
     CurrencyPair,
+    CurrencyTarget,
+    DirectionScore,
+    FeatureId,
+    Horizon,
     PairScore,
     PairTarget,
     Probability,
+    Signal,
     SignalId,
+    VersionMetadata,
 )
 from fx_core.time import require_utc
 
-from ..adoption import AuthorizedSignal, digest
+from ..adoption import (
+    AdoptionMode,
+    AuthorizedSignal,
+    RuntimeMode,
+    SignalAuthorization,
+    digest,
+)
 from ..models import PositionId, Side
 from .swap_evidence import OperationalSwapEvidence
 from .versions import (
@@ -70,17 +83,26 @@ class PositionExitKeepReason(StrEnum):
 class ProductionEntryEvaluationInput:
     authorized_pair_signal: AuthorizedSignal
     approved_strategy_config_identity: str
+    evaluated_pair: CurrencyPair
     swap_evidence: OperationalSwapEvidence
     evaluated_at: datetime
 
     def __post_init__(self) -> None:
-        if not isinstance(self.authorized_pair_signal, AuthorizedSignal):
+        if type(self.authorized_pair_signal) is not AuthorizedSignal:
             raise TypeError("production entry requires an AuthorizedSignal")
+        _validate_authorized_signal_integrity(self.authorized_pair_signal)
+        _validate_currency_pair(self.evaluated_pair, "evaluated_pair")
+        if type(self.approved_strategy_config_identity) is not str:
+            raise TypeError("approved_strategy_config_identity must be exact str")
         _require_text(
             self.approved_strategy_config_identity,
             "approved_strategy_config_identity",
         )
-        self.swap_evidence.validate_intrinsic_integrity()
+        if type(self.swap_evidence) is not OperationalSwapEvidence:
+            raise TypeError("swap_evidence must be exact OperationalSwapEvidence")
+        OperationalSwapEvidence.validate_intrinsic_integrity(self.swap_evidence)
+        if type(self.evaluated_at) is not datetime:
+            raise TypeError("evaluated_at must be exact datetime")
         require_utc(self.evaluated_at, "entry evaluated_at")
 
 
@@ -102,6 +124,8 @@ class ProductionTradeCandidate:
     created_at: datetime
 
     def __post_init__(self) -> None:
+        if type(self.candidate_contract_version) is not str:
+            raise TypeError("candidate_contract_version must be exact str")
         if self.candidate_contract_version != PRODUCTION_CANDIDATE_CONTRACT_VERSION:
             raise ValueError("unsupported ProductionTradeCandidate contract")
         for value, label in (
@@ -216,6 +240,8 @@ class ProductionEntryEvaluation:
     skip_reason: EntrySkipReason | None
 
     def __post_init__(self) -> None:
+        if type(self.evaluation_contract_version) is not str:
+            raise TypeError("evaluation_contract_version must be exact str")
         if self.evaluation_contract_version != ENTRY_EVALUATION_CONTRACT_VERSION:
             raise ValueError("unsupported ProductionEntryEvaluation contract")
         for value, label in (
@@ -248,11 +274,13 @@ class ProductionEntryEvaluation:
         side: Side,
     ) -> "ProductionEntryEvaluation":
         authorized = evaluation_input.authorized_pair_signal
-        if not isinstance(authorized.signal.target, PairTarget) or not isinstance(
-            authorized.signal.direction, PairScore
-        ):
+        if type(authorized.signal.target) is not PairTarget or type(
+            authorized.signal.direction
+        ) is not PairScore:
             raise TypeError("candidate result requires an authorized Pair Signal")
-        pair = authorized.signal.target.pair
+        pair = evaluation_input.evaluated_pair
+        if authorized.signal.target.pair != pair:
+            raise ValueError("candidate result requires an authorized Signal for evaluated_pair")
         if evaluation_input.swap_evidence.pair != pair:
             raise ValueError("candidate result requires swap evidence for the Signal Pair")
         common = _entry_common_payload(evaluation_input, pair)
@@ -316,7 +344,7 @@ class ProductionEntryEvaluation:
         reason: EntrySkipReason,
     ) -> "ProductionEntryEvaluation":
         authorized = evaluation_input.authorized_pair_signal
-        pair = evaluation_input.swap_evidence.pair
+        pair = evaluation_input.evaluated_pair
         common = _entry_common_payload(evaluation_input, pair)
         evaluation_id = _entry_evaluation_id(
             common,
@@ -641,6 +669,8 @@ class PositionCloseCandidate:
     created_at: datetime
 
     def __post_init__(self) -> None:
+        if type(self.close_candidate_contract_version) is not str:
+            raise TypeError("close_candidate_contract_version must be exact str")
         if self.close_candidate_contract_version != POSITION_CLOSE_CANDIDATE_CONTRACT_VERSION:
             raise ValueError("unsupported PositionCloseCandidate contract")
         for value, label in (
@@ -762,6 +792,8 @@ class ProductionPositionExitEvaluation:
     keep_reason: PositionExitKeepReason | None
 
     def __post_init__(self) -> None:
+        if type(self.evaluation_contract_version) is not str:
+            raise TypeError("evaluation_contract_version must be exact str")
         if self.evaluation_contract_version != POSITION_EXIT_EVALUATION_CONTRACT_VERSION:
             raise ValueError("unsupported ProductionPositionExitEvaluation contract")
         for value, label in (
@@ -1168,5 +1200,101 @@ def _require_exit_reason_evidence(
 
 
 def _require_text(value: str, label: str) -> None:
+    if type(value) is not str:
+        raise TypeError(f"{label} must be exact str")
     if not value.strip():
         raise ValueError(f"{label} must not be blank")
+
+
+def _validate_authorized_signal_integrity(authorized: AuthorizedSignal) -> None:
+    signal = authorized.signal
+    authorization = authorized.authorization
+    if type(signal) is not Signal:
+        raise TypeError("authorized signal must contain an exact Signal")
+    if type(authorization) is not SignalAuthorization:
+        raise TypeError(
+            "authorized signal must contain an exact SignalAuthorization"
+        )
+
+    if type(signal.signal_id) is not SignalId:
+        raise TypeError("Signal signal_id must be an exact SignalId")
+    SignalId.__post_init__(signal.signal_id)
+    if type(signal.signal_type) is not str:
+        raise TypeError("Signal signal_type must be exact str")
+    if type(signal.strength) is not Probability:
+        raise TypeError("Signal strength must be an exact Probability")
+    Probability.__post_init__(signal.strength)
+    if type(signal.confidence) is not Probability:
+        raise TypeError("Signal confidence must be an exact Probability")
+    Probability.__post_init__(signal.confidence)
+    if type(signal.horizon) is not Horizon:
+        raise TypeError("Signal horizon must be an exact Horizon")
+    if type(signal.observed_at) is not datetime or type(signal.created_at) is not datetime:
+        raise TypeError("Signal timestamps must be exact datetime values")
+    if type(signal.source_feature_ids) is not tuple or not signal.source_feature_ids:
+        raise TypeError("Signal source_feature_ids must be a non-empty exact tuple")
+    for feature_id in signal.source_feature_ids:
+        if type(feature_id) is not FeatureId:
+            raise TypeError("Signal source_feature_ids must contain exact FeatureId values")
+        FeatureId.__post_init__(feature_id)
+    if type(signal.versions) is not VersionMetadata:
+        raise TypeError("Signal versions must be exact VersionMetadata")
+    for version in (
+        signal.versions.producer_version,
+        signal.versions.model_version,
+        signal.versions.prompt_version,
+        signal.versions.scorer_version,
+        signal.versions.transformation_version,
+    ):
+        if version is not None and type(version) is not str:
+            raise TypeError("Signal version values must be exact str or None")
+    VersionMetadata.__post_init__(signal.versions)
+    signal.versions.require_signal_versions()
+
+    if type(signal.target) is PairTarget:
+        _validate_currency_pair(signal.target.pair, "Signal target Pair")
+        if type(signal.direction) is not PairScore:
+            raise TypeError("Pair Signal direction must be an exact PairScore")
+        PairScore.__post_init__(signal.direction)
+    elif type(signal.target) is CurrencyTarget:
+        _validate_currency(signal.target.currency, "Signal target Currency")
+        if type(signal.direction) is not DirectionScore:
+            raise TypeError("Currency Signal direction must be an exact DirectionScore")
+        DirectionScore.__post_init__(signal.direction)
+    else:
+        raise TypeError("Signal target must be exact CurrencyTarget or PairTarget")
+    Signal.__post_init__(signal)
+
+    for value, label in (
+        (authorization.authorization_id, "authorization_id"),
+        (authorization.signal_id, "authorization signal_id"),
+        (authorization.adoption_decision_id, "adoption_decision_id"),
+        (authorization.evidence_snapshot_id, "evidence_snapshot_id"),
+        (authorization.adoption_policy_version, "adoption_policy_version"),
+        (authorization.strategy_id, "authorization strategy_id"),
+        (authorization.strategy_version, "authorization strategy_version"),
+    ):
+        if type(value) is not str:
+            raise TypeError(f"{label} must be exact str")
+    if type(authorization.adoption_mode) is not AdoptionMode:
+        raise TypeError("authorization adoption_mode must be exact AdoptionMode")
+    if type(authorization.runtime_mode) is not RuntimeMode:
+        raise TypeError("authorization runtime_mode must be exact RuntimeMode")
+    if type(authorization.authorized_at) is not datetime:
+        raise TypeError("authorization authorized_at must be exact datetime")
+    SignalAuthorization.validate_intrinsic_identity(authorization)
+    AuthorizedSignal.__post_init__(authorized)
+
+
+def _validate_currency_pair(pair: object, label: str) -> None:
+    if type(pair) is not CurrencyPair:
+        raise TypeError(f"{label} must be an exact CurrencyPair")
+    _validate_currency(pair.base, f"{label} base")
+    _validate_currency(pair.quote, f"{label} quote")
+    CurrencyPair.__post_init__(pair)
+
+
+def _validate_currency(currency: object, label: str) -> None:
+    if type(currency) is not Currency:
+        raise TypeError(f"{label} must be an exact Currency")
+    Currency.__post_init__(currency)

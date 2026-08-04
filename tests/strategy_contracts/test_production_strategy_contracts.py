@@ -30,6 +30,7 @@ def test_entry_input_accepts_authorized_signal_not_raw_signal() -> None:
         ProductionEntryEvaluationInput(
             authorized_pair_signal=valid.authorized_pair_signal.signal,  # type: ignore[arg-type]
             approved_strategy_config_identity=valid.approved_strategy_config_identity,
+            evaluated_pair=valid.evaluated_pair,
             swap_evidence=valid.swap_evidence,
             evaluated_at=valid.evaluated_at,
         )

@@ -10,6 +10,7 @@ from swap_bot.adoption import (
     AdoptionRejected,
     ResearchValidationEvidenceSnapshot,
     RuntimeMode,
+    SignalAuthorization,
     approval_decision,
     revocation_decision,
 )
@@ -319,10 +320,125 @@ def test_authorization_is_idempotent_and_signal_remains_immutable(tmp_path: Path
         strategy_id="validated-signal-shadow",
         strategy_version="strategy-v1",
         runtime_mode=RuntimeMode.SHADOW,
-        authorized_at=NOW + timedelta(seconds=1),
+        authorized_at=NOW,
     )
+
+    with pytest.raises(ValueError, match="different semantic instant"):
+        gate.authorize(
+            signal,
+            strategy_id="validated-signal-shadow",
+            strategy_version="strategy-v1",
+            runtime_mode=RuntimeMode.SHADOW,
+            authorized_at=NOW + timedelta(seconds=1),
+        )
 
     assert first.authorization.authorization_id == second.authorization.authorization_id
     assert store.count_rows("live_signal_authorizations") == 1
     with pytest.raises(FrozenInstanceError):
         signal.signal_type = "changed"  # type: ignore[misc]
+
+
+def test_append_rejects_forged_or_derived_authorization_before_write(
+    tmp_path: Path,
+) -> None:
+    source, _, _ = _approved_store(tmp_path)
+    valid = LiveAdoptionGate(source).authorize(
+        adoptable_signal(),
+        strategy_id="validated-signal-shadow",
+        strategy_version="strategy-v1",
+        runtime_mode=RuntimeMode.SHADOW,
+        authorized_at=NOW,
+    ).authorization
+    target = SQLiteAdoptionStore(tmp_path / "target.sqlite3")
+    forged = replace(valid, authorization_id="signal-authorization-forged")
+
+    with pytest.raises(ValueError, match="ID does not match intrinsic authority"):
+        target.append_authorization(forged)
+
+    class DerivedSignalAuthorization(SignalAuthorization):
+        pass
+
+    derived = DerivedSignalAuthorization(
+        **{
+            field: getattr(valid, field)
+            for field in valid.__dataclass_fields__
+        }
+    )
+    with pytest.raises(TypeError, match="exact SignalAuthorization"):
+        target.append_authorization(derived)
+    assert target.count_rows("live_signal_authorizations") == 0
+
+
+def test_exact_read_rejects_forged_authorization_even_with_matching_commitment(
+    tmp_path: Path,
+) -> None:
+    store, _, _ = _approved_store(tmp_path)
+    valid = LiveAdoptionGate(store).authorize(
+        adoptable_signal(),
+        strategy_id="validated-signal-shadow",
+        strategy_version="strategy-v1",
+        runtime_mode=RuntimeMode.SHADOW,
+        authorized_at=NOW,
+    ).authorization
+    forged_id = "signal-authorization-forged"
+    with sqlite3.connect(store.path) as connection:
+        connection.execute("DROP TRIGGER live_signal_authorization_no_update")
+        connection.execute(
+            "DROP TRIGGER live_signal_authorization_commitment_no_update"
+        )
+        connection.execute(
+            "UPDATE live_signal_authorizations SET authorization_id = ?",
+            (forged_id,),
+        )
+        connection.execute(
+            "UPDATE live_signal_authorization_content_commitments "
+            "SET authorization_id = ?",
+            (forged_id,),
+        )
+
+    with pytest.raises(ValueError, match="ID does not match intrinsic authority"):
+        store.get_authorization(forged_id)
+    with pytest.raises(ValueError, match="ID does not match intrinsic authority"):
+        store.find_authorization(
+            signal_id=valid.signal_id,
+            adoption_decision_id=valid.adoption_decision_id,
+            strategy_id=valid.strategy_id,
+            strategy_version=valid.strategy_version,
+            runtime_mode=valid.runtime_mode,
+        )
+
+
+def test_upgrade_backfill_does_not_legitimize_forged_legacy_authorization(
+    tmp_path: Path,
+) -> None:
+    store, _, _ = _approved_store(tmp_path)
+    LiveAdoptionGate(store).authorize(
+        adoptable_signal(),
+        strategy_id="validated-signal-shadow",
+        strategy_version="strategy-v1",
+        runtime_mode=RuntimeMode.SHADOW,
+        authorized_at=NOW,
+    )
+    forged_id = "signal-authorization-forged-legacy"
+    with sqlite3.connect(store.path) as connection:
+        connection.execute(
+            "DROP TABLE live_signal_authorization_content_commitments"
+        )
+        connection.execute(
+            "DELETE FROM live_schema_migrations "
+            "WHERE version = '0004_production_entry_strategy.sql'"
+        )
+        connection.execute("DROP TRIGGER live_signal_authorization_no_update")
+        connection.execute(
+            "UPDATE live_signal_authorizations SET authorization_id = ?",
+            (forged_id,),
+        )
+
+    reopened = SQLiteAdoptionStore(store.path)
+    with sqlite3.connect(store.path) as connection:
+        assert connection.execute(
+            "SELECT authorization_id "
+            "FROM live_signal_authorization_content_commitments"
+        ).fetchone() == (forged_id,)
+    with pytest.raises(ValueError, match="ID does not match intrinsic authority"):
+        reopened.get_authorization(forged_id)

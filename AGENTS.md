@@ -11,6 +11,10 @@
 
 作業前に `docs/README.md` を読み、対象領域の設計書を確認すること。
 
+ルートに `TASK.md` がある場合は、セッション履歴を信用せず、作業開始前に
+`TASK.md`、`HANDOFF.md`、`REVIEW.md`、`DECISIONS.md` を読むこと。これらは
+引継ぎ入口であり、frozen design、ADR、ExecPlan、Phase Gateの状態を上書きしない。
+
 大規模機能、アーキテクチャ変更、複数パッケージにまたがるリファクタリングでは、`PLANS.md` に従ってExecPlanを作成・更新すること。
 
 関連Skillがある場合は `.agents/skills/` のSkillを使用すること。

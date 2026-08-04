@@ -23,8 +23,30 @@ delegate gate commands to an implementation agent.
 Do not edit the Git-reviewable tree while the gate is waiting to open the first unit, the next unit,
 or the initial phase checks. Such changes are rejected rather than absorbed into a later base.
 
+Exception: before B1 only, a committed operational workflow or agent-policy correction may be
+adopted with `refresh-baseline --phase <M> --reason <text>`. The command requires a clean tree,
+unchanged frozen files, and zero unit/check/review history. Never use it for product or design work.
+
 Read `references/state-machine.md` when selecting the next command. Read
 `references/reviewer-contract.md` before spawning or recording a reviewer.
+
+## Model policy
+
+- Use `phase_designer` (`gpt-5.6-sol`, high) for Phase design.
+- Use a fresh `phase_reviewer` (`gpt-5.6-terra`, medium) for each B review attempt.
+- Use a fresh `phase_final_reviewer` (`gpt-5.6-sol`, high) for each final review attempt.
+- Do not set a checked-in agent to xhigh. A coordinator may use a one-off `gpt-5.6-sol` xhigh agent
+  only when at least one high-risk condition below is evidenced before launch:
+  - a decision can enable LIVE/real-money orders, authenticated Private transport, or
+    credential/secret access;
+  - a durable-data migration is destructive or irreversible;
+  - one high-reasoning pass leaves a P0/P1 unresolved across multiple trust, authority, or
+    persistence boundaries;
+  - two consecutive final-review attempts reject the same root cause.
+
+Repository size, test count, ordinary additive migrations, implementation difficulty, and a first
+review rejection are not xhigh conditions. The existing Terra high implementation escalation is
+separate and does not authorize xhigh by itself.
 
 ## Execute one B unit
 

@@ -2,7 +2,7 @@
 
 | State | Required next action |
 | --- | --- |
-| `ready_for_unit` | `start-unit` for the exact current unit |
+| `ready_for_unit` | `start-unit` for the exact current unit; before B1 only, an eligible committed workflow-policy correction may use `refresh-baseline` first |
 | `implementing` | edit only the current unit, then `run-checks --scope unit` |
 | `awaiting_review` | spawn a new reviewer, then `record-review` |
 | `changes_requested` | `start-unit` for the same unit and correct findings |
@@ -29,6 +29,12 @@ Diff evidence is captured as raw bytes with external diff and text-conversion dr
 The gate seals the expected tree between `init` and the first unit, between approved units, and
 between the last unit and initial phase checks. Edits in those gaps fail closed instead of being
 absorbed into a later unit baseline.
+
+`refresh-baseline` is the only exception to the initial seal. It requires `ready_for_unit` at the
+first unit, a clean committed tree, unchanged frozen files, and no unit, check, or review history.
+It records the old and new durable snapshots plus a reason. It is for operational workflow or agent
+policy corrections only; product or frozen-design changes require the normal flow or reinitializing
+the phase.
 
 The initial phase-check attempt consumes that transition seal. A failed attempt enters
 `phase_checks_failed`, selects the escalated implementer, and permits correction plus rerun. Later

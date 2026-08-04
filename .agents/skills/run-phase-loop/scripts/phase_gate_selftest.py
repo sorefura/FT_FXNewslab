@@ -1,11 +1,23 @@
 from __future__ import annotations
 
+import hashlib
 import json
 import os
 import subprocess
 import sys
 import tempfile
 from pathlib import Path
+
+
+def _seal_state(state: dict[str, object]) -> str:
+    unsigned = {key: value for key, value in state.items() if key != "state_sha256"}
+    payload = json.dumps(
+        unsigned,
+        ensure_ascii=False,
+        sort_keys=True,
+        separators=(",", ":"),
+    ).encode("utf-8")
+    return hashlib.sha256(payload).hexdigest()
 
 
 def _run(
@@ -173,6 +185,11 @@ def main() -> int:
         assert initialized["current_unit"] == "B1"
 
         state_path = repo / ".phase-runs" / "M9" / "state.json"
+        legacy_state = json.loads(state_path.read_text(encoding="utf-8"))
+        legacy_state.pop("baseline_refreshes")
+        legacy_state["state_sha256"] = _seal_state(legacy_state)
+        state_path.write_text(json.dumps(legacy_state), encoding="utf-8")
+        _gate(repo, script, "verify", "--phase", "M9")
         original_state = state_path.read_text(encoding="utf-8")
         forged_state = json.loads(original_state)
         forged_state["status"] = "complete"
@@ -183,6 +200,43 @@ def main() -> int:
 
         _run(repo, ["git", "reflog", "expire", "--expire=now", "--all"])
         _run(repo, ["git", "gc", "--prune=now"])
+        _gate(repo, script, "verify", "--phase", "M9")
+        (repo / "workflow-policy.txt").write_text("new policy\n", encoding="utf-8")
+        dirty_refresh = _gate(
+            repo,
+            script,
+            "refresh-baseline",
+            "--phase",
+            "M9",
+            "--reason",
+            "update workflow policy",
+            expected=2,
+        )
+        assert "clean committed working tree" in str(dirty_refresh["output"])
+        _run(repo, ["git", "add", "workflow-policy.txt"])
+        _run(repo, ["git", "commit", "-m", "update workflow policy"])
+        sealed_start = _gate(
+            repo,
+            script,
+            "start-unit",
+            "--phase",
+            "M9",
+            "--unit",
+            "B1",
+            expected=2,
+        )
+        assert "changed before the unit transition" in str(sealed_start["output"])
+        refreshed = _gate(
+            repo,
+            script,
+            "refresh-baseline",
+            "--phase",
+            "M9",
+            "--reason",
+            "update workflow policy",
+        )
+        assert refreshed["baseline_refreshed"] is True
+        assert refreshed["baseline_refreshes"] == 1
         _gate(repo, script, "verify", "--phase", "M9")
         (repo / "before-first-unit.txt").write_text("outside transition\n", encoding="utf-8")
         initial_gap = _gate(
@@ -198,6 +252,17 @@ def main() -> int:
         assert "changed before the unit transition" in str(initial_gap["output"])
         (repo / "before-first-unit.txt").unlink()
         _gate(repo, script, "start-unit", "--phase", "M9", "--unit", "B1")
+        late_refresh = _gate(
+            repo,
+            script,
+            "refresh-baseline",
+            "--phase",
+            "M9",
+            "--reason",
+            "too late",
+            expected=2,
+        )
+        assert "expected ready_for_unit" in str(late_refresh["output"])
         _run(repo, ["git", "reflog", "expire", "--expire=now", "--all"])
         _run(repo, ["git", "gc", "--prune=now"])
         (repo / "implementation.txt").write_text("first attempt\n", encoding="utf-8")

@@ -5,12 +5,12 @@ writer implements at a time, and every review attempt uses a new read-only revie
 
 ## Roles
 
-- Phase design: `phase_designer` (`gpt-5.6-sol`, xhigh)
+- Phase design: `phase_designer` (`gpt-5.6-sol`, high)
 - Goal coordinator: select `gpt-5.6-terra`, medium before starting `/goal`
 - Normal implementation: `phase_implementer` (`gpt-5.6-luna`, medium)
 - Escalated implementation: `phase_implementer_escalated` (`gpt-5.6-terra`, high)
-- B review: a new `phase_reviewer` (`gpt-5.6-sol`, high) for every attempt
-- Final review: a new `phase_final_reviewer` (`gpt-5.6-sol`, xhigh)
+- B review: a new `phase_reviewer` (`gpt-5.6-terra`, medium) for every attempt
+- Final review: a new `phase_final_reviewer` (`gpt-5.6-sol`, high)
 
 The coordinator must not run two writers concurrently. Reviewers are read-only. Subagents inherit
 the parent turn's live permissions, so select the intended permission mode before starting.
@@ -32,6 +32,18 @@ Initialization records the exact HEAD and SHA-256 of the manifest, specification
 files. Every frozen input must already be tracked at HEAD with identical content; ignored or merely
 untracked design files are rejected. Later commands fail closed if any frozen file changes.
 
+If a committed workflow or agent-policy correction is required after initialization but before B1,
+leave the frozen milestone files unchanged and run `refresh-baseline` from a clean tree. The command
+is allowed only while every unit is still pending and no check or review history exists:
+
+```bash
+python .agents/skills/run-phase-loop/scripts/phase_gate.py refresh-baseline \
+  --phase M2 --reason "update phase workflow policy before B1"
+```
+
+The gate preserves both durable snapshots in an audited refresh history. Product changes, frozen
+design changes, or any correction after B1 starts require the normal unit flow or a new phase state.
+
 ## Start the Goal
 
 Select Terra with medium reasoning for the primary chat, then start:
@@ -45,6 +57,23 @@ Do not complete the goal until phase_gate.py assert-complete succeeds.
 
 The detailed state transition protocol lives in the Skill. `/goal` remains the persistent outcome,
 not the state machine.
+
+## xhigh escalation
+
+No checked-in agent uses xhigh by default. The coordinator may launch a one-off `gpt-5.6-sol`
+xhigh agent only after stating the triggering condition and evidence. At least one condition must
+hold:
+
+- the decision can enable LIVE or real-money orders, authenticated Private transport, or access to
+  credentials or secrets;
+- a durable-data migration is destructive or irreversible;
+- one high-reasoning pass leaves a P0/P1 unresolved across multiple trust, authority, or persistence
+  boundaries; or
+- two consecutive final-review attempts reject the same root cause.
+
+Repository size, test count, an ordinary additive migration, implementation difficulty, or a first
+review rejection is not sufficient. Terra high implementation escalation remains a separate gate
+response and does not itself authorize xhigh.
 
 ## Evidence and recovery
 

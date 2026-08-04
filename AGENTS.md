@@ -28,6 +28,8 @@ MilestoneをM単位で設計し、B単位で実装・テスト・独立レビュ
 - 書き込み可能な実装agentは同時に一つだけとする。
 - 各review attemptでは新しいread-only reviewer threadを作成する。
 - 以前のreviewerへfollow-upして再利用しない。
+- Phase設計と最終reviewは`gpt-5.6-sol` high、B reviewは`gpt-5.6-terra` mediumを通常値とする。
+- xhighは`.agents/skills/run-phase-loop/SKILL.md`の高リスク条件を満たす単発agentにだけ使用する。
 - frozen design、phase state、review bundleを手作業で変更しない。
 - `phase_gate.py assert-complete`が成功するまでGoalを完了扱いにしない。
 - commit、push、merge、deployは明示的な許可なしに行わない。

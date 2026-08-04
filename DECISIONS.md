@@ -16,9 +16,18 @@ frozen spec、ADR、ExecPlanを正本とし、この文書へコピーしない�
 
 ## Workflow decisions
 
-- M単位の設計・最終reviewは5.6 Sol、B単位の実装はLuna/Terra medium相当を基本とする。
+- M単位の設計・最終reviewは5.6 Sol high、B reviewは5.6 Terra medium、B単位の実装は
+  Luna/Terra medium相当を通常値とする。
 - routineな調査、gate操作、文書同期、既知のmechanical correctionはLuna/Terra
-  medium相当を優先し、5.6 Sol highはPhase設計、独立review、最終reviewへ限定する。
+  medium相当を優先する。
+- xhighを常設agentの既定値にしない。次のいずれかを満たす場合だけ、coordinatorが条件と根拠を
+  明示して5.6 Sol xhighを単発起動する。
+  - LIVE/実資金order、authenticated Private transport、credential/secret accessを有効化し得る判断。
+  - durable dataに対する破壊的または不可逆なmigration。
+  - high reasoningを1回使っても、複数のtrust・authority・persistence境界にまたがるP0/P1が未解決。
+  - 同一root causeによりfinal reviewが2 attempt連続でrejectされた。
+- repository規模、test件数、通常のadditive migration、実装難度、最初のreview rejectionだけでは
+  xhigh条件を満たさない。通常の実装修正escalationであるTerra highとは別に扱う。
 - reviewerは1 attemptにつき1回だけ起動する。App taskの状態取得失敗を理由に同じ仕事を
   重複起動せず、Git・Phase Gate・bundleを正本に再開する。
 - rejection後は修正し、必ず別の新規reviewerで再審査する。

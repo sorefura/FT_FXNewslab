@@ -332,6 +332,24 @@ def _verify_durable_snapshot(repo: Path, value: object) -> None:
 
 def _verify_durable_baselines(repo: Path, state: dict[str, Any]) -> None:
     _verify_durable_snapshot(repo, state.get("phase_base"))
+    refreshes = state.get("baseline_refreshes", [])
+    if not isinstance(refreshes, list):
+        raise GateError("baseline refresh history is malformed")
+    previous_current: object = None
+    for index, refresh in enumerate(refreshes):
+        if not isinstance(refresh, dict):
+            raise GateError("baseline refresh record is malformed")
+        if index and refresh.get("previous") != previous_current:
+            raise GateError("baseline refresh history chain is broken")
+        if not isinstance(refresh.get("reason"), str) or not isinstance(
+            refresh.get("refreshed_at"), str
+        ):
+            raise GateError("baseline refresh metadata is malformed")
+        _verify_durable_snapshot(repo, refresh.get("previous"))
+        _verify_durable_snapshot(repo, refresh.get("current"))
+        previous_current = refresh.get("current")
+    if refreshes and previous_current != state.get("phase_base"):
+        raise GateError("phase baseline does not match refresh history")
     for unit in state.get("units", []):
         record = state.get("unit_records", {}).get(unit, {})
         if "base" in record:
@@ -396,6 +414,7 @@ def _command_init(repo: Path, args: argparse.Namespace) -> None:
         "phase_reviews": [],
         "reviewer_thread_ids": [],
         "latest_checks": {},
+        "baseline_refreshes": [],
         "created_at": _now(),
     }
     _write_state(repo, state)
@@ -427,6 +446,7 @@ def _public_status(state: dict[str, Any], manifest: dict[str, Any]) -> dict[str,
         ),
         "reviewer_agent": manifest["reviewer_agent"],
         "final_reviewer_agent": manifest["final_reviewer_agent"],
+        "baseline_refreshes": len(state.get("baseline_refreshes", [])),
         "updated_at": state.get("updated_at"),
     }
 
@@ -449,6 +469,64 @@ def _command_verify(repo: Path, args: argparse.Namespace) -> None:
     _verify_review_history(repo, state)
     result = _public_status(state, manifest)
     result["frozen_files_verified"] = len(state["frozen_files"])
+    _json_print(result)
+
+
+def _command_refresh_baseline(repo: Path, args: argparse.Namespace) -> None:
+    state = _load_state(repo, _phase_name(args.phase))
+    manifest = _manifest_for_state(repo, state)
+    _verify_frozen(repo, state)
+    _verify_durable_baselines(repo, state)
+    _verify_review_history(repo, state)
+    _require_status(state, "ready_for_unit")
+
+    units = state.get("units")
+    records = state.get("unit_records")
+    if state.get("current_unit_index") != 0 or not isinstance(units, list):
+        raise GateError("baseline refresh is allowed only before the first unit")
+    if not isinstance(records, dict) or set(records) != set(units):
+        raise GateError("unit record inventory is malformed")
+    for unit in units:
+        record = records.get(unit)
+        if record != {"status": "pending", "reviews": [], "rejections": 0}:
+            raise GateError("baseline refresh is allowed only before any unit history exists")
+    if state.get("phase_reviews") != [] or state.get("reviewer_thread_ids") != []:
+        raise GateError("baseline refresh is allowed only before any review history exists")
+    if state.get("latest_checks") != {}:
+        raise GateError("baseline refresh is allowed only before any check history exists")
+
+    reason = args.reason.strip()
+    if not reason or len(reason) > 256 or any(ord(character) < 32 for character in reason):
+        raise GateError("baseline refresh reason must be one printable line of 1-256 characters")
+    if _run(repo, ["git", "status", "--porcelain"]).stdout.strip():
+        raise GateError("baseline refresh requires a clean committed working tree")
+    frozen_paths = list(state["frozen_files"])
+    _verify_frozen_at_head(repo, frozen_paths)
+    current_tree = _snapshot(repo)["tree"]
+    if current_tree == state.get("expected_transition_tree"):
+        raise GateError("baseline refresh requires a committed tree change")
+
+    previous = state["phase_base"]
+    refreshes = state.setdefault("baseline_refreshes", [])
+    refreshed = _durable_snapshot(
+        repo,
+        str(state["phase"]),
+        f"phase-base-refresh-{len(refreshes) + 1}",
+    )
+    refreshes.append(
+        {
+            "previous": previous,
+            "current": refreshed,
+            "reason": reason,
+            "refreshed_at": _now(),
+        }
+    )
+    state["phase_base"] = refreshed
+    state["expected_transition_tree"] = refreshed["tree"]
+    _write_state(repo, state)
+    result = _public_status(state, manifest)
+    result["baseline_refreshed"] = True
+    result["baseline_refresh_reason"] = reason
     _json_print(result)
 
 
@@ -942,6 +1020,10 @@ def _parser() -> argparse.ArgumentParser:
     init_parser = subparsers.add_parser("init")
     init_parser.add_argument("--manifest", required=True)
 
+    refresh = subparsers.add_parser("refresh-baseline")
+    refresh.add_argument("--phase", required=True)
+    refresh.add_argument("--reason", required=True)
+
     for name in ("status", "verify", "prepare-review", "prepare-final-review", "advance"):
         command = subparsers.add_parser(name)
         command.add_argument("--phase", required=True)
@@ -973,6 +1055,7 @@ def main() -> int:
         "init": _command_init,
         "status": _command_status,
         "verify": _command_verify,
+        "refresh-baseline": _command_refresh_baseline,
         "start-unit": _command_start_unit,
         "run-checks": _command_run_checks,
         "prepare-review": _command_prepare_review,

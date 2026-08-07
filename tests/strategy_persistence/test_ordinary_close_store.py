@@ -3,7 +3,7 @@ import json
 import sqlite3
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass
-from datetime import timedelta
+from datetime import datetime, timedelta
 from decimal import Decimal
 from importlib.resources import files
 from pathlib import Path
@@ -22,7 +22,10 @@ from fx_core import (
     VersionMetadata,
 )
 from swap_bot.adoption import RuntimeMode, StrictCohortIdentity
-from swap_bot.adoption_application import ApproveSignalAdoptionOnceService
+from swap_bot.adoption_application import (
+    ApproveSignalAdoptionOnceService,
+    RevokeSignalAdoptionOnceService,
+)
 from swap_bot.adoption_gate import LiveAdoptionGate
 from swap_bot.adoption_store import SQLiteAdoptionStore
 from swap_bot.decision_store import _SCHEMA
@@ -41,13 +44,16 @@ from swap_bot.ordinary_close_store import (
     OrdinaryClosePersistenceDisposition,
     OrdinaryCloseReservationDisposition,
     OrdinaryCloseReservationIntegrityError,
+    OrdinaryCloseReservationPersistenceResult,
     SQLiteOrdinaryCloseStore,
 )
 from swap_bot.research_evidence import SQLiteResearchValidationEvidenceSource
 from swap_bot.strategy import (
     OperationalPositionExitEvaluationResult,
     OrdinaryCloseAllocationPolicy,
+    OrdinaryClosePortfolioDecision,
     OrdinaryClosePortfolioDisposition,
+    OrdinaryCloseReservationSnapshot,
     OrdinaryCloseRiskOutcome,
     OrdinaryCloseRiskPolicy,
     OrdinaryCloseRiskReason,
@@ -83,6 +89,8 @@ def _fixture(
     score: float = -0.5001,
     authority: ExecutionAuthorityMode = ExecutionAuthorityMode.SHADOW_NOT_SUBMITTED,
     target_fraction: Decimal = Decimal("1"),
+    expires_at: datetime | None = None,
+    revoke_at: datetime | None = None,
 ) -> _Fixture:
     config = strategy_config()
     pair = PAIR
@@ -121,13 +129,16 @@ def _fixture(
     seed_research_evidence(research, cohort=pair_cohort)
     adoption_store = SQLiteAdoptionStore(live)
     authority_start = signal_created_at - timedelta(minutes=1)
+    resolved_expires_at = (
+        expires_at if expires_at is not None else signal_created_at + timedelta(days=1)
+    )
     policy = adoption_policy(
         strategy_id=config.strategy_id,
         strategy_version=config.strategy_version,
         strategy_config_identity=config.strategy_config_identity,
         expected_cohort=StrictCohortIdentity.from_payload(pair_cohort),
         effective_from=authority_start,
-        expires_at=signal_created_at + timedelta(days=1),
+        expires_at=resolved_expires_at,
     )
     approval = ApproveSignalAdoptionOnceService(
         SQLiteResearchValidationEvidenceSource(research),
@@ -140,6 +151,16 @@ def _fixture(
         apply=True,
         store=adoption_store,
     )
+    if revoke_at is not None:
+        RevokeSignalAdoptionOnceService(
+            adoption_store, clock=lambda: revoke_at
+        ).run(
+            approval_decision_id=approval.adoption_decision_id,
+            revoked_by="test-revoker",
+            reason="test revocation",
+            apply=True,
+            store=adoption_store,
+        )
     authorized_at = signal_created_at + timedelta(seconds=1)
     authorized = LiveAdoptionGate(adoption_store).authorize(
         signal,
@@ -1033,3 +1054,418 @@ def test_replay_hydration_failure_on_corrupted_portfolio_decision_raises_integri
             capacity=fixture.work_item.capacity,
             allocation_policy=fixture.work_item.allocation_policy,
         )
+
+
+# ---------------------------------------------------------------------------
+# First-insert append-or-compare corruption (a differently-seeded ID collision
+# from the replay-conflict tests above, which corrupt an already-persisted row)
+# ---------------------------------------------------------------------------
+
+
+def test_first_insert_rejects_preexisting_different_config_content(tmp_path: Path) -> None:
+    # capacity/resolution/work_item share this exact INSERT-OR-IGNORE-then-compare
+    # shape; forging one of them is enough to prove the pattern generalizes.
+    fixture = _fixture(tmp_path)
+    SQLiteOrdinaryCloseStore(fixture.live)
+    with sqlite3.connect(fixture.live) as connection:
+        connection.execute(
+            "INSERT INTO live_news_filtered_carry_configs VALUES (?, ?)",
+            (strategy_config().strategy_config_identity, "forged-config-json"),
+        )
+
+    with pytest.raises(OrdinaryClosePersistenceConflict, match="Strategy config"):
+        _persist(fixture)
+
+    assert _counts(fixture.live) == (0, 0, 0, 0, 0)
+    with sqlite3.connect(fixture.live) as connection:
+        assert connection.execute(
+            "SELECT COUNT(*) FROM live_news_filtered_carry_configs"
+        ).fetchone()[0] == 1
+
+
+def test_first_insert_rejects_preexisting_different_capacity_content(tmp_path: Path) -> None:
+    fixture = _fixture(tmp_path)
+    SQLiteOrdinaryCloseStore(fixture.live)
+    real_values = ordinary_close_store._capacity_values(fixture.work_item.capacity)
+    forged_values = real_values[:7] + ("999",) + real_values[8:]
+    with sqlite3.connect(fixture.live) as connection:
+        connection.execute(
+            "INSERT INTO live_ordinary_close_capacity_evidence "
+            "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            forged_values,
+        )
+
+    with pytest.raises(OrdinaryClosePersistenceConflict, match="capacity evidence"):
+        _persist(fixture)
+
+    # The one forged capacity row remains (it predates the rolled-back attempt);
+    # every other table stays untouched by the failed transaction.
+    assert _counts(fixture.live) == (0, 1, 0, 0, 0)
+
+
+def test_first_insert_rejects_preexisting_different_resolution_content(tmp_path: Path) -> None:
+    fixture = _fixture(tmp_path)
+    SQLiteOrdinaryCloseStore(fixture.live)
+    real_values = ordinary_close_store._resolution_values(fixture.work_item.signal_resolution)
+    forged_values = real_values[:9] + ("forged-reason",) + real_values[10:]
+    with sqlite3.connect(fixture.live) as connection:
+        connection.execute(
+            "INSERT INTO live_ordinary_close_signal_resolutions "
+            "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            forged_values,
+        )
+
+    with pytest.raises(OrdinaryClosePersistenceConflict, match="resolution"):
+        _persist(fixture)
+
+    # The one forged resolution row remains; every other table stays untouched.
+    assert _counts(fixture.live) == (0, 0, 1, 0, 0)
+
+
+def test_first_insert_rejects_preexisting_different_work_item_content(tmp_path: Path) -> None:
+    fixture = _fixture(tmp_path)
+    SQLiteOrdinaryCloseStore(fixture.live)
+    real_values = ordinary_close_store._work_item_values(fixture.work_item)
+    forged_values = real_values[:8] + ("PAPER",) + real_values[9:]
+    with sqlite3.connect(fixture.live) as connection:
+        connection.execute(
+            "INSERT INTO live_ordinary_close_work_items VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            forged_values,
+        )
+
+    with pytest.raises(OrdinaryClosePersistenceConflict, match="work item"):
+        _persist(fixture)
+
+    # The one forged work item row remains; every other table stays untouched.
+    assert _counts(fixture.live) == (1, 0, 0, 0, 0)
+
+
+def test_replay_rejects_conflicting_persisted_evaluation_without_row_changes(
+    tmp_path: Path,
+) -> None:
+    # Unlike config/capacity/resolution/work_item, _append_or_compare_evaluation
+    # runs unconditionally on both the fresh-insert and replay branches, so its own
+    # conflict raise is reached by corrupting an already-persisted row and
+    # replaying - not by pre-seeding before a first insert.
+    fixture = _fixture(tmp_path)
+    _persist(fixture)
+    with sqlite3.connect(fixture.live) as connection:
+        connection.execute("DROP TRIGGER live_ordinary_close_operational_evaluations_no_update")
+        connection.execute(
+            "UPDATE live_ordinary_close_operational_evaluations SET evaluation_json = 'forged'"
+        )
+    before = _counts(fixture.live)
+
+    with pytest.raises(OrdinaryClosePersistenceConflict, match="operational evaluation"):
+        _persist(fixture)
+
+    assert _counts(fixture.live) == before == (1, 1, 1, 1, 1)
+
+
+# ---------------------------------------------------------------------------
+# Hydration corruption beyond the Portfolio decision pattern proven above
+# ---------------------------------------------------------------------------
+
+
+def test_replay_hydration_failure_on_corrupted_risk_decision_raises_integrity_error(
+    tmp_path: Path,
+) -> None:
+    fixture = _fixture(tmp_path, target_fraction=Decimal("0.5"))
+    result = _persist(fixture).result
+    reservation = _reserve(
+        fixture,
+        result,
+        capacity=fixture.work_item.capacity,
+        allocation_policy=fixture.work_item.allocation_policy,
+    )
+
+    with sqlite3.connect(fixture.live) as connection:
+        connection.execute("DROP TRIGGER live_ordinary_close_risk_decisions_no_update")
+        connection.execute(
+            "UPDATE live_ordinary_close_risk_decisions "
+            "SET maximum_capacity_age_us = 0 WHERE risk_decision_id = ?",
+            (reservation.risk_decision.risk_decision_id,),
+        )
+
+    with pytest.raises(OrdinaryCloseReservationIntegrityError, match="malformed"):
+        _reserve(
+            fixture,
+            result,
+            capacity=fixture.work_item.capacity,
+            allocation_policy=fixture.work_item.allocation_policy,
+        )
+
+
+def test_replay_hydration_failure_on_corrupted_intent_raises_integrity_error(
+    tmp_path: Path,
+) -> None:
+    fixture = _fixture(tmp_path, target_fraction=Decimal("0.5"))
+    result = _persist(fixture).result
+    reservation = _reserve(
+        fixture,
+        result,
+        capacity=fixture.work_item.capacity,
+        allocation_policy=fixture.work_item.allocation_policy,
+    )
+    assert reservation.intent is not None
+
+    with sqlite3.connect(fixture.live) as connection:
+        connection.execute("DROP TRIGGER live_ordinary_close_approved_intents_no_update")
+        connection.execute(
+            "UPDATE live_ordinary_close_approved_intents "
+            "SET quantity = 'not-a-decimal' WHERE close_candidate_id = ?",
+            (reservation.intent.close_candidate_id,),
+        )
+
+    with pytest.raises(OrdinaryCloseReservationIntegrityError, match="malformed"):
+        _reserve(
+            fixture,
+            result,
+            capacity=fixture.work_item.capacity,
+            allocation_policy=fixture.work_item.allocation_policy,
+        )
+
+
+# ---------------------------------------------------------------------------
+# Missing parent - fail closed, no repair
+# ---------------------------------------------------------------------------
+
+
+def test_reservation_replay_rejects_portfolio_decision_missing_its_risk_decision(
+    tmp_path: Path,
+) -> None:
+    fixture = _fixture(tmp_path, target_fraction=Decimal("0.5"))
+    result = _persist(fixture).result
+    candidate = result.evaluation.close_candidate
+    assert candidate is not None
+
+    # A real, correctly content-addressed Portfolio decision inserted directly
+    # (bypassing evaluate_and_persist_reservation, which would also insert its
+    # Risk decision atomically) so it hydrates cleanly and only its missing Risk
+    # decision is exercised.
+    orphan_portfolio_decision = OrdinaryClosePortfolioDecision.create(
+        operational_evaluation_id=result.operational_evaluation_id,
+        candidate=candidate,
+        capacity=fixture.work_item.capacity,
+        allocation_policy=fixture.work_item.allocation_policy,
+        reservation_snapshot=OrdinaryCloseReservationSnapshot(
+            fixture.work_item.capacity.position_id, ()
+        ),
+    )
+    with sqlite3.connect(fixture.live) as connection:
+        ordinary_close_store._insert_portfolio_decision(connection, orphan_portfolio_decision)
+
+    with pytest.raises(OrdinaryCloseReservationIntegrityError, match="lacks its Risk decision"):
+        _reserve(
+            fixture,
+            result,
+            capacity=fixture.work_item.capacity,
+            allocation_policy=fixture.work_item.allocation_policy,
+        )
+
+
+def test_reservation_rejects_missing_work_item_parent_without_writes(tmp_path: Path) -> None:
+    fixture = _fixture(tmp_path)
+    result = _persist(fixture).result
+    with sqlite3.connect(fixture.live) as connection:
+        connection.execute("DROP TRIGGER live_ordinary_close_work_items_no_delete")
+        connection.execute("DELETE FROM live_ordinary_close_work_items")
+
+    with pytest.raises(OrdinaryClosePersistenceConflict, match="persisted work item"):
+        _reserve(
+            fixture,
+            result,
+            capacity=fixture.work_item.capacity,
+            allocation_policy=fixture.work_item.allocation_policy,
+        )
+
+    assert _reservation_counts(fixture.live) == (0, 0, 0)
+
+
+# ---------------------------------------------------------------------------
+# Adoption authority persistence - negative cases at the ordinary-close boundary
+# ---------------------------------------------------------------------------
+
+
+def test_persisted_authorization_content_mismatch_rejects_without_writes(
+    tmp_path: Path,
+) -> None:
+    # authorized_at is not part of SignalAuthorization's content-addressed ID, so
+    # tampering it leaves intrinsic identity valid while diverging from the
+    # in-memory authorization the work item was built with. Both the authorization
+    # row and its separate content-commitment row must be tampered consistently -
+    # otherwise SQLiteAdoptionStore's own commitment cross-check (a different,
+    # earlier defense) rejects first.
+    fixture = _fixture(tmp_path)
+    with sqlite3.connect(fixture.live) as connection:
+        connection.execute("DROP TRIGGER live_signal_authorization_no_update")
+        connection.execute("DROP TRIGGER live_signal_authorization_commitment_no_update")
+        for table in (
+            "live_signal_authorizations",
+            "live_signal_authorization_content_commitments",
+        ):
+            connection.execute(
+                f"UPDATE {table} SET authorized_at = '2020-01-01T00:00:00+00:00'"
+            )
+
+    with pytest.raises(ValueError, match="differs from persisted authorization"):
+        _persist(fixture)
+
+    assert _counts(fixture.live) == (0, 0, 0, 0, 0)
+
+
+# _validate_persisted_signal_authority's "must not predate authority" check
+# (all three of signal.created_at/supplied.authorized_at/evaluated_at before
+# authority_start) is not exercised here: LiveAdoptionGate._ineligible_reason
+# independently rejects `at < authority_start or signal.created_at <
+# authority_start` at authorize() time, using the same adoption_authority_start()
+# derivation from the same persisted approval, so no AuthorizedSignal reaching
+# this store can carry a Signal or authorized_at older than its own authority
+# window. Confirmed unreachable via the legitimate authorize-then-persist path;
+# not forced via tampering.
+
+
+def test_expired_authority_rejects_without_writes(tmp_path: Path) -> None:
+    fixture = _fixture(tmp_path, expires_at=NOW + timedelta(seconds=1, microseconds=500))
+
+    with pytest.raises(ValueError, match="approval is expired"):
+        _persist(fixture)
+
+    assert _counts(fixture.live) == (0, 0, 0, 0, 0)
+
+
+def test_revoked_authority_rejects_without_writes(tmp_path: Path) -> None:
+    fixture = _fixture(tmp_path, revoke_at=NOW + timedelta(seconds=1, microseconds=500))
+
+    with pytest.raises(ValueError, match="approval is revoked"):
+        _persist(fixture)
+
+    assert _counts(fixture.live) == (0, 0, 0, 0, 0)
+
+
+# ---------------------------------------------------------------------------
+# Reservation result structural consistency (exact-type result validation)
+# ---------------------------------------------------------------------------
+
+
+def test_reservation_result_rejects_approve_outcome_without_an_intent(tmp_path: Path) -> None:
+    fixture = _fixture(tmp_path, target_fraction=Decimal("0.5"))
+    result = _persist(fixture).result
+    reservation = _reserve(
+        fixture,
+        result,
+        capacity=fixture.work_item.capacity,
+        allocation_policy=fixture.work_item.allocation_policy,
+    )
+    assert reservation.risk_decision.outcome is OrdinaryCloseRiskOutcome.APPROVE
+
+    with pytest.raises(TypeError, match="Risk APPROVE requires exact ApprovedCloseIntent"):
+        OrdinaryCloseReservationPersistenceResult(
+            OrdinaryCloseReservationDisposition.INSERTED,
+            reservation.portfolio_decision,
+            reservation.risk_decision,
+            None,
+        )
+
+
+def test_reservation_result_rejects_risk_decision_from_another_portfolio_decision(
+    tmp_path: Path,
+) -> None:
+    fixture = _fixture(tmp_path, target_fraction=Decimal("0.5"))
+    a_result = _persist(fixture).result
+    a_reservation = _reserve(
+        fixture,
+        a_result,
+        capacity=fixture.work_item.capacity,
+        allocation_policy=fixture.work_item.allocation_policy,
+    )
+    b_result, b_capacity, b_allocation = _second_close_result(
+        fixture, open_quantity=Decimal("1000"), target_fraction=Decimal("0.5")
+    )
+    b_reservation = _reserve(fixture, b_result, capacity=b_capacity, allocation_policy=b_allocation)
+
+    with pytest.raises(ValueError, match="risk_decision does not belong to portfolio_decision"):
+        OrdinaryCloseReservationPersistenceResult(
+            OrdinaryCloseReservationDisposition.INSERTED,
+            a_reservation.portfolio_decision,
+            b_reservation.risk_decision,
+            a_reservation.intent,
+        )
+
+
+def test_reservation_result_rejects_intent_from_another_portfolio_decision(
+    tmp_path: Path,
+) -> None:
+    fixture = _fixture(tmp_path, target_fraction=Decimal("0.5"))
+    a_result = _persist(fixture).result
+    a_reservation = _reserve(
+        fixture,
+        a_result,
+        capacity=fixture.work_item.capacity,
+        allocation_policy=fixture.work_item.allocation_policy,
+    )
+    b_result, b_capacity, b_allocation = _second_close_result(
+        fixture, open_quantity=Decimal("1000"), target_fraction=Decimal("0.5")
+    )
+    b_reservation = _reserve(fixture, b_result, capacity=b_capacity, allocation_policy=b_allocation)
+    assert a_reservation.intent is not None and b_reservation.intent is not None
+    assert a_reservation.intent.portfolio_decision_id != b_reservation.intent.portfolio_decision_id
+
+    with pytest.raises(ValueError, match="intent does not belong to portfolio_decision"):
+        OrdinaryCloseReservationPersistenceResult(
+            OrdinaryCloseReservationDisposition.INSERTED,
+            a_reservation.portfolio_decision,
+            a_reservation.risk_decision,
+            b_reservation.intent,
+        )
+
+
+def test_reservation_result_rejects_reject_outcome_carrying_an_intent(tmp_path: Path) -> None:
+    fixture = _fixture(tmp_path, target_fraction=Decimal("1"))
+    a_result = _persist(fixture).result
+    a_reservation = _reserve(
+        fixture,
+        a_result,
+        capacity=fixture.work_item.capacity,
+        allocation_policy=fixture.work_item.allocation_policy,
+    )
+    b_result, b_capacity, b_allocation = _second_close_result(
+        fixture, open_quantity=Decimal("1000"), target_fraction=Decimal("1")
+    )
+    b_reservation = _reserve(fixture, b_result, capacity=b_capacity, allocation_policy=b_allocation)
+    assert b_reservation.risk_decision.outcome is OrdinaryCloseRiskOutcome.REJECT
+    assert a_reservation.intent is not None
+
+    with pytest.raises(ValueError, match="non-APPROVE Risk outcome cannot carry an Intent"):
+        OrdinaryCloseReservationPersistenceResult(
+            OrdinaryCloseReservationDisposition.INSERTED,
+            b_reservation.portfolio_decision,
+            b_reservation.risk_decision,
+            a_reservation.intent,
+        )
+
+
+# ---------------------------------------------------------------------------
+# LIVE defense-in-depth directly on the reservation persistence entry point
+# ---------------------------------------------------------------------------
+
+
+def test_reservation_persistence_rejects_live_authority_directly_before_any_write(
+    tmp_path: Path,
+) -> None:
+    # The application composition layer already blocks LIVE before ever calling
+    # this method; this proves the store's own guard also holds for a caller that
+    # invokes evaluate_and_persist_reservation directly.
+    fixture = _fixture(tmp_path, target_fraction=Decimal("1"))
+    result = _persist(fixture).result
+
+    with pytest.raises(ValueError, match="LIVE authority is prohibited"):
+        SQLiteOrdinaryCloseStore(fixture.live).evaluate_and_persist_reservation(
+            result,
+            capacity=fixture.work_item.capacity,
+            allocation_policy=fixture.work_item.allocation_policy,
+            risk_policy=fixture.work_item.risk_policy,
+            authority=ExecutionAuthorityMode.LIVE,
+        )
+
+    assert _reservation_counts(fixture.live) == (0, 0, 0)

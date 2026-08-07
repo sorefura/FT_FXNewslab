@@ -4,6 +4,7 @@ from datetime import datetime, timedelta
 from decimal import Decimal
 
 import pytest
+import swap_bot.strategy.ordinary_close as ordinary_close_module
 from fx_core import (
     CurrencyPair,
     FeatureId,
@@ -15,7 +16,13 @@ from fx_core import (
     SignalId,
     VersionMetadata,
 )
-from swap_bot.adoption import AdoptionMode, AuthorizedSignal, RuntimeMode, SignalAuthorization
+from swap_bot.adoption import (
+    AdoptionMode,
+    AuthorizedSignal,
+    RuntimeMode,
+    SignalAuthorization,
+    digest,
+)
 from swap_bot.execution_authority import ExecutionAuthorityMode
 from swap_bot.models import ApprovedLiquidationIntent, PositionId, Side
 from swap_bot.operational_swap import (
@@ -1261,3 +1268,75 @@ def test_approved_close_intent_is_structurally_distinct_from_liquidation_intent(
     liquidation_fields = {field.name for field in dataclasses.fields(ApprovedLiquidationIntent)}
     assert close_fields != liquidation_fields
     assert "close_candidate_id" not in liquidation_fields
+
+
+# ---------------------------------------------------------------------------
+# No-overclose defense: Risk independently re-derives available capacity rather
+# than trusting a Portfolio decision's stored quantity
+# ---------------------------------------------------------------------------
+
+
+def test_risk_rejects_when_portfolio_decision_overcloses_true_available_capacity() -> None:
+    result, _ = _close_result()
+    candidate = result.evaluation.close_candidate
+    assert candidate is not None
+    capacity = _capacity_for(candidate, open_quantity=Decimal("1000"))
+    # True available capacity is only 100 (1000 open - 900 already reserved).
+    snapshot = _snapshot(candidate, ("prior-intent-1", Decimal("900")))
+
+    # Internally self-consistent per OrdinaryClosePortfolioDecision's own ACCEPT
+    # rules (allocated_quantity == target_quantity == available_before), but its
+    # stored available_before/allocated_quantity were never actually re-derived
+    # from this capacity/snapshot pair - standing in for a stale or forged
+    # decision reused with a genuine, currently-matching capacity and snapshot.
+    forged_payload = ordinary_close_module._portfolio_decision_payload(
+        close_candidate_id=candidate.close_candidate_id,
+        operational_evaluation_id=result.operational_evaluation_id,
+        capacity_evidence_id=capacity.capacity_evidence_id,
+        allocation_policy=_HALF_ALLOCATION,
+        reservation_snapshot=snapshot,
+        target_quantity=Decimal("1000"),
+        available_before=Decimal("1000"),
+        disposition=OrdinaryClosePortfolioDisposition.ACCEPT,
+        allocated_quantity=Decimal("1000"),
+    )
+    forged_portfolio_decision = OrdinaryClosePortfolioDecision(
+        "ordinary-close-portfolio-decision-" + digest(forged_payload),
+        candidate.close_candidate_id,
+        result.operational_evaluation_id,
+        capacity.capacity_evidence_id,
+        _HALF_ALLOCATION,
+        snapshot,
+        Decimal("1000"),
+        Decimal("1000"),
+        OrdinaryClosePortfolioDisposition.ACCEPT,
+        Decimal("1000"),
+    )
+
+    risk_decision = OrdinaryCloseRiskDecision.create(
+        portfolio_decision=forged_portfolio_decision,
+        candidate=candidate,
+        capacity=capacity,
+        reservation_snapshot=snapshot,
+        risk_policy=_ONE_HOUR_RISK_POLICY,
+        evaluated_at=result.evaluation.evaluated_at,
+    )
+
+    assert risk_decision.outcome is OrdinaryCloseRiskOutcome.REJECT
+    assert risk_decision.reason is OrdinaryCloseRiskReason.OVERCLOSE_QUANTITY
+
+
+# ---------------------------------------------------------------------------
+# Unusable Swap flag fall-through
+# ---------------------------------------------------------------------------
+
+
+def test_ordinary_exit_evaluator_disabled_swap_check_falls_through_to_holding_age() -> None:
+    # swap=None makes the swap "unusable"; with the flag disabled the evaluator
+    # must not close on that alone, and must skip the carry check entirely
+    # (carry cannot be read from a swap that was never usable) rather than
+    # raising or closing for the wrong reason.
+    config = strategy_config(close_on_missing_or_stale_swap=False)
+    work = _work_item(side=Side.BUY, score=0.0, swap=None, config=config)
+
+    assert _reason_for(work, config) is None

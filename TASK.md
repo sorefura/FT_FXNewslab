@@ -2,14 +2,12 @@
 
 ## Fixed objective
 
-Milestone 2-D (`ordinary close Portfolio/Risk path`) のscope、B分割、受入条件を
-`run-phase-loop` に従って凍結する。今回は設計baselineのcommitとPhase Gate初期化までとし、
-B1実装は開始しない。push、merge、deployは行わない。
+Milestone 2-D (`ordinary close Portfolio/Risk path`) を `run-phase-loop` に従って B1 から B5 まで
+順に実装・検証・独立reviewし、`assert-complete` を通す。push、merge、deployは行わない。
 
 ## Authoritative scope
 
-baseline commit後、次のfrozen filesがM2-Dの設計・受入条件の正本となり、Phase中は
-変更してはならない。
+次のfrozen filesがM2-Dの設計・受入条件の正本であり、Phase中は変更してはならない。
 
 - `docs/phases/M2-D.toml`
 - `docs/phases/M2-D/spec.md`
@@ -19,17 +17,18 @@ baseline commit後、次のfrozen filesがM2-Dの設計・受入条件の正本�
 `.phase-runs/M2-D/state.json` と `phase_gate.py status --phase M2-D` である。
 この文書や会話履歴と矛盾する場合は、frozen filesとPhase Gateを優先する。
 
+## Current position
+
+M2-Dは2026-08-07に完了した。`phase_gate.py assert-complete --phase M2-D`が
+`completion_verified: true`を返し、`approved_tree`が記録されている。B1〜B5すべてが
+新規reviewerでAPPROVEされ、final reviewもAPPROVE。commitはまだ行っていない
+（working treeは未commitのまま、userの許可待ち）。
+
 ## Required completion for this task
 
-- M2-C完了commitとclean worktreeを独立確認する。
-- M2-Dの不足契約、数量authority、no-overclose競合境界を現行コードから調査する。
-- 新規5.6 Sol設計reviewを1回行い、P1/P2相当の曖昧さを凍結前に解消する。
-- M2-D manifest、spec、acceptanceとcross-session handoffをUTF-8 BOMなしで保存する。
-- manifest/self-test、文字コード、Git差分を検証する。
-- user許可済みのローカルdesign baseline commitとPhase Gate `init`まで行う。
-- B1実装へ進まず、凍結した作業方針をuserへ説明して停止する。
+完了済み。残るのはuserの指示によるcommit判断のみ。
 
 ## Non-goals
 
-M2-Dの実装、既存accepted contractの変更、Paper/Broker/Execution、emergency
-liquidation変更、scheduler、daemon、CLI、push、merge、deployは今回行わない。
+frozen design/acceptanceの変更、既存accepted contractの変更、Paper/Broker/Execution、
+emergency liquidation変更、scheduler、daemon、CLI、push、merge、deployは行わない。

@@ -11,8 +11,13 @@ and exit Ports/results, lossless `ProductionTradeCandidate`, versioned
 Milestone 2-C now provides the concrete deterministic entry Strategy, authenticated
 Pair materialization bridge, exact operational Swap persistence, atomic
 config/evaluation/optional-Candidate persistence, and the ordered two-Pair entry
-application root. It still has no ordinary close Portfolio/Risk path, Paper Gateway,
-fill engine, account/PnL ledger, scheduler, or daemon.
+application root. Milestone 2-D now completes the durable ordinary-close
+Strategy/Portfolio/Risk path: typed work/capacity/resolution evidence and a pure
+deterministic exit evaluator (B1); close-specific Portfolio/Risk/Intent contracts
+(B2); atomic exit-evaluation persistence in Live migration `0005` (B3); atomic
+Portfolio/Risk decision and capacity reservation (B4); and one-Position application
+composition (B5). Paper Gateway, fill engine, account/PnL ledger, scheduler, and
+daemon remain absent.
 
 Milestone 2-B1 now provides the upstream Pair materialization contracts in
 `fx_signal_store`, not in `swap_bot`. One Pair/as-of/specification creates one stable
@@ -70,9 +75,9 @@ operational causes and a second eligible Pair is not silently discarded.
 
 Strategy entry and ordinary exit are separate typed Ports. The implemented
 `PositionCloseCandidate` is always reduce-only, has a structured exit reason, and has
-no quantity or action string. Portfolio quantity, partial-close validation, approved
-close intent, and Risk no-overclose checks remain M2-D. Risk emergency liquidation
-remains a different authority.
+no quantity or action string. Portfolio quantity allocation, partial-close (REDUCE)
+handling, `ApprovedCloseIntent` construction, and Risk no-overclose checks are now
+implemented by M2-D B2/B4. Risk emergency liquidation remains a different authority.
 
 `PositionExitPositionEvidence` distinguishes the business `PositionId` from the exact
 immutable Position snapshot/event evidence while self-describing Pair, existing Side,

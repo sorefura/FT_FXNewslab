@@ -51,6 +51,44 @@ and preserve both Pair results in config order. Integration coverage replays two
 selected Pairs through real Adoption and B4 stores and converges to identical reuse
 without writing legacy Candidate rows.
 
+Milestone 2-D B2 tests cover full allocation, REDUCE to remaining capacity, and
+zero-capacity REJECT at exact equality under the frozen formula; an integrity error
+(not a Portfolio REJECT) when prior reservations already exceed observed open
+quantity; Risk rejecting future/stale capacity at strict inequality while equality
+stays eligible; a rejected Portfolio linking to exactly one Risk REJECT with no
+Intent; Risk APPROVE producing exactly one opposite-Side `ApprovedCloseIntent` with
+deterministic idempotency; LIVE authority rejected independent of other checks; and
+`ApprovedCloseIntent` structurally distinct from `ApprovedLiquidationIntent`.
+
+Milestone 2-D B3 tests cover fresh/`0004`-upgrade/reopen migration convergence,
+migration body/marker failure rollback, and concurrent-initializer convergence on
+`0005`; exact replay reuse and rejection of any conflicting persisted config, Swap
+evidence, capacity, resolution, or work item without row changes; missing-parent and
+missing-Candidate replay rejecting without repair; KEEP persisting zero Candidates;
+LIVE authority rejected before any write; immutable-table UPDATE/DELETE rejection;
+and concurrent identical writers converging on one insert plus one reuse.
+
+Milestone 2-D B4 tests cover one Portfolio/Risk/Intent chain persisted per CLOSE
+Candidate; exact replay returning the identical chain independent of later
+reservations against the same Position; a Portfolio REJECT linking to Risk REJECT
+with no Intent; the `ApprovedCloseIntent` insert trigger rejecting a non-APPROVE Risk
+row; distinct concurrent close requests for one Position never over-reserving beyond
+observed open quantity; identical concurrent reservation requests converging once;
+missing capacity/operational-evaluation parents and capacity not bound to the
+Candidate's own work item rejecting without writes; a failure between the Portfolio
+and Risk insert leaving zero rows; and a corrupted persisted Portfolio decision
+raising an integrity error on replay hydration rather than silently reinterpreting it.
+
+Milestone 2-D B5 tests cover KEEP never invoking reservation persistence; CLOSE
+ACCEPT/APPROVE yielding exactly one Intent; a Portfolio REJECT yielding a linked Risk
+REJECT with no Intent; LIVE authority stopping before evaluation or reservation
+persistence; the result type rejecting KEEP-with-reservation, CLOSE-without-
+reservation, and reservation belonging to another Candidate; and, against the real
+B3/B4 stores, zero reservation rows on the KEEP path, exactly one Intent on CLOSE,
+zero rows anywhere under LIVE, manual exact replay converging through B3 and B4, and
+a second close request for the same Position observing PORTFOLIO REJECT/REDUCE as
+capacity is consumed by an earlier reservation.
+
 Milestone 2-B1 tests additionally state:
 
 - package-neutral canonical JSON/digest stays byte-compatible with existing Adoption
@@ -508,6 +546,8 @@ What:
 - incompatible horizon behavior follows policy
 - candidate records contributing signal ids
 - strategy config version is captured
+- ordinary exit evidence is exact-type/content-addressed and emits KEEP or one
+  accepted close Candidate with frozen trigger precedence
 
 内部weighted sumの全中間値をassertしすぎない。
 

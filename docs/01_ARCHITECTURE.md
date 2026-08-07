@@ -161,6 +161,38 @@ must match the typed Position/Pair/Side binding before an identity is generated.
 Current authorized Pair Signal and operational Swap evidence contribute their
 complete intrinsic lineage. Callers cannot inject arbitrary evidence IDs.
 
+M2-D B1 adds an additive `OrdinaryPositionExitWorkItem`: exact typed Signal/Adoption
+terminal resolution, Swap resolution, Position capacity and close policies are bound
+to the accepted exit input before the pure evaluator emits the accepted evaluation
+inside an operational result root. It imports neither Portfolio, Risk, Execution,
+Paper, Broker, nor private transport.
+
+M2-D B2 adds close-specific `OrdinaryClosePortfolioDecision`, `OrdinaryCloseRiskDecision`,
+and `ApprovedCloseIntent` contracts plus `evaluate_ordinary_close_portfolio_and_risk()`.
+Portfolio allocates the frozen `min(target_quantity, available_before)` formula from an
+ordered `OrdinaryCloseReservationSnapshot`; Risk revalidates the full Candidate/
+evaluation/Portfolio/capacity/policy/reservation chain, rejects stale/future capacity,
+and never changes quantity. These types are structurally distinct from
+`ApprovedLiquidationIntent` and every entry-path type.
+
+M2-D B3 adds Live migration `0005_ordinary_close_path.sql` and
+`SQLiteOrdinaryCloseStore.evaluate_and_persist()`: one `BEGIN IMMEDIATE` transaction
+authenticates persisted Adoption/Swap/config parents, reruns the deterministic
+evaluator instead of trusting caller output, and append-or-compares work/capacity/
+resolution/evaluation/Candidate evidence with exact-replay and concurrent-writer
+convergence.
+
+M2-D B4 adds `SQLiteOrdinaryCloseStore.evaluate_and_persist_reservation()`: one
+`BEGIN IMMEDIATE` transaction first returns an already-persisted chain for the same
+Candidate (making replay independent of later reservations), otherwise hydrates every
+prior `ApprovedCloseIntent` for that Position in persisted order, computes the
+Portfolio/Risk decision, and appends both decisions plus at most one Intent.
+
+M2-D B5 adds `OrdinaryCloseApplicationService` in `ordinary_close_application.py`,
+composing B3 evaluation persistence and B4 reservation persistence into one
+single-Position flow: prevalidate and reject `LIVE`, run B3 once, and run B4 only for
+`CLOSE_CANDIDATE` outcomes, returning a typed KEEP/CLOSE terminal result.
+
 The remaining ExecPlan 0006 target is:
 
 ```text

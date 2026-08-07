@@ -20,6 +20,30 @@ swap_bot/
   live/           existing adoption/Portfolio/Risk/Execution boundaries
 ```
 
+Milestone 2-D adds the ordinary-close Strategy/Portfolio/Risk/persistence path across
+five units, inside existing `swap_bot` module locations:
+
+```text
+apps/swap_bot/src/swap_bot/strategy/ordinary_close.py
+    B1 typed Signal/Adoption terminal resolution, Position close capacity evidence,
+    work/result envelopes, and the deterministic OrdinaryPositionExitEvaluator;
+    B2 close-specific OrdinaryClosePortfolioDecision/OrdinaryCloseRiskDecision/
+    ApprovedCloseIntent contracts and evaluate_ordinary_close_portfolio_and_risk()
+
+apps/swap_bot/src/swap_bot/migrations/0005_ordinary_close_path.sql
+    B3 exit-evaluation persistence tables (capacity, resolution, work item,
+    operational evaluation, Candidate); B4 appends Portfolio decision, Risk
+    decision, and ApprovedCloseIntent reservation tables
+
+apps/swap_bot/src/swap_bot/ordinary_close_store.py
+    B3 SQLiteOrdinaryCloseStore.evaluate_and_persist(); B4
+    evaluate_and_persist_reservation() atomic capacity reservation
+
+apps/swap_bot/src/swap_bot/ordinary_close_application.py
+    B5 OrdinaryCloseApplicationService composing B3 evaluation persistence and B4
+    reservation persistence into one single-Position KEEP/CLOSE flow
+```
+
 Milestone 2-B1 added the package-neutral identity and Pair materialization contract
 modules without changing that Live module map:
 
@@ -77,10 +101,11 @@ but cannot import or construct the real Broker Private transport. It cannot impo
 The shared Signal Store migrations are now `0001` through `0004`. The independently
 numbered Live migrations remain `0001` and `0002`; M2-A through M2-B4 add none there.
 M2-B5 also adds no migration or persistence table.
-Milestone 2-C/D use the next available Live additive numbers as their persistence is
-implemented. Paper persistence begins at the next available migration after that
-Strategy persistence and leaves the inline historical base schema unchanged. No
-number is pre-reserved for Paper.
+Milestone 2-C added `0003_operational_swap_evidence.sql` and
+`0004_production_entry_strategy.sql`; Milestone 2-D added
+`0005_ordinary_close_path.sql`. Paper persistence begins at the next available
+migration after that Strategy persistence and leaves the inline historical base
+schema unchanged. No number is pre-reserved for Paper.
 
 ## Current adoption modules
 

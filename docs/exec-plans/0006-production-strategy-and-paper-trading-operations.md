@@ -1291,15 +1291,31 @@ ExecPlan 0006 is complete only when all of the following are true:
     identity/version fields before content comparisons for work items, Pair results,
     Strategy config/results, authorization, Swap evidence/resolutions, rejecting
     comparison-overriding subclasses.
-- [ ] Milestone 2-D - ordinary close Portfolio/Risk path.
+- [x] Milestone 2-D - ordinary close Portfolio/Risk path.
   - [x] (2026-08-04) Froze the M2-D design as five ordered units: operational exit
     evidence/evaluation, close-specific Portfolio/Risk contracts, evaluation
     persistence, atomic no-overclose reservation, and one-Position composition.
-  - [ ] B1 - operational exit evidence and deterministic evaluator.
-  - [ ] B2 - close-specific Portfolio and Risk contracts.
-  - [ ] B3 - exit evaluation persistence in Live migration `0005`.
-  - [ ] B4 - atomic Portfolio/Risk decision and capacity reservation.
-  - [ ] B5 - one-Position ordinary-close application composition.
+  - [x] (2026-08-04) B1 - added exact typed Signal/Adoption terminal resolution,
+    Position capacity/policy/work/result envelopes, and pure deterministic
+    ordinary Position exit evaluation. No durable write, Portfolio, Risk, or intent
+    behavior was added.
+  - [x] (2026-08-06) B2 - added close-specific `OrdinaryClosePortfolioDecision`,
+    `OrdinaryCloseRiskDecision`, and `ApprovedCloseIntent` contracts with the frozen
+    allocation formula, full Risk chain revalidation, and proof that no close type
+    is accepted as `ApprovedLiquidationIntent` or an entry-path type.
+  - [x] (2026-08-07) B3 - added Live migration `0005_ordinary_close_path.sql` and
+    `SQLiteOrdinaryCloseStore.evaluate_and_persist()`: one atomic transaction
+    authenticates persisted parents, reruns the deterministic evaluator, and
+    append-or-compares work/capacity/resolution/evaluation/Candidate evidence with
+    exact-replay and concurrent-writer convergence.
+  - [x] (2026-08-07) B4 - added `evaluate_and_persist_reservation()`: one atomic
+    transaction returns an already-persisted chain independent of later
+    reservations, otherwise hydrates every prior Intent for the Position, computes
+    the Portfolio/Risk decision, and appends at most one Intent without ever
+    exceeding observed open quantity across concurrent writers.
+  - [x] (2026-08-07) B5 - added `OrdinaryCloseApplicationService` composing B3
+    evaluation persistence and B4 reservation persistence into one single-Position
+    KEEP/CLOSE flow, prevalidating and rejecting `LIVE` before any durable work.
 - [ ] Milestone 2 - Production Strategy Implementation.
 - [ ] Milestone 3 - Paper Broker and Ledger.
 - [ ] Milestone 4 - Operational Paper Cycle.

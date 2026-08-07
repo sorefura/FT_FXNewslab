@@ -180,7 +180,18 @@ News Filtered Carry config, production entry evaluation, and optional production
 Candidate roots. B4 holds a short `BEGIN IMMEDIATE`, rehydrates persisted Adoption
 authority at `evaluated_at`, reruns the Strategy, and append-compares all rows in one
 transaction. Pair Signal Request ID/content hash and lossless score/confidence JSON
-remain part of the durable lineage. M2-D therefore starts with Live migration `0005`.
+remain part of the durable lineage. M2-D adds Live migration
+`0005_ordinary_close_path.sql`, additive and immutable against `0001`-`0004`. B3
+appends its first five tables: capacity evidence, Signal/Adoption terminal
+resolution, work item, operational evaluation, and optional Candidate, with
+immutable UPDATE/DELETE guard triggers and a trigger requiring a Candidate row only
+under a `CLOSE_CANDIDATE` evaluation. B4 appends three more: Portfolio decision
+(carrying its reservation snapshot as JSON), Risk decision, and `ApprovedCloseIntent`
+(keyed by an autoincrement `intent_seq` that gives a stable persisted order for
+reservation snapshots independent of `created_at` ties), plus a trigger requiring a
+Risk `APPROVE` row before an Intent insert. No column is added to legacy
+`live_candidates`, `live_portfolio_decisions`, `live_risk_decisions`, or
+`live_execution_intents`.
 
 The following Paper records remain target contracts:
 

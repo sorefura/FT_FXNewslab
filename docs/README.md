@@ -17,13 +17,17 @@
   - Paper order/fill evidence is operational simulation and never grants real Broker
     authority.
 
-ExecPlan 0006 Milestones 2-A through 2-C are complete. M2-D's ordinary-close design
-is frozen for implementation but no M2-D code has started. The completed milestones provide the production
-Strategy domain contracts, exact durable Pair Signal materialization, operational Swap
-resolution, the concrete deterministic entry Strategy, atomic evaluation/Candidate
-persistence, and ordered two-Pair application composition with replay convergence.
-Ordinary close Portfolio/Risk implementation and all Paper modules remain pending.
-ExecPlan 0007 is reserved for Controlled Live execution rollout.
+ExecPlan 0006 Milestones 2-A through 2-D are complete. M2-D adds the ordinary-close
+Strategy/Portfolio/Risk/persistence path across five units: pure exit evidence and
+deterministic evaluator (B1), close-specific Portfolio/Risk/Intent contracts (B2),
+exit-evaluation persistence in Live migration `0005` (B3), atomic Portfolio/Risk
+decision and capacity reservation (B4), and one-Position application composition
+(B5). The completed milestones provide the production Strategy domain contracts,
+exact durable Pair Signal materialization, operational Swap resolution, the concrete
+deterministic entry Strategy, atomic evaluation/Candidate persistence, ordered
+two-Pair application composition with replay convergence, and the durable ordinary
+close Portfolio/Risk/reservation path. All Paper modules remain pending. ExecPlan
+0007 is reserved for Controlled Live execution rollout.
 
 ## ExecPlan 0005 adoption boundary
 
@@ -116,5 +120,5 @@ ExecPlan 0007 is reserved for Controlled Live execution rollout.
 - `docs/exec-plans/0005-validated-signal-live-adoption.md`: exact Research evidence、
   explicit Strategy adoption、authorization lineage、shadow proof。
 - `docs/exec-plans/0006-production-strategy-and-paper-trading-operations.md`:
-  production StrategyとPaper operationsのliving plan。Milestones 2-A〜2-Cは実装済み。
-  M2-D ordinary close Portfolio/Riskは設計凍結済み・実装未着手で、Milestones 3〜5も未着手。
+  production StrategyとPaper operationsのliving plan。Milestones 2-A〜2-Dは実装済み。
+  Milestones 3〜5は未着手。

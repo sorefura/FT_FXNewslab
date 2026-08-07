@@ -1324,6 +1324,13 @@ ExecPlan 0006 is complete only when all of the following are true:
     M2-D frozen design, acceptance, or product semantics changed.
 - [ ] Milestone 2 - Production Strategy Implementation.
 - [ ] Milestone 3 - Paper Broker and Ledger.
+  - [x] (2026-08-07) Froze the M3 design as five ordered units: Paper execution
+    contracts and market evidence (B1), deterministic fill engine (B2), Paper
+    ledger/position/account/PnL/swap (B3), atomic persistence, recovery, and
+    reservation settlement on additive Live migration `0006` (B4), and one-intent
+    Paper application composition (B5). See `docs/phases/M3.toml`,
+    `docs/phases/M3/spec.md`, and `docs/phases/M3/acceptance.md`. No production code,
+    test, or migration changed.
 - [ ] Milestone 4 - Operational Paper Cycle.
 - [ ] Milestone 5 - Scheduler, Observability, and Burn-in.
 
@@ -1911,6 +1918,122 @@ ExecPlan 0006 is complete only when all of the following are true:
   presence does not replace reason-specific evidence validation.
 - 2026-07-17: Keep ordinary close quantity allocation and reduce-only/no-overclose
   enforcement in the future typed Portfolio/Risk path, not Strategy evidence types.
+- 2026-08-07: Fix the M3 v1 Paper accounting settlement scope as JPY only. Both
+  configured Pairs are JPY-quoted, so quote-side amounts are already settlement
+  amounts; M3 implements no FX conversion function and rejects a non-JPY quote Pair
+  or bootstrap currency. Pair expansion requires a new accounting contract version.
+- 2026-08-07: Derive Paper position identity deterministically from the entry intent
+  as `"paper-position-" + digest(entry intent payload)` and use that value as the
+  Paper position's business `PositionId`, so ordinary close and emergency liquidation
+  attach reduce-only work to one exact entry lineage instead of a discovered row.
+- 2026-08-07: `ApprovedLiquidationIntent` carries no Side, so the emergency
+  liquidation Paper entry point takes one additional exact `existing_position_side`
+  argument that persistence authenticates against the stored Paper position. The
+  accepted intent contracts gain no field and are not unified with ordinary close.
+- 2026-08-07: Freeze two versioned Decimal arithmetic modes for Paper:
+  `paper-exact-arithmetic-v1` (prec 50, `Inexact` trapped) for every addition,
+  subtraction, and multiplication, and `paper-quotient-arithmetic-v1` (prec 34,
+  half-even) only for weighted-average entry price, used margin, and the swap
+  quantity ratio. No `quantize()`, lot-size, or minimum-order rounding exists.
+- 2026-08-07: M3 v1 defines no randomised fill model, so `PaperFillPolicy` and
+  `FillEvaluationStep` carry no seed root or seed. The ExecPlan's conditional
+  seed-root requirement applies only to a future randomised policy contract version.
+- 2026-08-07: Implement the Step-level cross-variant terminal claim as one
+  `live_paper_step_terminal_claims` table whose PRIMARY KEY is the Step ID and whose
+  `variant` column discriminates `MARKET_SELECTED` from `NO_MARKET`. Per-variant
+  uniqueness is retained but is never the only proof. M3 defines no `Cancelled` or
+  `Expired` Step-resolution variant; operator/scheduler cancellation belongs to M4.
+- 2026-08-07: Reach terminal `REJECTED`/`CANCELLED`/`EXPIRED` order states only
+  through two explicit `PaperFillPolicy` fields, `no_fill_terminal_order_state`
+  (zero Fills) and `incomplete_terminal_order_state` (at least one Fill), so no
+  hidden state mapping exists and `PARTIALLY_FILLED -> REJECTED` stays illegal.
+- 2026-08-07: Reduce an M2-D ordinary-close reservation only through typed
+  `ReservationConsumptionEvidence` (from one exact `PaperFill`) and
+  `ReservationReleaseEvidence` (from one exact terminal
+  `CANCELLED`/`EXPIRED`/`REJECTED` order event), joined to M2-D by the exact
+  `ApprovedCloseIntent.idempotency_key`. Terminal `FILLED`, crashes, retries, and new
+  capacity observations authorise no release.
+- 2026-08-07: Use additive Live migration `0006_paper_execution_ledger.sql` for all
+  Paper persistence; migrations `0001` through `0005` are not edited.
+- 2026-08-07: Narrow this plan's "ledger entries are append-only and balanced" to a
+  single-sided append-only Paper ledger for M3 v1. A balanced double-entry ledger
+  needs a counter-account for every posting, but M3 holds cash constant at the
+  bootstrap value and settles nothing, so the counter-entries would all be constant
+  zero-information rows that widen the reviewed surface without adding a checkable
+  guarantee. M3 instead keeps cash, realized PnL, accrued swap, and unrealized PnL as
+  four independent aggregates whose sum is equity, forbids double posting with
+  `UNIQUE(entry_kind, source_evidence_id)`, and proves conservation by rebuilding
+  every aggregate from ordered evidence during reconciliation. A cash-moving Paper
+  ledger (deposits, withdrawals, financing settlement) requires a new ledger contract
+  version and reopens the balanced-entry requirement.
+- 2026-08-07: Make the Paper evaluation instant a `Clock`-port value read once per
+  application call rather than a caller argument, and revalidate it inside the
+  persistence transaction as UTC, not before the intent, and non-decreasing per plan.
+  An unsourced instant would let a caller manufacture a terminal no-market Step and
+  release an ordinary-close reservation without any market ever being consulted.
+- 2026-08-07: Compute account-level Paper aggregates only against an explicit
+  mark set holding exactly one supplied observation per Pair with an open position.
+  Latest-row mark lookup is a non-goal, and a silently reduced aggregate would
+  understate exposure while still reconciling as MATCHED.
+- 2026-08-07: Allow chained Paper swap accrual corrections and compute each delta
+  against the current effective amount, so an accrual plus its corrections always sums
+  to the last replacement amount. Order and identify the chain by a content-bearing
+  `chain_ordinal` plus `predecessor_correction_id`, not by the insert-order
+  `correction_seq`: an AUTOINCREMENT column cannot enter a content-addressed ID, and
+  without a chain-distinguishing element a correction that returns to a previously
+  held effective amount would be byte-identical to an earlier one and silently reused
+  by append-or-compare.
+- 2026-08-07: Give every Paper snapshot the complete boundary set its retained fields
+  need — `application_seq` plus `ledger_entry_seq` on the position snapshot, and
+  `application_seq`, `ledger_entry_seq`, and `order_event_seq` plus the mark tuple on
+  the account snapshot — and carry an explicit `paper_account_id` column on orders,
+  positions, ledger entries, and both snapshot kinds. Without them the reconciliation
+  rebuild could regenerate only the ledger-derived aggregates, and a forged
+  `gross_exposure`, margin, or open-count would reconcile as MATCHED.
+- 2026-08-07: Define the Paper market-selection candidate set as exactly the persisted
+  `live_paper_market_observations` rows, never the call's argument tuple and never a
+  union of the two. Caller-supplied observations reach selection only by being
+  append-or-compare persisted first, so one call's selection cannot depend on which
+  observations that particular call happened to carry; the alternative readings gave
+  two implementations different fill prices, Fill IDs, and realized PnL for the same
+  intent and the same persisted evidence. B4 owns the single frozen hydration query,
+  and the attempt diagnostic codes are defined over the persisted candidate set.
+- 2026-08-07: Forbid an `ENTRY` Paper position fill application on a position that
+  already holds a `REDUCE_ONLY` application, failing closed as a ledger integrity
+  error, rather than redefining the weighted average entry price as a running basis
+  that reduce-only applications decrement. Nothing else in M3 ordered the two kinds:
+  a multi-Step entry order's later Step never consults position state, so an entry
+  fill could land after a close and retroactively move a basis an earlier close had
+  already realized against, fabricating realized PnL while every rebuild still
+  reconciled. Every close of one position therefore prices against one fixed basis;
+  realized PnL over a fully closed position equals the signed cash-flow result exactly
+  when that basis is exactly representable, and otherwise differs only by the frozen
+  34-significant-digit half-even rounding of the basis. The ban is one guard at the
+  ledger boundary and leaves
+  `paper-weighted-average-entry-price-v1`, `paper-realized-pnl-v1`, and all four
+  reconciliation rebuilds unchanged; a running basis would add a new contract, a new
+  version, and a per-application stored basis for the same guarantee. One position's
+  applications are therefore a contiguous ENTRY run followed by a contiguous
+  REDUCE_ONLY run, which makes realized PnL over a fully closed position exactly the
+  signed cash-flow result. Interleaved scale-in after a partial close requires a new
+  accounting contract version.
+- 2026-08-07: Give `PaperPositionFillApplication` a content-addressed identity plus
+  explicit `paper_position_id` and `paper_order_id`, so `application_kind` is derived
+  from the owning order's intent lineage and regenerable during reconciliation; a
+  close Fill mis-recorded as an ENTRY application was otherwise self-consistent across
+  all four rebuilds.
+- 2026-08-07: Authenticate a reduce-only Paper order against the persisted position
+  row on all four dimensions — row existence, Pair, account, and Side — before any
+  write. `ApprovedExecutionIntent` and `ApprovedLiquidationIntent` have no persisted
+  Live row and validate only quantity, idempotency key, and time, so nothing in an
+  accepted contract binds their `pair` or account to their `position_id`; without the
+  Pair rule a cross-Pair liquidation would post fabricated realized PnL that
+  reconciles as MATCHED, and without the account rule realized PnL could be posted to
+  a second account while both accounts reconcile.
+- 2026-08-07: Bind a `PaperSwapAccrual` to a caller-supplied position snapshot ID that
+  the store authenticates as still-current inside the transaction, rather than
+  resolving "the" snapshot; resolving it implicitly would reintroduce latest-row
+  selection, an explicit ExecPlan non-goal, into a content-addressed identity.
 
 ## Validation
 

@@ -1,6 +1,8 @@
 import ast
 from pathlib import Path
 
+import pytest
+
 ROOT = Path(__file__).parents[2]
 
 
@@ -101,7 +103,34 @@ def test_production_strategy_contracts_do_not_import_forbidden_layers() -> None:
         ), f"forbidden Live-layer import in {path}"
 
 
-def test_milestone_2c_uses_only_its_four_additive_live_migrations() -> None:
+@pytest.mark.parametrize(
+    "relative_path",
+    [
+        "apps/swap_bot/src/swap_bot/strategy/ordinary_close.py",
+        "apps/swap_bot/src/swap_bot/ordinary_close_store.py",
+        "apps/swap_bot/src/swap_bot/ordinary_close_application.py",
+    ],
+)
+def test_ordinary_close_module_does_not_import_forbidden_layers_or_transports(
+    relative_path: str,
+) -> None:
+    path = ROOT / relative_path
+    imports = _imports(path)
+    forbidden_roots = {"fx_research", "openai"}
+    forbidden_modules = {
+        "portfolio",
+        "risk",
+        "execution",
+        "paper",
+        "broker",
+        "shadow",
+        "llm_feature",
+    }
+    assert forbidden_roots.isdisjoint({name.split(".")[0] for name in imports})
+    assert forbidden_modules.isdisjoint({name.split(".")[-1] for name in imports})
+
+
+def test_milestone_2c_and_2d_use_only_their_five_additive_live_migrations() -> None:
     strategy_root = ROOT / "apps/swap_bot/src/swap_bot/strategy"
     assert (strategy_root / "news_filtered_carry.py").exists()
     migrations = {
@@ -113,6 +142,7 @@ def test_milestone_2c_uses_only_its_four_additive_live_migrations() -> None:
         "0002_candidate_authorization_integrity.sql",
         "0003_operational_swap_evidence.sql",
         "0004_production_entry_strategy.sql",
+        "0005_ordinary_close_path.sql",
     }
 
 

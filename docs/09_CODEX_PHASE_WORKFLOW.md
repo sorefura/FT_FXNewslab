@@ -5,12 +5,32 @@ writer implements at a time, and every review attempt uses a new read-only revie
 
 ## Roles
 
-- Phase design: `phase_designer` (`gpt-5.6-sol`, high)
-- Goal coordinator: select `gpt-5.6-terra`, medium before starting `/goal`
-- Normal implementation: `phase_implementer` (`gpt-5.6-luna`, medium)
-- Escalated implementation: `phase_implementer_escalated` (`gpt-5.6-terra`, high)
-- B review: a new `phase_reviewer` (`gpt-5.6-terra`, medium) for every attempt
-- Final review: a new `phase_final_reviewer` (`gpt-5.6-sol`, high)
+- Phase design: `phase_designer` (reasoning tier)
+- Goal coordinator: select the working tier before starting `/goal`
+- Normal implementation: `phase_implementer` (working tier)
+- Escalated implementation: `phase_implementer_escalated` (reasoning tier)
+- B review: a new `phase_reviewer` (working tier) for every attempt
+- Final review: a new `phase_final_reviewer` (reasoning tier)
+
+## Runtime model mapping
+
+Roles are defined as tiers so a Phase can be resumed on either runtime. Both agent sets use the same
+agent names and are maintained in parallel; select the column matching the runtime executing the
+Goal.
+
+| Role | Tier | Codex (`.codex/agents/*.toml`) | Claude (`.claude/agents/*.md`) |
+| --- | --- | --- | --- |
+| `phase_designer` | reasoning | `gpt-5.6-sol` high | Opus 5 |
+| `phase_final_reviewer` | reasoning | `gpt-5.6-sol` high | Opus 5 |
+| `phase_implementer_escalated` | reasoning | `gpt-5.6-terra` high | Opus 5 |
+| `phase_reviewer` | working | `gpt-5.6-terra` medium | Sonnet 5 |
+| `phase_implementer` | working | `gpt-5.6-luna` medium | Sonnet 5 |
+| Goal coordinator | working | `gpt-5.6-terra` medium | Sonnet 5 |
+| Mechanical only | light | `gpt-5.6-luna` low | Haiku 4.5 |
+
+Phase manifests bind agents by name only, so switching runtime mid-Phase changes no frozen hash and
+requires no gate operation. A Phase may start on one runtime and finish on the other. Keep both
+columns current when either changes; do not delete the inactive one.
 
 The coordinator must not run two writers concurrently. Reviewers are read-only. Subagents inherit
 the parent turn's live permissions, so select the intended permission mode before starting.
@@ -46,7 +66,7 @@ design changes, or any correction after B1 starts require the normal unit flow o
 
 ## Start the Goal
 
-Select Terra with medium reasoning for the primary chat, then start:
+Select the working tier for the primary chat, then start:
 
 ```text
 /goal Complete M2 from docs/phases/M2.toml. Use $run-phase-loop. Process B units in order. For
@@ -58,11 +78,11 @@ Do not complete the goal until phase_gate.py assert-complete succeeds.
 The detailed state transition protocol lives in the Skill. `/goal` remains the persistent outcome,
 not the state machine.
 
-## xhigh escalation
+## Maximum-effort escalation
 
-No checked-in agent uses xhigh by default. The coordinator may launch a one-off `gpt-5.6-sol`
-xhigh agent only after stating the triggering condition and evidence. At least one condition must
-hold:
+No checked-in agent runs above its assigned tier. The coordinator may launch one reasoning-tier pass
+at maximum effort only after stating the triggering condition and evidence. At least one condition
+must hold:
 
 - the decision can enable LIVE or real-money orders, authenticated Private transport, or access to
   credentials or secrets;
@@ -72,8 +92,20 @@ hold:
 - two consecutive final-review attempts reject the same root cause.
 
 Repository size, test count, an ordinary additive migration, implementation difficulty, or a first
-review rejection is not sufficient. Terra high implementation escalation remains a separate gate
-response and does not itself authorize xhigh.
+review rejection is not sufficient. `phase_implementer_escalated` remains a separate gate response
+and does not itself authorize a maximum-effort pass.
+
+## Cost policy
+
+Attempt count, not model tier, dominates cost: every rejection replays implementation, checks, and a
+full review over a larger diff. M2-C needed 16 unit-review attempts and 7 final-review attempts, and
+its final-review diffs alone totalled about 1.8 MB.
+
+- Pass agents a bundle path, not bundle contents. Never paste frozen text or diffs into a prompt.
+- Require conclusions in agent reports; no pasted diffs or full test logs.
+- Run one working-tier self-audit against the frozen acceptance before `prepare-final-review`.
+- Keep unit diffs at the frozen minimum. Surface beyond the requirement is re-read by every later
+  review in the phase.
 
 ## Evidence and recovery
 

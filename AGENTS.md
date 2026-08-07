@@ -28,8 +28,13 @@ MilestoneをM単位で設計し、B単位で実装・テスト・独立レビュ
 - 書き込み可能な実装agentは同時に一つだけとする。
 - 各review attemptでは新しいread-only reviewer threadを作成する。
 - 以前のreviewerへfollow-upして再利用しない。
-- Phase設計と最終reviewは`gpt-5.6-sol` high、B reviewは`gpt-5.6-terra` mediumを通常値とする。
-- xhighは`.agents/skills/run-phase-loop/SKILL.md`の高リスク条件を満たす単発agentにだけ使用する。
+- Phase設計と最終reviewはreasoning tier、B review・B実装・coordinatorはworking tierを通常値と
+  する。tierから実modelへの対応は`docs/09_CODEX_PHASE_WORKFLOW.md`のruntime mapping表を正本と
+  する。Codexは`.codex/agents/`、Claudeは`.claude/agents/`を使い、どちらも維持して削除しない。
+- maximum effortは`.agents/skills/run-phase-loop/SKILL.md`の高リスク条件を満たす単発agentに
+  だけ使用する。
+- rejectionの往復回数がコストを支配する。agentへはbundle pathを渡し、内容を貼らない。
+  agentの報告は結論のみとし、diffやtest全出力を貼らせない。
 - frozen design、phase state、review bundleを手作業で変更しない。
 - `phase_gate.py assert-complete`が成功するまでGoalを完了扱いにしない。
 - commit、push、merge、deployは明示的な許可なしに行わない。
@@ -158,5 +163,12 @@ Docstringを実装解説の置き場にしない。
 現在必要な最小境界を実装し、将来差し替えたい箇所はProtocolまたは明確なApplication Portとして切る。
 
 「汎用性のため」だけの基底クラス、Factory、Registry、Plugin機構を増やさない。
+
+frozen unitのscopeは成果物であると同時に上限である。frozen acceptanceが要求しない型、field、
+引数、helper、設定点、防御分岐を足さない。frozen契約が既に排除している状態へのguardを書かない。
+仕様の再説明をdocstringやコメントへ置かない。新規moduleより既存moduleへの追加を優先する。
+
+ただしテストはこの制限の対象外とする。frozen unitが列挙するケースは全て網羅する。
+coverage不足はreview rejectionの最大要因であり、往復1回分のコストを丸ごと失う。
 
 ただしBroker、LLM provider、Market data source、Clock、ID generator、Persistenceは外部境界として差し替え可能にする。

@@ -16,18 +16,28 @@ frozen spec、ADR、ExecPlanを正本とし、この文書へコピーしない�
 
 ## Workflow decisions
 
-- M単位の設計・最終reviewは5.6 Sol high、B reviewは5.6 Terra medium、B単位の実装は
-  Luna/Terra medium相当を通常値とする。
-- routineな調査、gate操作、文書同期、既知のmechanical correctionはLuna/Terra
-  medium相当を優先する。
-- xhighを常設agentの既定値にしない。次のいずれかを満たす場合だけ、coordinatorが条件と根拠を
-  明示して5.6 Sol xhighを単発起動する。
+- model方針はvendor名ではなくtierで定義する。M単位の設計・最終review・escalated実装は
+  reasoning tier、B review・B実装・coordinatorはworking tier、gate操作と文書同期はlight tierを
+  通常値とする。tierから実modelへの対応表は`docs/09_CODEX_PHASE_WORKFLOW.md`が正本である。
+- 2026-08-06、GPTのクレジット制約により実行runtimeをClaudeへ切り替えた。Codex側の
+  `.codex/agents/`とClaude側の`.claude/agents/`は同じagent名で並行維持し、どちらも削除しない。
+  同一Phaseを途中でruntime間を跨いで再開してよい。phase manifestはagentを名前でしか参照しない
+  ため、切替はfrozen fileのhashへ影響せず、gate操作も不要である。
+- 契約密度の高い実装をlight tierへ落とさない。rejection往復が増えて逆に高くつく。
+- maximum effortを常設agentの既定値にしない。次のいずれかを満たす場合だけ、coordinatorが
+  条件と根拠を明示してreasoning tierを単発起動する。
   - LIVE/実資金order、authenticated Private transport、credential/secret accessを有効化し得る判断。
   - durable dataに対する破壊的または不可逆なmigration。
-  - high reasoningを1回使っても、複数のtrust・authority・persistence境界にまたがるP0/P1が未解決。
+  - 通常passを1回使っても、複数のtrust・authority・persistence境界にまたがるP0/P1が未解決。
   - 同一root causeによりfinal reviewが2 attempt連続でrejectされた。
 - repository規模、test件数、通常のadditive migration、実装難度、最初のreview rejectionだけでは
-  xhigh条件を満たさない。通常の実装修正escalationであるTerra highとは別に扱う。
+  maximum effort条件を満たさない。gateが要求する`phase_implementer_escalated`とは別に扱う。
+- コストを支配するのはmodel階層ではなくrejectionの往復回数である。M2-Cはunit review 16 attempt、
+  final review 7 attemptを要し、final reviewのdiffだけで約1.8MBに達した。往復を減らす。
+- agentへはbundle pathだけを渡し、frozen本文・diff・ファイル内容を貼らない。
+  agentの報告は結論のみとし、diffやtest全出力を貼らせない。
+- `prepare-final-review`の前にworking tierでfrozen acceptanceに対するself-auditを1回挟む。
+  reasoning tierのfinal review attemptはphase全体diffを読む最大の消費源である。
 - reviewerは1 attemptにつき1回だけ起動する。App taskの状態取得失敗を理由に同じ仕事を
   重複起動せず、Git・Phase Gate・bundleを正本に再開する。
 - rejection後は修正し、必ず別の新規reviewerで再審査する。

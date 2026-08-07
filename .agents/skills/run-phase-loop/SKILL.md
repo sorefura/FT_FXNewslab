@@ -32,21 +32,58 @@ Read `references/state-machine.md` when selecting the next command. Read
 
 ## Model policy
 
-- Use `phase_designer` (`gpt-5.6-sol`, high) for Phase design.
-- Use a fresh `phase_reviewer` (`gpt-5.6-terra`, medium) for each B review attempt.
-- Use a fresh `phase_final_reviewer` (`gpt-5.6-sol`, high) for each final review attempt.
-- Do not set a checked-in agent to xhigh. A coordinator may use a one-off `gpt-5.6-sol` xhigh agent
-  only when at least one high-risk condition below is evidenced before launch:
+Policy is expressed as role tiers, not vendor model names, so a Phase can be resumed on either
+runtime. Agent definitions exist per runtime under the same agent names; the phase manifest binds
+agents by name only, so switching runtime mid-Phase does not affect any frozen hash.
+
+| Role | Tier | Codex (`.codex/agents/`) | Claude (`.claude/agents/`) |
+| --- | --- | --- | --- |
+| `phase_designer` | reasoning | `gpt-5.6-sol` high | Opus 5 |
+| `phase_final_reviewer` | reasoning | `gpt-5.6-sol` high | Opus 5 |
+| `phase_implementer_escalated` | reasoning | `gpt-5.6-terra` high | Opus 5 |
+| `phase_reviewer` | working | `gpt-5.6-terra` medium | Sonnet 5 |
+| `phase_implementer` | working | `gpt-5.6-luna` medium | Sonnet 5 |
+| Goal coordinator | working | `gpt-5.6-terra` medium | Sonnet 5 |
+| Mechanical only | light | `gpt-5.6-luna` low | Haiku 4.5 |
+
+Select the column matching the runtime executing the Goal. Keep both columns maintained: a Phase may
+start on one runtime and resume on the other. Never mix tiers across runtimes for one role.
+
+- Use `phase_designer` (reasoning tier) for Phase design.
+- Use a fresh `phase_reviewer` (working tier) for each B review attempt.
+- Use a fresh `phase_final_reviewer` (reasoning tier) for each final review attempt.
+- Use `phase_implementer` (working tier) normally and `phase_implementer_escalated` (reasoning
+  tier) when the gate requests escalation.
+- Run the coordinator at working tier. Gate commands and status reads do not need a larger model.
+- Restrict the light tier to gate operations, status reads, and document synchronization. Contract-
+  dense implementation at light tier costs more through added rejection cycles.
+- Do not raise a checked-in agent above its assigned tier. A coordinator may run one reasoning-tier
+  pass at maximum effort only when at least one high-risk condition below is evidenced before
+  launch:
   - a decision can enable LIVE/real-money orders, authenticated Private transport, or
     credential/secret access;
   - a durable-data migration is destructive or irreversible;
-  - one high-reasoning pass leaves a P0/P1 unresolved across multiple trust, authority, or
+  - one ordinary pass leaves a P0/P1 unresolved across multiple trust, authority, or
     persistence boundaries;
   - two consecutive final-review attempts reject the same root cause.
 
 Repository size, test count, ordinary additive migrations, implementation difficulty, and a first
-review rejection are not xhigh conditions. The existing Terra high implementation escalation is
-separate and does not authorize xhigh by itself.
+review rejection are not escalation conditions. The `phase_implementer_escalated` gate response is
+separate and does not itself authorize a maximum-effort pass.
+
+## Cost policy
+
+Each rejection replays a full implement/check/review cycle over a growing diff, so attempt count
+dominates cost far more than model tier. Reduce attempts, not rigor.
+
+- Give an implementer only the bundle path, the current unit, and gate status. Do not paste frozen
+  text, diffs, or file contents that it can read itself.
+- Require agents to report conclusions, not transcripts. No pasted diffs or full test output.
+- Before `prepare-final-review`, run one working-tier self-audit against the frozen acceptance and
+  fix what it finds. A reasoning-tier final-review attempt reads the entire phase diff and is the
+  single most expensive step in the loop.
+- Keep unit diffs minimal. Implementation surface beyond the frozen requirement costs tokens in
+  every later review of that phase.
 
 ## Execute one B unit
 

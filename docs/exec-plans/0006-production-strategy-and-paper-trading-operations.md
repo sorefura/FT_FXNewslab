@@ -1316,6 +1316,12 @@ ExecPlan 0006 is complete only when all of the following are true:
   - [x] (2026-08-07) B5 - added `OrdinaryCloseApplicationService` composing B3
     evaluation persistence and B4 reservation persistence into one single-Position
     KEEP/CLOSE flow, prevalidating and rejecting `LIVE` before any durable work.
+  - [x] (2026-08-07) Phase-間 quality-maintenance, not a Milestone - added a
+    reproducible branch-coverage baseline (`pytest-cov`, `[tool.coverage.run]` in
+    `pyproject.toml`, CI `--cov` flags) scoped to the four product source roots. No
+    `fail-under` threshold set; see `docs/08_TEST_STRATEGY.md` Coverage section for
+    the baseline numbers and the M2-D uncovered-branch safety classification. No
+    M2-D frozen design, acceptance, or product semantics changed.
 - [ ] Milestone 2 - Production Strategy Implementation.
 - [ ] Milestone 3 - Paper Broker and Ledger.
 - [ ] Milestone 4 - Operational Paper Cycle.

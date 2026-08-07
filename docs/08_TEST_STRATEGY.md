@@ -1,6 +1,74 @@
 # Test Strategy
 
-## Production Strategy M2-A and Pair materialization M2-B1/B2/B3/B4/B5 tests
+## Coverage
+
+Statement/branch coverage is a regression sensor, not a substitute for behavioral
+acceptance. A line executing proves nothing about whether its outcome was asserted;
+the Milestone tests above remain the source of truth for What each Layer guarantees.
+Branch coverage is weighted over statement coverage because this codebase's safety
+properties (KEEP/CLOSE routing, Adoption staleness/expiry/revocation, Portfolio
+ACCEPT/REDUCE/REJECT, Risk APPROVE/REJECT, replay/corruption fail-closed handling)
+live in which branch of an `if` executes, not merely in a statement running at all.
+
+Coverage is measured with `pytest-cov`/`coverage.py`, `branch = true`, scoped to
+product source only (`packages/fx_core/src`, `packages/fx_signal_store/src`,
+`apps/fx_research/src`, `apps/swap_bot/src`; configured in `pyproject.toml`
+`[tool.coverage.run]`). No `fail-under` threshold is set yet; this is a baseline
+measurement, not a quality gate. `coverage.json` and HTML output are reproducible,
+gitignored artifacts, not committed sources of truth.
+
+Reproduce with:
+
+```bash
+python -m pytest -q \
+  --cov=packages/fx_core/src --cov=packages/fx_signal_store/src \
+  --cov=apps/fx_research/src --cov=apps/swap_bot/src \
+  --cov-branch --cov-report=term-missing --cov-report=json
+```
+
+### 2026-08-07 baseline (999 passed, 5 skipped on both Python 3.11.9 and 3.14.6)
+
+Statement counts differ slightly across Python 3.11 and 3.14 (AST/bytecode
+differences); the three M2-D modules below are identical on both versions.
+
+| Scope | Statement % | Branch % |
+| --- | --- | --- |
+| Workspace (4 source roots, py3.11) | 90% (7332/8168) | 73% (1924/2646) |
+| Workspace (4 source roots, py3.14) | 89% (6635/7470) | 73% (1924/2646) |
+| `apps/swap_bot/src/swap_bot` (py3.11) | 90% (3529/3929) | 73% (1014/1396) |
+| `apps/swap_bot/src/swap_bot` (py3.14) | 89% (3220/3619) | 73% (1012/1396) |
+| `strategy/ordinary_close.py` | 85% (484/572) | 67% (175/262) |
+| `ordinary_close_store.py` | 86% (291/337) | 63% (81/128) |
+| `ordinary_close_application.py` | 87% (58/67) | 70% (21/30) |
+
+The M2-D modules sit below the workspace average. Reviewing the uncovered branches
+against the M2-D safety-relevant defect classes (KEEP/CLOSE routing, Adoption
+state/staleness/expiry/revocation, Swap staleness/carry, Portfolio ACCEPT/REDUCE/
+REJECT, Risk APPROVE/REJECT, replay/corruption, missing-parent, LIVE-before-write,
+exact-type/forged-lineage) found:
+
+- A cluster of genuine gaps concentrated in `ordinary_close_store.py`'s
+  append-or-compare first-insert conflict paths (content-addressed ID collision
+  with different content, distinct from the well-covered replay-conflict sibling
+  path), the `_hydrate_risk_decision`/`_hydrate_intent` corruption paths (their
+  `_hydrate_portfolio_decision` sibling is covered), `_hydrate_existing_reservation_chain`'s
+  missing-Risk-decision integrity check, the Reservation persistence result's
+  Risk-APPROVE/Intent consistency checks, and `OrdinaryCloseRiskDecision`'s
+  `OVERCLOSE_QUANTITY` branch (concurrent-reservation overclose detection).
+- A smaller set of confirmed defensive/impossible-state duplicates, where an
+  upstream type's own `__post_init__` already guarantees the condition cannot
+  occur (e.g. `CLOSE_CANDIDATE` always carrying a `close_candidate`, `AVAILABLE`
+  Swap evidence always carrying both received amounts, `AUTHORIZED` resolution
+  always carrying an `AuthorizedSignal`) — these are intentionally redundant
+  base-implementation checks per the exact-type validation policy, not reachable
+  gaps.
+- Immutable-table UPDATE/DELETE rejection is enforced by SQL triggers in the
+  migration files, which are outside Python branch coverage; that guarantee is
+  validated by the existing migration/trigger tests, not by this measurement.
+
+Full per-branch classification is recorded in the M2-D quality-maintenance entry of
+ExecPlan 0006; no test was added or removed to change these numbers, and no
+production code changed.
 
 Milestone 2-A tests already state:
 

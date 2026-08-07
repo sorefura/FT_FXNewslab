@@ -6,6 +6,10 @@ __pycache__/
 .tmp_pytest/
 .mypy_cache/
 .ruff_cache/
+.coverage
+.coverage.*
+coverage.json
+htmlcov/
 *.sqlite3
 *.db
 *.jsonl

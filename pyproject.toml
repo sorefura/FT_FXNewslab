@@ -39,3 +39,17 @@ mypy_path = [
 [[tool.mypy.overrides]]
 module = ["feedparser"]
 ignore_missing_imports = true
+
+[tool.coverage.run]
+branch = true
+relative_files = true
+source = [
+    "packages/fx_core/src",
+    "packages/fx_signal_store/src",
+    "apps/fx_research/src",
+    "apps/swap_bot/src",
+]
+
+[tool.coverage.report]
+show_missing = true
+skip_covered = false

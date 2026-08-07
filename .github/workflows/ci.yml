@@ -16,7 +16,15 @@ jobs:
         with:
           python-version: ${{ matrix.python-version }}
       - run: python -m pip install -r requirements-dev.txt
-      - run: python -m pytest -q
+      - run: >-
+          python -m pytest -q
+          --cov=packages/fx_core/src
+          --cov=packages/fx_signal_store/src
+          --cov=apps/fx_research/src
+          --cov=apps/swap_bot/src
+          --cov-branch
+          --cov-report=term-missing
+          --cov-report=json
       - run: python -m ruff check .
       - run: python -m mypy packages apps
 

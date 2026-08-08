@@ -56,6 +56,18 @@ live statusを重複保存すると汚染源になるため、Phase GateとGit�
   も発見しuser判断で同時に修正。2nd final reviewerがAPPROVE、`assert-complete --phase M3`
   で`completion_verified: true`を確認済み。M3はcommit済み・push済み（6 commit、
   `607bc90..c3fb0c4`）。
+- M4はOperational Paper Cycleを対象とする設計のみ完了（B1実装は未着手）。baselineは
+  `origin/main` HEAD `961b4206e6f0c8853b8ba86039441ca7b6484066`（M3実装・完了後）。
+  B1 Cycle contracts/identity/policy、B2 operational adapters・Signal batch first-claim・
+  input freeze、B3 emergency/ordinary-close/entry allocation・Risk decision domain、
+  B4 migration `0007`・`SQLiteOperationalCycleStore`・attempts/recovery、B5
+  `OperationalPaperCycleService`・post-intent dispatch・`paper-once` CLIの5 unitで構成する。
+  phase_designer（Opus）が設計し、独立したfresh-identity reviewer 2名（Sonnet、各回とも
+  過去のverdictを見ない新規agent）が個別にbrief記載の13design riskを実装済みM3/M2-Dコード
+  （行番号レベル）と突き合わせて検証し、いずれもblocking findingなしで即APPROVE。
+  P0/P1指摘は発生しなかった。2026-08-09、design freeze commit
+  `4dcac68a16bddba76df3f221c24f64d6bc26abed`をcommit・push済み。M3のfrozen fileは
+  無変更。`phase_gate.py init --phase M4`はまだ実行していない（B1着手時に行う）。
 
 ## Resume protocol
 
@@ -65,12 +77,16 @@ live statusを重複保存すると汚染源になるため、Phase GateとGit�
    ```powershell
    $Repo = 'C:\Users\soref\OneDrive\ドキュメント\VSCode\FT_FXNewslab'
    Set-Location -LiteralPath $Repo
-   python .agents\skills\run-phase-loop\scripts\phase_gate.py status --phase M3
+   python .agents\skills\run-phase-loop\scripts\phase_gate.py status --phase M4
    git status --short
    ```
 
-3. M3は`status: complete`、`completion_verified: true`。M3はClose済み。次のMilestoneに
-   着手する場合は新しいdesign freeze・initから始める
+3. M3は`status: complete`、`completion_verified: true`。M3はClose済み。M4は
+   spec/acceptance/manifestのdesign freezeまで完了しており（`docs/phases/M4.toml`、
+   `docs/phases/M4/`）、`.phase-runs/M4`はまだ存在しない（init未実行）。B1実装に着手する
+   場合は`phase_gate.py init --manifest docs/phases/M4.toml`から`run-phase-loop`
+   workflowを開始する。次の新しいMilestone（M5等）を設計する場合は改めて新しいdesign
+   freeze・initから始める。
 4. 過去のreview履歴・修正内容は`.phase-runs/M3/reviews/`と本ファイルのDurable historyを
    参照する。各attemptは別の新規reviewerで審査済み。reviewerを再利用せず、`.phase-runs`、
    frozen files、review bundleを手編集しない。
@@ -118,6 +134,7 @@ frozen unitのscopeは成果物であると同時に上限である。
 
 ## Evidence lookup
 
+- M4 frozen design (implementation not started): `docs/phases/M4.toml`と`docs/phases/M4/`
 - M3 status/history: `.phase-runs/M3/state.json`
 - M3 frozen design: `docs/phases/M3.toml`と`docs/phases/M3/`
 - M2-D status/history: `.phase-runs/M2-D/state.json`

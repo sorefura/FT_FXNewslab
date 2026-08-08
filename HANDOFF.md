@@ -69,8 +69,8 @@ live statusを重複保存すると汚染源になるため、Phase GateとGit�
    git status --short
    ```
 
-3. M3は`status: complete`、`completion_verified: true`。次のアクションはuserの指示による
-   commit判断のみ。次のMilestoneに着手する場合は新しいdesign freeze・`init`から始める。
+3. M3は`status: complete`、`completion_verified: true`。M3はClose済み。次のMilestoneに
+   着手する場合は新しいdesign freeze・initから始める
 4. 過去のreview履歴・修正内容は`.phase-runs/M3/reviews/`と本ファイルのDurable historyを
    参照する。各attemptは別の新規reviewerで審査済み。reviewerを再利用せず、`.phase-runs`、
    frozen files、review bundleを手編集しない。

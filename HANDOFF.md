@@ -54,7 +54,8 @@ live statusを重複保存すると汚染源になるため、Phase GateとGit�
   orchestrating sessionが実際にPython Decimal計算で再現し確認。6箇所を修正。修正中に
   同種の潜在バグ（`contracts.py`の`PaperFill.__post_init__`、未到達だが同じroot cause）
   も発見しuser判断で同時に修正。2nd final reviewerがAPPROVE、`assert-complete --phase M3`
-  で`completion_verified: true`を確認済み。commitはまだ行っていない（userの許可待ち）。
+  で`completion_verified: true`を確認済み。M3はcommit済み・push済み（6 commit、
+  `607bc90..c3fb0c4`）。
 
 ## Resume protocol
 

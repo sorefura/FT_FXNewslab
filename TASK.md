@@ -19,18 +19,18 @@ Milestone 3 (`Paper Execution and Ledger`) を `run-phase-loop` に従って B1 
 
 ## Current position
 
-M3は2026-08-08に完了した。`phase_gate.py assert-complete --phase M3`が
+M3は2026-08-08にClose済み。`phase_gate.py assert-complete --phase M3`が
 `completion_verified: true`を返し、`approved_tree`が記録されている。B1〜B5すべてが
 新規reviewerでAPPROVEされ（B4・B5はそれぞれ1回・2回のreject-fix-reサイクルを経た）、
 final reviewも2回目でAPPROVE（1回目は`paper/store.py`のDecimal精度P0が見つかり修正）。
-commitはまだ行っていない（working treeは未commitのまま、userの許可待ち）。
+M3はcommit済み・push済み（6 commit、`607bc90..c3fb0c4`）。
 
-M2-Dは既にcommit・push済み（`a15c790..cadc25a`）。
+M2-Dも既にcommit・push済み（`a15c790..cadc25a`）。
 
 ## Required completion for this task
 
-完了済み。残るのはuserの指示によるcommit判断のみ。次のMilestone（M4等）に着手する場合は
-新しいdesign freeze・`init`から始める。
+完了・Close済み。次のMilestone（M4等）に着手する場合は新しいdesign freeze・`init`から
+始める。
 
 ## Non-goals
 

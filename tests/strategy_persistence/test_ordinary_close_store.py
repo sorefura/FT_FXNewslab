@@ -263,6 +263,7 @@ _B5_SEQUENCE = (
     "0003_operational_swap_evidence.sql",
     "0004_production_entry_strategy.sql",
     "0005_ordinary_close_path.sql",
+    "0006_paper_execution_ledger.sql",
 )
 
 

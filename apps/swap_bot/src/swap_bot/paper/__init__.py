@@ -105,6 +105,20 @@ from .ledger import (
     validate_correction_chain,
     validate_swap_accrual_correction,
 )
+from .store import (
+    AcceptedOrder,
+    CreatedStep,
+    EvaluatedStep,
+    PaperPersistenceConflict,
+    PaperPersistenceIntegrityError,
+    PaperPositionRecord,
+    ReservationConsumptionEvidence,
+    ReservationReleaseEvidence,
+    SQLitePaperStore,
+    StepResolutionOutcome,
+    SwapCorrectionResult,
+    SwapRolloverResult,
+)
 
 __all__ = [
     "NO_MARKET_TERMINAL_REASON_CODE",
@@ -208,4 +222,16 @@ __all__ = [
     "rebuild_position_snapshot",
     "validate_correction_chain",
     "validate_swap_accrual_correction",
+    "AcceptedOrder",
+    "CreatedStep",
+    "EvaluatedStep",
+    "PaperPersistenceConflict",
+    "PaperPersistenceIntegrityError",
+    "PaperPositionRecord",
+    "ReservationConsumptionEvidence",
+    "ReservationReleaseEvidence",
+    "SQLitePaperStore",
+    "StepResolutionOutcome",
+    "SwapCorrectionResult",
+    "SwapRolloverResult",
 ]

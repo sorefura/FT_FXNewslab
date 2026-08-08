@@ -37,6 +37,7 @@ def test_live_migrations_create_and_reopen_the_exact_b4_sequence(tmp_path: Path)
         "0003_operational_swap_evidence.sql",
         "0004_production_entry_strategy.sql",
         "0005_ordinary_close_path.sql",
+        "0006_paper_execution_ledger.sql",
     )
 
 
@@ -73,6 +74,7 @@ def test_legacy_0002_database_upgrades_through_b4_migrations(tmp_path: Path) -> 
         "0003_operational_swap_evidence.sql",
         "0004_production_entry_strategy.sql",
         "0005_ordinary_close_path.sql",
+        "0006_paper_execution_ledger.sql",
     )
 
 
@@ -147,6 +149,7 @@ def test_concurrent_live_initializers_converge_on_one_marker_per_migration(
         "0003_operational_swap_evidence.sql",
         "0004_production_entry_strategy.sql",
         "0005_ordinary_close_path.sql",
+        "0006_paper_execution_ledger.sql",
     )
 
 

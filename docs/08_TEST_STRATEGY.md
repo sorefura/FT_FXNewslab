@@ -40,6 +40,11 @@ differences); the three M2-D modules below are identical on both versions.
 | `strategy/ordinary_close.py` | 85% (484/572) | 67% (175/262) |
 | `ordinary_close_store.py` | 86% (291/337) | 63% (81/128) |
 | `ordinary_close_application.py` | 87% (58/67) | 70% (21/30) |
+| `paper/contracts.py` (M3-B1, final state 2026-08-08) | 96% (584/609) | 87% (171/196) |
+| `paper/fill_engine.py` (M3-B2, final state 2026-08-08) | 80% (168/211) | 62% (69/112) |
+| `paper/ledger.py` (M3-B3, final state 2026-08-08) | 89% (869/977) | 72% (265/366) |
+| `paper/store.py` (M3-B4, final state 2026-08-08) | 91% (1013/1107) | 75% (250/334) |
+| `paper/application.py` (M3-B5, final state 2026-08-08) | 92% (124/135) | 80% (40/50) |
 
 The M2-D modules sit below the workspace average. Reviewing the uncovered branches
 against the M2-D safety-relevant defect classes (KEEP/CLOSE routing, Adoption
@@ -156,6 +161,175 @@ B3/B4 stores, zero reservation rows on the KEEP path, exactly one Intent on CLOS
 zero rows anywhere under LIVE, manual exact replay converging through B3 and B4, and
 a second close request for the same Position observing PORTFOLIO REJECT/REDUCE as
 capacity is consumed by an earlier reservation.
+
+Milestone 3-B1 tests cover the three frozen source-intent payload builders each
+rejecting the other two exact intent types and any Mock/duck-typed/forged-subclass
+impostor, and each field transform (Decimal-as-str, datetime-as-isoformat, Pair-as-
+symbol, enum/typed-ID-as-value); deterministic `paper_position_id` derivation for
+ENTRY (`"paper-position-" + digest(...)`, stable for an identical intent, distinct for
+a different one), ORDINARY_CLOSE using its idempotency key as `source_intent_id`, and
+EMERGENCY_LIQUIDATION requiring the extra `existing_position_side` keyword argument
+with `opposite_side()` rejecting a non-`Side` value; `PaperMarketObservation`'s full
+validation matrix (non-positive/non-finite/float price, `bid > ask`, naive/non-UTC
+timestamp, `provider_observed_at > received_at`, blank source/version, forged Pair
+subclass) and tampered-ID rejection; `PaperFillPolicy`'s conditional
+`partial_fill_fraction` rule, its restricted terminal-state value sets, and positive-
+timedelta/`maximum_steps`/non-negative-slippage validation; the legal transition table
+exercised exhaustively (every legal pair accepted, the acceptance-listed illegal pairs
+and every terminal-state self/other transition rejected) plus `project_paper_order_state`
+rejecting a missing/non-`ACCEPTED` ordinal 0, a gap, a duplicate ordinal, a
+cross-order event set, and an empty sequence, while accepting out-of-order input and
+proving each `no_fill_terminal_order_state`/`incomplete_terminal_order_state` reachable
+per the frozen producers; `FillEvaluationPlan`/`FillEvaluationStep` cross-field sanity
+(expiry/due not preceding their start bound, `maximum_steps`/ordinal bounds);
+`FillEvaluationAttempt` identity differing by `evaluated_at` and `worker_identity`
+alone; and an architecture tripwire proving every file under `swap_bot/paper/` imports
+none of the forbidden Live/Research/Broker modules and references no Broker symbol.
+
+Milestone 3-B2 tests cover the observation-eligibility predicate's eight clauses
+each pinned at its own equality boundary; deterministic selection ordering by
+`(received_at, provider_observed_at, market_observation_id)` including a full
+tie-fixture and the reviewer's supplied-candidate-set divergence case;
+`PaperAttemptDiagnosticCode` precedence for no-observation-for-pair versus
+all-ineligible; the adverse slippage fill-price formula proved against
+independent BUY/SELL/zero-slippage literals; the partial-fill quantity rule and
+its zero/negative/overfill invariant, plus the worked 1000 -> 400 -> 600
+two-Step example summing to `original_quantity`; `is_next_step_legitimate`
+rejecting a non-MARKET_SELECTED predecessor, a zero remaining quantity, and an
+ordinal that would reach `maximum_steps`; PENDING versus terminal NO_MARKET
+resolution pinned at the `evaluation_due_at` boundary, and the incomplete- versus
+no-fill-terminal state choice after a prior Fill; and
+`evaluate_fill_evaluation_step` driven through the last-Step MARKET_SELECTED
+branch, proving the ordered `(PARTIALLY_FILLED, incomplete_terminal_order_state)`
+order-event pair at consecutive ordinals when a positive remainder survives the
+final allowed Step.
+
+Milestone 3-B3 tests cover the entry-after-reduce-only prohibition at the exact
+400@100/reduce-200@110/rejected-entry interleaving from acceptance.md, with the
+average entry price still 100 afterward; a reduce-only Fill exceeding
+`open_quantity` rejected; weighted-average entry price for single- and
+two-different-price multi-fill positions, unchanged by reduce-only
+applications; realized PnL for LONG/SHORT profit/loss against independent
+Decimal literals, the cash-flow-exact identity for an exactly-representable
+basis, and the documented quotient-rounding residue for entry fills of 100@100
+plus 200@101, both computed independently; unrealized PnL proving LONG marks
+with `bid` and SHORT with `ask` by swapping the mark side; mark-set coverage
+acceptance/missing/duplicate/extra-Pair rejection, the no-Fill coverage
+variant, and the `received_at <= bounding_instant` bound; all seven formulas
+against independent literals; both cardinality aggregates at their exact
+boundaries, including an order with no event at or below the boundary excluded
+before `project_paper_order_state` is ever called; the ACCRUED case plus each
+of the eight non-accrual precedence outcomes individually, a simultaneous-
+condition precedence case, exact-`date`-type rejection of a `datetime`,
+string, and `date` subclass, the UTC-midnight rollover boundary where the
+previous/next UTC day changes the outcome, open-ended `effective_until=None`
+behavior, and the window/age equality-is-eligible boundaries; the two-
+sequential-correction (100->120->130, ledger entries 100/20/10, total 130) and
+oscillating-chain (100->120->100->120, ledger entries 100/20/-20/20, total 120,
+three distinct correction IDs) examples from acceptance.md computed
+independently, plus every chain-integrity rejection case; and each of the four
+reconciliation rebuild functions proven MATCHED on correct input and
+MISMATCHED naming the correct record ID when exactly one retained field is
+tampered, including the ENTRY-persisted-as-wrong-kind and
+ENTRY-after-REDUCE_ONLY read-path detection cases.
+
+Milestone 3-B4 tests cover a fresh entry flow through T1-T3a with exact replay
+adding zero rows; the two-Step partial-fill remaining-quantity reconstruction
+(1000 -> 400 -> 600) with a genuinely later Step window/evaluated_at rather than a
+reused instant; a PENDING attempt resolved by a later pre-due eligible quote; a
+NO_MARKET terminal whose replay creates no second selection or Fill; the T3b
+worked numeric example from acceptance.md (`maximum_steps=1`,
+`FRACTION_OF_REMAINING` 0.4, close intent 1000 -> consumption 400, release exactly
+600) and the conservation equation re-derived from persisted rows (not a running
+total) after no-fill, one partial fill, two partial fills, and a terminal release;
+all four reduce-only attachment rejections (missing position row, Pair mismatch,
+account mismatch, Side mismatch) each independently proved with the other three
+valid, plus the M2-D-intent-authentication missing-row and content-mismatch cases
+via a synthetic but content-addressed-correct `live_ordinary_close_approved_intents`
+row; the cross-variant Step-claim and swap-rollover-claim linkage triggers proved by
+direct SQL (no claim, wrong-variant claim, wrong-resolution/evidence-id claim, and
+the `resolution_id`/`evidence_id` self-reference `CHECK`); the frozen minimum
+constraint set proved by direct conflicting inserts (second plan, second Step,
+second selection, second Fill); identical-concurrent-writer convergence on one
+order/plan/Step via real threads, and a real-thread race between two racers whose
+own inputs would independently resolve `MARKET_SELECTED` and `NO_MARKET` for the
+same Step, proving exactly one terminal claim and both racers reconciled to that
+one winner; migration convergence for fresh/upgrade-from-0005/
+reopen/body-failure-retry/concurrent-init through exactly `0006`; every
+`live_paper_*` table's UPDATE/DELETE rejection proved on a populated row; chained
+(100->120->130) and oscillating (100->120->100->120) swap accrual correction
+examples from acceptance.md computed independently, plus chain-integrity rejection
+and a superseded-snapshot accrual-binding rejection; and reconciliation MATCHED
+plus each of the four reconciled record kinds independently tampered (via a
+self-consistent forged row, since every table is immutable) and reported as a typed
+`MISMATCHED` naming that exact record ID.
+
+Milestone 3-B4 tests (2026-08-08 P0 fix) additionally cover the read-only
+`current_step_ordinal` method: no persisted Step returns `0`; an unresolved highest
+Step (ordinal `0` or `>0`) is reused; a `MARKET_SELECTED` Step with a positive Fill,
+`remaining_quantity_after > 0`, and `ordinal + 1 < maximum_steps` returns the next
+ordinal; a `FILLED` Fill, a `NO_MARKET` terminal claim, and a Fill that exhausts
+`maximum_steps` each return the same (non-advancing) ordinal; unpersisted-plan and
+wrong-type rejection; and zero new rows in every `live_paper_*` table across repeat
+calls, proving it is genuinely read-only.
+
+Milestone 3-B4 tests (2026-08-08 final-review P0 fix) additionally cover the
+snapshot totals written outside `paper-exact-arithmetic-v1`, which silently rounded
+to the interpreter's 28-digit default context. The acceptance fixture whose basis
+does not terminate (entry Fills of 200 at 101 and 100 at 100, closed in full at 105)
+is driven through `SQLitePaperStore`; the persisted position and account
+`realized_pnl_total` must both equal the exact
+`1299.9999999999999999999999999999900` rather than the rounded `1300`, and the
+untampered account must reconcile `MATCHED` with empty mismatch tuples.
+
+Milestone 3-B5 tests (2026-08-08 P0 fix) additionally cover the confirmed defect
+where `_advance` hardcoded `ordinal=0` on every call, starving `maximum_steps > 1`
+policies of Step 1+: a single-step policy stays at ordinal `0` even with a
+remainder; a legitimate T3a continuation's next call creates and evaluates Step 1
+(not Step 0 again), with Step 0's persisted row proved untouched; a Step 1 still
+`PENDING` projects `PARTIALLY_FILLED` (deduced from the T3a-continuation invariant,
+not re-queried); driving a policy through Step 0 -> Step 1 -> Step 2 to a
+`maximum_steps`-reached terminal, then replaying that terminal result with zero new
+Step rows; and the same zero-new-Step replay proof for a `FILLED` and a
+no-fill-terminal (`NO_MARKET`) order. These continuation cases now drive the public
+entry point across multiple calls with an advancing `Clock` double (see the
+2026-08-08 P0 fix below for why a second call no longer re-submits T1).
+
+Milestone 3-B5 tests (2026-08-08 second P0 fix) additionally cover the deeper
+defect where every entry point unconditionally re-submitted T1 on a second call for
+an already-accepted intent, racing that call's own `evaluated_at` against the
+`created_at` already on file and always raising `PaperPersistenceConflict`. The
+read-only `hydrate_accepted_order` and `hydrate_created_step` store methods (the
+latter closing the analogous gap in `_advance`'s own `create_step` call for a Step
+already persisted) are proved: found vs. not-found; genuinely read-only across
+repeat calls; wrong-type and unpersisted-plan rejection. Application-level coverage
+drives the public entry point across multiple calls with a `Clock` double returning
+distinct, later instants: resuming a Step left `PAPER_STEP_PENDING` by call one to
+its `NO_MARKET` terminal with no new Step row; a legitimate T3a continuation's next
+call correctly reaching Step 1; a full Step 0 -> 1 -> 2 completion driven entirely
+through the public entry point, then a later-instant replay of its terminal result
+adding no order or Step row; and a second call supplying a different `fill_policy`
+for the same intent failing closed with `PaperPersistenceConflict`, exactly as a
+first-call mismatch already does.
+
+Milestone 3-B5 tests cover each of the three entry points rejecting the other two
+exact intent types plus a Mock/subclass/duck-typed impostor before any Clock read or
+store row is written; LIVE authority raising and SHADOW_NOT_SUBMITTED returning a
+typed identifier-free result before the Clock is read, for all three entry points;
+an `ApprovedCloseIntent` whose own `authority` differs from the supplied `authority`
+failing closed; a non-`ExecutionAuthorityMode` `authority` argument rejected; a
+counting Clock double proving exactly one read per call, with every written order,
+event, Step, and Fill row carrying that same instant; the Clock's non-`datetime`,
+`datetime`-subclass, naive, and non-UTC-offset failure-closed cases, each before any
+store call; the manufactured-terminal regression guard proved with a single call
+(no caller-supplied instant exists on the signature) — a Clock before the Step's own
+`evaluation_due_at` leaves `PAPER_STEP_PENDING`, and only a Clock genuinely past it
+resolves the frozen `no_fill_terminal_order_state`; a single call invoking each of
+T1/T2/T0/T3-T4 exactly once via spies; manual exact replay with an unchanged Clock
+value adding zero rows and returning the identical typed result; and a runtime probe
+that patches `GmoPrivatePostTransport.__init__`/`post_once`, `ExecutionService.submit`,
+and `LiveArmPolicy.is_armed` around a complete entry, ordinary-close, and emergency-
+liquidation Paper flow and observes zero calls to each.
 
 Milestone 2-B1 tests additionally state:
 

@@ -26,8 +26,12 @@ decision and capacity reservation (B4), and one-Position application composition
 exact durable Pair Signal materialization, operational Swap resolution, the concrete
 deterministic entry Strategy, atomic evaluation/Candidate persistence, ordered
 two-Pair application composition with replay convergence, and the durable ordinary
-close Portfolio/Risk/reservation path. All Paper modules remain pending. ExecPlan
-0007 is reserved for Controlled Live execution rollout.
+close Portfolio/Risk/reservation path. Milestone 3's frozen units B1-B5 (Paper
+domain contracts, fill engine, ledger, atomic persistence, and one-intent
+application composition) are implemented in `apps/swap_bot/src/swap_bot/paper/`,
+pending Milestone 3's own final Phase review; no scheduler, recurring cycle, or
+Position discovery exists yet. ExecPlan 0007 is reserved for Controlled Live
+execution rollout.
 
 ## ExecPlan 0005 adoption boundary
 
@@ -121,4 +125,6 @@ close Portfolio/Risk/reservation path. All Paper modules remain pending. ExecPla
   explicit Strategy adoption、authorization lineage、shadow proof。
 - `docs/exec-plans/0006-production-strategy-and-paper-trading-operations.md`:
   production StrategyとPaper operationsのliving plan。Milestones 2-A〜2-Dは実装済み。
-  Milestones 3〜5は未着手。
+  Milestone 3の凍結単位B1-B5(Paper domain contracts、fill engine、ledger、atomic
+  persistence、one-intent application composition)は実装済み、Milestone 3自身の
+  final Phase reviewが未了。Milestones 4〜5は未着手。

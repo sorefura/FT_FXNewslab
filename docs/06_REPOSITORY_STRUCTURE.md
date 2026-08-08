@@ -44,6 +44,36 @@ apps/swap_bot/src/swap_bot/ordinary_close_application.py
     reservation persistence into one single-Position KEEP/CLOSE flow
 ```
 
+Milestone 3 froze and implemented the Paper domain/persistence/application path as a
+flat `apps/swap_bot/src/swap_bot/paper/` package, superseding the speculative
+`paper/domain/`/`paper/application/`/`paper/infrastructure/` sketch above:
+
+```text
+apps/swap_bot/src/swap_bot/paper/contracts.py
+    B1 pure immutable domain: PaperIntentKind, PaperOrderIntentLineage, market
+    observation/fill-policy/order/plan/Step/attempt/selection/Fill contracts
+
+apps/swap_bot/src/swap_bot/paper/fill_engine.py
+    B2 pure deterministic fill engine: eligibility, selection ordering,
+    adverse-slippage fill price, partial-fill quantity, PENDING/terminal branch
+
+apps/swap_bot/src/swap_bot/paper/ledger.py
+    B3 pure accounting domain: position/account snapshots, the seven named
+    formulas, swap accrual/correction, and the four reconciliation rebuilds
+
+apps/swap_bot/src/swap_bot/migrations/0006_paper_execution_ledger.sql
+    B4 additive Live migration: the 24 live_paper_* tables
+
+apps/swap_bot/src/swap_bot/paper/store.py
+    B4 SQLitePaperStore implementing the eight frozen transactions (T0-T7); the
+    only Paper module importing sqlite3/live_migrations
+
+apps/swap_bot/src/swap_bot/paper/application.py
+    B5 Clock Protocol, UTCClock adapter, and PaperApplicationService composing
+    B1-B4 into exactly three one-intent entry points (entry, ordinary-close,
+    emergency-liquidation)
+```
+
 Milestone 2-B1 added the package-neutral identity and Pair materialization contract
 modules without changing that Live module map:
 

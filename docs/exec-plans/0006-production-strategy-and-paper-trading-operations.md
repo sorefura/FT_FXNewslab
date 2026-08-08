@@ -1331,6 +1331,74 @@ ExecPlan 0006 is complete only when all of the following are true:
     Paper application composition (B5). See `docs/phases/M3.toml`,
     `docs/phases/M3/spec.md`, and `docs/phases/M3/acceptance.md`. No production code,
     test, or migration changed.
+  - [x] (2026-08-07) B1 - added the pure immutable Paper domain: `PaperIntentKind`,
+    the three frozen source-intent payload builders with exact-type rejection,
+    `PaperOrderIntentLineage`'s ENTRY/ORDINARY_CLOSE/EMERGENCY_LIQUIDATION
+    derivation, `PaperMarketObservation`, `PaperFillPolicy`, the order lifecycle
+    types with `require_legal_transition()`/`project_paper_order_state()`, the
+    Plan/Step/Attempt/Selection/NoMarketOutcome/Fill evidence shapes, and the two
+    frozen Decimal arithmetic contexts. No store, algorithm, or application service
+    was added.
+  - [x] (2026-08-07) B2 - added the pure deterministic fill engine
+    `apps/swap_bot/src/swap_bot/paper/fill_engine.py`: the observation-eligibility
+    predicate, deterministic selection ordering with the earlier-Step exclusion set,
+    the adverse slippage fill-price formula, the versioned partial-fill quantity
+    rule, the next-Step derivation predicate, and the PENDING/terminal no-market
+    branch, exposed as one typed per-Step evaluation result. Tests under
+    `tests/paper_execution/`; no store, SQL, migration, ledger, or application
+    service was added.
+  - [x] (2026-08-07) B3 - added the pure accounting domain
+    `apps/swap_bot/src/swap_bot/paper/ledger.py`: `PaperAccountBootstrap`,
+    position projection with the entry-after-reduce-only prohibition, the seven
+    named formulas under their frozen Decimal contexts, `PaperAccountMarkSet`
+    coverage, the two cardinality aggregates, `PaperPositionSnapshot`/
+    `PaperAccountSnapshot`, swap accrual with its frozen 8-step precedence and
+    UTC-midnight rollover derivation, the chained `PaperSwapAccrualCorrection`
+    delta rule, and the four pure reconciliation rebuild-and-compare functions.
+    Tests under `tests/paper_ledger/`; no store, SQL, migration, Clock, FX
+    conversion, margin call, or application service was added.
+  - [x] (2026-08-08) B4 - added additive Live migration
+    `apps/swap_bot/src/swap_bot/migrations/0006_paper_execution_ledger.sql` (24
+    `live_paper_*` tables named by the frozen persistence model, every one with
+    UPDATE/DELETE rejection triggers, plus the two cross-variant claim linkage
+    trigger pairs and their `resolution_id`/`evidence_id` self-reference `CHECK`s)
+    and one `SQLitePaperStore` implementing the eight frozen transactions (T0
+    market observations; T1 order acceptance for all three intent kinds with the
+    reduce-only attachment predicate and M2-D reservation authentication; T2 Step
+    creation; T3's three exhaustive branches plus T4's PENDING attempt, sharing one
+    `evaluate_step()` entry point; T5 swap rollover; T6 swap accrual correction; T7
+    reconciliation), the single frozen market-observation hydration query, and
+    `ReservationConsumptionEvidence`/`ReservationReleaseEvidence` with the
+    conservation equation evaluated inside the writing transaction (consumption
+    written before release, from the transaction's own updated total). Tests under
+    `tests/paper_persistence/`; `paper/store.py` is the only Paper module importing
+    `sqlite3`/`live_migrations`. No Clock, application service, FX conversion,
+    margin call, or liquidation trigger was added.
+  - [x] (2026-08-08) B4 review correction - added the read-only
+    `current_step_ordinal()` store method so a caller resuming an already-persisted
+    plan can determine the correct next Step ordinal without re-deriving it from
+    wall-clock time; proved genuinely read-only (zero new rows) across repeat calls
+    and correct at every terminal/non-advancing/next-ordinal boundary.
+  - [x] (2026-08-08) B5 - added `apps/swap_bot/src/swap_bot/paper/application.py`:
+    the `Clock` Protocol (`now() -> datetime`), one thin `UTCClock` adapter, and
+    `PaperApplicationService` with exactly three entry points (one per approved-
+    intent type), each reading the Clock once and composing T1 (order+plan
+    acceptance) -> T2 (Step 0 reuse-or-create) -> T0 (supplied market observations)
+    -> T3/T4 (evaluate) into one typed `PaperApplicationResult` with disposition
+    `SHADOW_NOT_SUBMITTED`/`PAPER_STEP_PENDING`/`PAPER_STEP_RESOLVED`. LIVE raises
+    and SHADOW returns before any Clock read or store call; no entry point accepts
+    a `datetime` or worker identity. Tests under `tests/paper_application/`; no new
+    SQL, migration, loop, retry, scheduler, or fourth entry point was added.
+  - [x] (2026-08-08) B5 review correction - fixed the confirmed defect where
+    `_advance` hardcoded `ordinal=0` on every call, starving any
+    `maximum_steps > 1` policy of Step 1 and beyond; `_advance` now calls the new
+    `current_step_ordinal()` store method to resume the correct Step across calls.
+  - [x] (2026-08-08) B5 second review correction - fixed the deeper confirmed
+    defect where every entry point unconditionally re-submitted T1 on a second call
+    for an already-accepted intent, racing that call's own `evaluated_at` against
+    the persisted `created_at` and always raising `PaperPersistenceConflict`; added
+    the read-only `hydrate_accepted_order()`/`hydrate_created_step()` store methods
+    so a second call reuses the persisted order/Step instead of resubmitting T1/T2.
 - [ ] Milestone 4 - Operational Paper Cycle.
 - [ ] Milestone 5 - Scheduler, Observability, and Burn-in.
 

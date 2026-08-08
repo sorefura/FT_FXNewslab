@@ -16,8 +16,12 @@ Strategy/Portfolio/Risk path: typed work/capacity/resolution evidence and a pure
 deterministic exit evaluator (B1); close-specific Portfolio/Risk/Intent contracts
 (B2); atomic exit-evaluation persistence in Live migration `0005` (B3); atomic
 Portfolio/Risk decision and capacity reservation (B4); and one-Position application
-composition (B5). Paper Gateway, fill engine, account/PnL ledger, scheduler, and
-daemon remain absent.
+composition (B5). Milestone 3 now provides the Paper domain contracts and fill
+engine (B1-B2), the ledger/PnL/swap-accrual accounting domain (B3), the atomic
+`SQLitePaperStore` on Live migration `0006` (B4), and one-intent
+`PaperApplicationService` composition (B5), pending Milestone 3's own final Phase
+review. A real Broker Paper Gateway, scheduler, and daemon remain absent; those and
+Position discovery remain Milestone 4/5 work.
 
 Milestone 2-B1 now provides the upstream Pair materialization contracts in
 `fx_signal_store`, not in `swap_bot`. One Pair/as-of/specification creates one stable
@@ -153,6 +157,14 @@ state. Zero fill creates no Fill, total fill cannot exceed original quantity, an
 order in `FILLED`, `CANCELLED`, `EXPIRED`, or `REJECTED` cannot create another Step.
 `PARTIALLY_FILLED` is nonterminal for the order even though its producing Step is
 terminally resolved.
+
+Milestone 3 froze and implemented the Plan/Step/Fill portion of this target as
+`apps/swap_bot/src/swap_bot/paper/` (B1-B4: contracts, fill engine, ledger, and the
+atomic `SQLitePaperStore`) plus `PaperApplicationService` (B5), which reads the
+`Clock` once and processes one approved intent per call through order acceptance,
+Step 0 creation, market-observation persistence, and Step evaluation. Milestone 3
+adds no `CycleSlot`/`CycleInputSnapshot`/`CycleAttempt`, no scheduler, and no
+recurring cycle; those remain Milestone 4/5 (see `docs/phases/M3/spec.md`).
 
 ## Validated Signal adoption
 

@@ -267,8 +267,16 @@ reaches an approved intent and records `NOT_SUBMITTED`. M2-B2 through M2-B5 now 
 the shared Signal Store Claim, Selection, exact Pair artifact completion boundaries,
 and Store-neutral operational composition. The M2-A production contracts are not
 connected to this materializer, Portfolio, Risk, Execution, or persistence, and
-there is no concrete production Strategy, Paper Gateway, Paper ledger, or operational
-daemon.
+there is no concrete production Strategy or operational daemon. The `CycleSlot`/
+`CycleInputSnapshot`/`CycleAttempt` sketch above predates the frozen M3 design: M3
+adds no cycle, scheduler, or daemon (see `docs/phases/M3/spec.md`). Milestone 3's
+frozen `apps/swap_bot/src/swap_bot/paper/` package now provides the pure Paper
+domain contracts and fill engine (B1-B2), the pure accounting/ledger domain (B3),
+one atomic `SQLitePaperStore` on additive Live migration `0006` (B4), and one
+`PaperApplicationService` with exactly three one-intent entry points reading an
+injected `Clock` (B5) composing T1 (order acceptance) through T3/T4 (Step
+evaluation) into a typed result. No scheduler, recurring cycle, or Position
+discovery exists yet; that remains Milestone 4/5 work.
 
 ## Research-to-Live adoption boundary
 

@@ -193,6 +193,35 @@ Risk `APPROVE` row before an Intent insert. No column is added to legacy
 `live_candidates`, `live_portfolio_decisions`, `live_risk_decisions`, or
 `live_execution_intents`.
 
+M3-B4 adds Live migration `0006_paper_execution_ledger.sql`, additive and immutable
+against `0001`-`0005`. It creates the 24 `live_paper_*` tables the frozen M3
+persistence model names: market observations, fill policies, account bootstraps,
+orders/order events, fill evaluation plans/steps/attempts, the Step terminal claim
+and its `market_observation_selections`/`no_market_outcomes` cross-variant children,
+Fills, positions, position fill applications, position/account snapshots, ledger
+entries, the swap rollover claim and its `swap_accruals`/`swap_non_accruals`
+cross-variant children, swap accrual corrections, reservation consumptions/releases,
+and reconciliation results. Every table carries UPDATE/DELETE rejection triggers; the
+two claim tables additionally carry `CHECK`s rejecting a self-referential
+`resolution_id`/`evidence_id` and `BEFORE INSERT` triggers on each child table
+requiring its own claim row to already exist with the matching variant and ID. B4's
+`SQLitePaperStore` is the only Paper module importing `sqlite3`/`live_migrations` and
+implements the eight frozen transactions (T0-T7) with append-or-compare,
+hydrate-and-authenticate, and `BEGIN IMMEDIATE` throughout; it never writes to
+`live_candidates`, `live_portfolio_decisions`, `live_risk_decisions`,
+`live_execution_intents`, or any M2-D ordinary-close table, and reads
+`live_ordinary_close_approved_intents` only to authenticate the ordinary-close
+reservation join by `idempotency_key`. The speculative Paper record list below
+predates the frozen M3 design and names records M3 does not implement (Cycle
+slot/attempt, burn-in report are M4 scope per `docs/phases/M3/spec.md`); the actual
+schema is the frozen list above.
+
+M3-B5 adds `paper/application.py`: the `Clock` Protocol (`now() -> datetime`) and one
+`PaperApplicationService` with exactly three entry points, one per approved-intent
+type, composing B1/B2/B4 into T1 -> T2 -> T0 -> T3/T4 for one intent per call. It adds
+no table, no column, and no new SQL; every timestamp it writes is the single Clock
+read for that call, forwarded to B4's existing explicit-instant parameters.
+
 The following Paper records remain target contracts:
 
 ```text

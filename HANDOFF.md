@@ -29,7 +29,32 @@ live statusを重複保存すると汚染源になるため、Phase GateとGit�
   いなかった実質的ギャップと、architecture tripwireが`ordinary_close_store.py`/
   `ordinary_close_application.py`を未スキャンだったギャップを発見し修正した。
   final reviewはAPPROVE。`assert-complete --phase M2-D`で`completion_verified: true`を
-  確認済み。commitはまだ行っていない（userの許可待ち）。
+  確認済み。M2-Dはcommit済み・push済み（5 commit、`a15c790..cadc25a`）。
+- M3はPaper Execution and Ledgerを対象とする。B1 pure domain contracts、B2 deterministic
+  fill engine、B3 ledger/PnL/swap accrual/reconciliation domain、B4 atomic persistence
+  (migration `0006`、`SQLitePaperStore`のT0〜T7)、B5 one-intent application compositionの
+  5 unitで構成する。2026-08-07〜08、Claude runtimeで完了した。
+- B4は1回reject。1st reviewerが指摘した「distinct concurrent Step resolutionがterminal
+  claim 1件に収束するreal-threadテストの欠落」を修正し、2nd reviewerがAPPROVE。
+- B5は2回reject、milestone中で最も深刻な欠陥が見つかったunit。
+  (1) 1st reviewer: `_advance()`がStep ordinalを常に0固定にしており、`maximum_steps>1`の
+  fill policyがStep 0より先に進めない（frozen spec 136-142行「T1-T4はapplication-service
+  entry point経由でのみ到達可能」に矛盾）。read-only `current_step_ordinal()`をB4 storeへ
+  追加し修正。
+  (2) 修正後、orchestrating sessionが実際にpublic entry pointを2回連続callして自ら再現検証
+  したところ、より深い欠陥を発見：T1(`accept_entry_order`等)を毎回のcallで再実行しており、
+  `created_at`列比較により2回目のcallが異なるClock時刻だと`PaperPersistenceConflict`で
+  crashする。read-only `hydrate_accepted_order`/`hydrate_created_step`を追加し、
+  `paper_order_id`がcontent-addressed（`created_at`は識別子から除外）であることを利用して
+  T1を安全にskipするよう修正。2nd reviewerがAPPROVE。
+- final review 2回。1st final reviewerがP0を発見：`paper/store.py`が複数のDecimal集計を
+  `decimal.localcontext(PAPER_EXACT_ARITHMETIC_V1)`の外（Pythonデフォルトcontext、
+  prec=28、Inexact非trap）で実行しており、`paper/ledger.py`のrebuild関数（正しくexact
+  contextを使用）と食い違い、未改竄アカウントがreconcileでMISMATCHEDと誤判定される。
+  orchestrating sessionが実際にPython Decimal計算で再現し確認。6箇所を修正。修正中に
+  同種の潜在バグ（`contracts.py`の`PaperFill.__post_init__`、未到達だが同じroot cause）
+  も発見しuser判断で同時に修正。2nd final reviewerがAPPROVE、`assert-complete --phase M3`
+  で`completion_verified: true`を確認済み。commitはまだ行っていない（userの許可待ち）。
 
 ## Resume protocol
 
@@ -39,15 +64,19 @@ live statusを重複保存すると汚染源になるため、Phase GateとGit�
    ```powershell
    $Repo = 'C:\Users\soref\OneDrive\ドキュメント\VSCode\FT_FXNewslab'
    Set-Location -LiteralPath $Repo
-   python .agents\skills\run-phase-loop\scripts\phase_gate.py status --phase M2-D
+   python .agents\skills\run-phase-loop\scripts\phase_gate.py status --phase M3
    git status --short
    ```
 
-3. M2-Dは`status: complete`、`completion_verified: true`。次のアクションはuserの指示による
+3. M3は`status: complete`、`completion_verified: true`。次のアクションはuserの指示による
    commit判断のみ。次のMilestoneに着手する場合は新しいdesign freeze・`init`から始める。
-4. 過去のreview履歴・修正内容は`.phase-runs/M2-D/reviews/`と本ファイルのDurable historyを
+4. 過去のreview履歴・修正内容は`.phase-runs/M3/reviews/`と本ファイルのDurable historyを
    参照する。各attemptは別の新規reviewerで審査済み。reviewerを再利用せず、`.phase-runs`、
    frozen files、review bundleを手編集しない。
+5. B5・final reviewで見つかった欠陥はいずれも「reviewer/final reviewerの指摘を鵜呑みに
+   せず、実際にコードを動かして／手計算で再現してから受け入れる」ことで早期に深掘りできた
+   （逆に、最初の修正だけでは不十分だったケースが2件ある）。この姿勢は次のMilestoneでも
+   継続する。
 
 ## Model and cost policy
 
@@ -88,6 +117,8 @@ frozen unitのscopeは成果物であると同時に上限である。
 
 ## Evidence lookup
 
+- M3 status/history: `.phase-runs/M3/state.json`
+- M3 frozen design: `docs/phases/M3.toml`と`docs/phases/M3/`
 - M2-D status/history: `.phase-runs/M2-D/state.json`
 - M2-D frozen design: `docs/phases/M2-D.toml`と`docs/phases/M2-D/`
 - M2-C historical evidence: `.phase-runs/M2-C/`

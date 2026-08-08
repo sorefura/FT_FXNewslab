@@ -143,6 +143,7 @@ def test_milestone_2c_and_2d_use_only_their_five_additive_live_migrations() -> N
         "0003_operational_swap_evidence.sql",
         "0004_production_entry_strategy.sql",
         "0005_ordinary_close_path.sql",
+        "0006_paper_execution_ledger.sql",
     }
 
 
@@ -151,4 +152,84 @@ def test_milestone_2c_entry_root_does_not_import_downstream_trading_layers() -> 
     imported_modules = {name.split(".")[-1] for name in imports}
     assert {"portfolio", "risk", "execution", "paper", "broker", "ports"}.isdisjoint(
         imported_modules
+    )
+
+
+def _referenced_names(path: Path) -> set[str]:
+    tree = ast.parse(path.read_text(encoding="utf-8"))
+    return {node.id for node in ast.walk(tree) if isinstance(node, ast.Name)} | {
+        node.attr for node in ast.walk(tree) if isinstance(node, ast.Attribute)
+    }
+
+
+def test_milestone_3_paper_package_does_not_import_broker_or_forbidden_layers() -> None:
+    paper_root = ROOT / "apps/swap_bot/src/swap_bot/paper"
+    forbidden_roots = {"fx_research", "openai"}
+    forbidden_modules = {"execution", "ports", "portfolio", "risk", "shadow", "llm_feature"}
+    forbidden_symbols = {
+        "BrokerGateway",
+        "ExecutionService",
+        "GmoPrivatePostTransport",
+        "LiveArmPolicy",
+        "HttpClient",
+    }
+    forbidden_sqlite_modules = {"sqlite3", "live_migrations"}
+    paths = sorted(paper_root.rglob("*.py"))
+    assert paths, "expected the paper package to contain modules"
+    for path in paths:
+        imports = _imports(path)
+        assert forbidden_roots.isdisjoint(
+            {name.split(".")[0] for name in imports}
+        ), f"forbidden root import in {path}"
+        assert forbidden_modules.isdisjoint(
+            {name.split(".")[-1] for name in imports}
+        ), f"forbidden Live-layer import in {path}"
+        assert forbidden_symbols.isdisjoint(
+            _referenced_names(path)
+        ), f"forbidden Broker symbol referenced in {path}"
+        if path.name != "store.py":
+            assert forbidden_sqlite_modules.isdisjoint(
+                {name.split(".")[-1] for name in imports}
+            ), f"only paper/store.py may import sqlite3 or live_migrations, found in {path}"
+
+
+def test_milestone_3_b2_fill_engine_module_is_covered_by_the_paper_tripwire() -> None:
+    fill_engine = ROOT / "apps/swap_bot/src/swap_bot/paper/fill_engine.py"
+    assert fill_engine.exists(), "expected B2's fill_engine.py to exist"
+    paper_root = ROOT / "apps/swap_bot/src/swap_bot/paper"
+    assert fill_engine in set((paper_root).rglob("*.py")), (
+        "fill_engine.py must be swept by "
+        "test_milestone_3_paper_package_does_not_import_broker_or_forbidden_layers"
+    )
+    imports = _imports(fill_engine)
+    assert {"sqlite3", "live_migrations", "execution", "ports", "portfolio", "risk"}.isdisjoint(
+        {name.split(".")[-1] for name in imports}
+    )
+
+
+def test_milestone_3_b3_ledger_module_is_covered_by_the_paper_tripwire() -> None:
+    ledger = ROOT / "apps/swap_bot/src/swap_bot/paper/ledger.py"
+    assert ledger.exists(), "expected B3's ledger.py to exist"
+    paper_root = ROOT / "apps/swap_bot/src/swap_bot/paper"
+    assert ledger in set((paper_root).rglob("*.py")), (
+        "ledger.py must be swept by "
+        "test_milestone_3_paper_package_does_not_import_broker_or_forbidden_layers"
+    )
+    imports = _imports(ledger)
+    assert {"sqlite3", "live_migrations", "execution", "ports", "portfolio", "risk"}.isdisjoint(
+        {name.split(".")[-1] for name in imports}
+    )
+
+
+def test_milestone_3_b5_application_module_is_covered_by_the_paper_tripwire() -> None:
+    application = ROOT / "apps/swap_bot/src/swap_bot/paper/application.py"
+    assert application.exists(), "expected B5's application.py to exist"
+    paper_root = ROOT / "apps/swap_bot/src/swap_bot/paper"
+    assert application in set((paper_root).rglob("*.py")), (
+        "application.py must be swept by "
+        "test_milestone_3_paper_package_does_not_import_broker_or_forbidden_layers"
+    )
+    imports = _imports(application)
+    assert {"sqlite3", "live_migrations", "execution", "ports", "portfolio", "risk"}.isdisjoint(
+        {name.split(".")[-1] for name in imports}
     )

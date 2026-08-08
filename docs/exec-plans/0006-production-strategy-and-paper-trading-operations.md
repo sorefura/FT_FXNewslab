@@ -1400,6 +1400,14 @@ ExecPlan 0006 is complete only when all of the following are true:
     the read-only `hydrate_accepted_order()`/`hydrate_created_step()` store methods
     so a second call reuses the persisted order/Step instead of resubmitting T1/T2.
 - [ ] Milestone 4 - Operational Paper Cycle.
+  - [x] (2026-08-08) Design freeze - added `docs/phases/M4.toml`,
+    `docs/phases/M4/spec.md`, and `docs/phases/M4/acceptance.md` for the five units
+    B1 (Cycle contracts, identity, explicit policy), B2 (operational adapters, shared
+    Signal batch first claim, immutable input freeze), B3 (emergency/ordinary-close/
+    entry allocation and Risk decision domain), B4 (Live migration `0007`,
+    `SQLiteOperationalCycleStore`, attempts/work results/recovery), and B5
+    (`OperationalPaperCycleService`, post-intent Paper dispatch, `paper-once` CLI).
+    No production code, test, or migration was written by the design freeze.
 - [ ] Milestone 5 - Scheduler, Observability, and Burn-in.
 
 ## Surprises & discoveries
@@ -2102,6 +2110,36 @@ ExecPlan 0006 is complete only when all of the following are true:
   the store authenticates as still-current inside the transaction, rather than
   resolving "the" snapshot; resolving it implicitly would reintroduce latest-row
   selection, an explicit ExecPlan non-goal, into a content-addressed identity.
+- 2026-08-08: Give the Cycle mark and the Paper fill quote different contract types
+  (`CycleMarkObservation` versus the unchanged M3 `PaperMarketObservation`) and
+  different Ports, instead of one observation type with a purpose tag. A tag would be
+  enforceable only by a runtime check inside the fill path, while distinct types make
+  a pre-intent Cycle mark structurally unable to reach M3's
+  `type(o) is PaperMarketObservation` boundary at all.
+- 2026-08-08: Anchor the Cycle's single semantic instant in the Signal Store batch
+  Claim rather than in the Cycle snapshot. The Signal Store is a second SQLite
+  database, so its first claim cannot join the Live snapshot transaction; persisting
+  `captured_at` there first makes the crash window between the two databases
+  recoverable without reading the Clock again.
+- 2026-08-08: Prove "Paper state rebuilt exactly before the Cycle snapshot commits"
+  by requiring a MATCHED M3 `PaperReconciliationResult` whose three boundaries equal
+  the account's current maxima, re-checked inside the freeze transaction, instead of
+  reimplementing a rebuild in M4. This reuses M3's full four-kind rebuild and turns
+  "state changed between rebuild and freeze" into a boundary inequality rather than an
+  unobservable race.
+- 2026-08-08: Select the frozen Paper account snapshot by exact equality on
+  `(highest_application_seq, highest_ledger_entry_seq)`, which is unique per account
+  because every M3 transaction that writes an account snapshot advances one of them.
+  A `ORDER BY ... DESC LIMIT 1` lookup would reintroduce latest-row selection.
+- 2026-08-08: Drive M2-C entry persistence directly through
+  `SQLiteProductionEntryStore.evaluate_and_persist` with the frozen
+  `PairSignalMaterializerResult`, `AuthorizedSignal`, and `OperationalSwapResolution`,
+  and never through `ProductionEntryApplicationService`, whose `run` re-materializes
+  and re-authorizes and would therefore reselect input after the snapshot freeze.
+- 2026-08-08: Represent a nonterminal semantic work root by the absence of a
+  `CycleWorkResult` row rather than by a mutable status column, so
+  `UNIQUE(cycle_slot_id, work_kind, work_root_key)` alone guarantees that one
+  semantic work item cannot belong to two results and no row is ever updated.
 
 ## Validation
 
